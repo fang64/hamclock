@@ -4,9 +4,6 @@
 #include "HamClock.h"
 
 
-#if defined(_SUPPORT_CITIES)
-
-
 // name of server file containing cities
 static const char cities_fn[] PROGMEM = "/cities2.txt"; // changed in 2.81
 
@@ -113,9 +110,9 @@ void readCities()
 }
 
 /* return name of city and location nearest the given ll, else NULL.
- * also report longest city length for drawing purposes.
+ * also report longest city length for drawing purposes unless NULL.
  */
-const char *getNearestCity (const LatLong &ll, LatLong &city_ll, int &max_cl)
+const char *getNearestCity (const LatLong &ll, LatLong &city_ll, int *max_cl)
 {
         // ignore if not ready or failed
         if (!city_root)
@@ -133,7 +130,8 @@ const char *getNearestCity (const LatLong &ll, LatLong &city_ll, int &max_cl)
         // report results if successful
         best_dist = nearestKD3Dist2Miles (best_dist);   // convert to miles
         if (best_dist < MAX_CSR_DIST) {
-            max_cl = max_city_len;
+            if (max_cl)
+                *max_cl = max_city_len;
             KD3Node2ll (*best_city, &city_ll);
             return ((char*)(best_city->data));
         } else {
@@ -142,17 +140,3 @@ const char *getNearestCity (const LatLong &ll, LatLong &city_ll, int &max_cl)
 
 }
 
-#else
-
-// dummies
-
-const char *getNearestCity (const LatLong &ll, LatLong &city_ll, int &max_cl) {
-    (void) ll;
-    (void) city_ll;
-    (void) max_cl;
-    return NULL;
-}
-
-void readCities() {}
-
-#endif // _SUPPORT_CITIES

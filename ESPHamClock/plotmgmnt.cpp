@@ -155,31 +155,6 @@ void logBRBRotSet()
     Serial.printf (_FX("BRB: now mode %d\n"), brb_mode);
 }
 
-/* return whether all panes in the given rotation set can be accommodated together.
- */
-bool paneComboOk (const uint32_t new_rotsets[PANE_N])
-{
-#if !defined(_IS_ESP8266)
-    // only an issue on ESP
-    return (true);
-#else
-    // count list of panes that use dynmic memory
-    static uint8_t himem_panes[] PROGMEM = {
-        PLOT_CH_DXCLUSTER, PLOT_CH_TEMPERATURE, PLOT_CH_PRESSURE, PLOT_CH_HUMIDITY, PLOT_CH_DEWPOINT,
-        PLOT_CH_CONTESTS, PLOT_CH_PSK, PLOT_CH_POTA, PLOT_CH_SOTA, PLOT_CH_ADIF
-    };
-    int n_used = 0;
-    for (int i = 0; i < PANE_N; i++)
-        for (int j = 0; j < NARRAY(himem_panes); j++)
-            if ((1 << pgm_read_byte(&himem_panes[j])) & new_rotsets[i])
-                n_used++;
-
-    // allow only 1
-    return (n_used <= 1);
-
-#endif
-}
-
 /* if the given rotset include PLOT_CH_DXCLUSTER and more, show message in box and return true.
  * else return false.
  */
@@ -187,6 +162,19 @@ bool enforceDXCAlone (const SBox &box, uint32_t rotset)
 {
     if ((rotset & (1<<PLOT_CH_DXCLUSTER)) && (rotset & ~(1<<PLOT_CH_DXCLUSTER))) {
         plotMessage (box, RA8875_RED, _FX("DX Cluster may not be combined with other data panes"));
+        wdDelay(5000);
+        return (true);
+    }
+    return (false);
+}
+
+/* if the given rotset include PLOT_CH_COUNTDOWN and more, show message in box and return true.
+ * else return false.
+ */
+bool enforceCDownAlone (const SBox &box, uint32_t rotset)
+{
+    if ((rotset & (1<<PLOT_CH_COUNTDOWN)) && (rotset & ~(1<<PLOT_CH_COUNTDOWN))) {
+        plotMessage (box, RA8875_RED, _FX("Countdown may not be combined with other data panes"));
         wdDelay(5000);
         return (true);
     }
@@ -265,16 +253,11 @@ static PlotChoice askPaneChoice (PlotPane pp)
             }
         }
 
-        // enforce limit on number of high-memory scrolling panes and DX cluster alone
+        // enforce a few panes that do not work well with rotation
         uint32_t new_sets[PANE_N];
         memcpy (new_sets, plot_rotset, sizeof(new_sets));
         new_sets[pp] = new_rotset;
-        if (isSatDefined() && !paneComboOk(new_sets)) {
-
-            plotMessage (box, RA8875_RED, _FX("Too many high-memory panes with a satellite"));
-            wdDelay(5000);
-
-        } else if (!enforceDXCAlone (box, new_rotset)) {
+        if (!enforceDXCAlone (box, new_rotset) && !enforceCDownAlone (box, new_rotset)) {
 
             plot_rotset[pp] = new_rotset;
             savePlotOps();
@@ -431,7 +414,7 @@ bool checkPlotTouch (const SCoord &s, PlotPane pp, TouchType tt)
         break;
     case PLOT_CH_COUNTDOWN:
         if (!in_top) {
-            checkStopwatchTouch(tt);
+            checkCountdownTouch();
             return (true);
         }
         break;
@@ -654,17 +637,23 @@ void savePlotOps()
     NVWriteUInt8 (NV_PLOT_3, plot_ch[PANE_3]);
 }
 
-/* flash plot borders nearly ready to change, and include NCDXF_b also.
+/* flash plot borders nearly ready to change, and include NCDXF_b also,
+ * unless rotating pretty fast.
  */
 void showRotatingBorder ()
 {
     time_t t0 = myNow();
 
+    // just white if rotation period is 10 s or less
+    const int min_rot = 10;
+    uint16_t c = RA8875_WHITE;
+
     // check plot panes
     for (int i = 0; i < PANE_N; i++) {
         if (paneIsRotating((PlotPane)i) || (isSDORotating() && findPaneChoiceNow(PLOT_CH_SDO) == i)) {
             // this pane is rotating among other pane choices or SDO is rotating its images
-            uint16_t c = ((nextPaneRotation((PlotPane)i) > t0 + PLOT_ROT_WARNING) || (t0&1) == 1)
+            if (getPaneRotationPeriod() > min_rot)
+                c = ((nextPaneRotation((PlotPane)i) > t0 + PLOT_ROT_WARNING) || (t0&1) == 1)
                                 ? RA8875_WHITE : GRAY;
             drawSBox (plot_b[i], c);
         }
@@ -672,7 +661,8 @@ void showRotatingBorder ()
 
     // check BRB
     if (BRBIsRotating()) {
-        uint16_t c = ((brb_updateT > t0 + PLOT_ROT_WARNING) || (t0&1) == 1) ? RA8875_WHITE : GRAY;
+        if (getPaneRotationPeriod() > min_rot)
+            c = ((brb_updateT > t0 + PLOT_ROT_WARNING) || (t0&1) == 1) ? RA8875_WHITE : GRAY;
         drawSBox (NCDXF_b, c);
     }
 

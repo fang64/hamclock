@@ -28,9 +28,6 @@ static bool good_wpa;
     #define _WIFI_ALWAYS
     #define _SUPPORT_KX3 
     #define _SUPPORT_NATIVE_GPIO
-    #define _SUPPORT_ADIFILE
-    #define _SUPPORT_SPOTPATH
-    #define _SUPPORT_SCROLLLEN
 #endif // _SHOW_ALL
 
 
@@ -133,6 +130,8 @@ static char i2c_fn[NV_I2CFN_LEN];
 #define CTSL_LP_W       (7*PR_W)                // load pskreporter control width
 #define CTSL_LD_X       (CTSL_LP_X+130)         // load default control x
 #define CTSL_LD_W       (5*PR_W)                // load default control width
+#define CTSL_DO_W       (4*PR_W)                // done control width
+#define CTSL_DO_X       (800-CTSL_DO_W-KB_INDENT) // done control x
 
 // OnOff layout constants
 #define OO_Y0           150                     // top y
@@ -390,17 +389,27 @@ typedef enum {
     SCROLLBIG_BPR,
     WEB_FULLSCRN_BPR,
     X11_FULLSCRN_BPR,
+    PANE_ROTPA_BPR,
+    PANE_ROTPB_BPR,
+    SHOWPIP_BPR,
 
-    N_BPR,
+    N_BPR,                                      // number of fields
+
     NOMATE                                      // flag for ent_mate
 
 } BPIds;
 
-// values for SCROLLLEN_BPR and SCROLLBIG_BPR
+// values for SCROLLLEN_BPR and SCROLLBIG_BPR -- N.B. must sync with SCROLLLEN_BPR/SCROLLBIG_BPR
 #define NSCROLL_A       0
 #define NSCROLL_B       10
 #define NSCROLL_C       25
 #define NSCROLL_D       50
+
+// values for PANE_ROTPA_BPR and PANE_ROTPB_BPR -- N.B. must sync with PANE_ROTPA_BPR/PANE_ROTPB_BPR
+#define PANEROTP_A      5
+#define PANEROTP_B      10
+#define PANEROTP_C      20
+#define PANEROTP_D      40
 
 // define a boolean prompt
 typedef struct {
@@ -470,7 +479,8 @@ static BoolPrompt bool_pr[N_BPR] = {
     {2, {10,  R2Y(4),  90, PR_H},  {100, R2Y(4), 300, PR_H}, false, "ADIF?", "No", NULL, NOMATE},
 
 
-    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  50, PR_H}, false, "S/P/A watch:", "Off", NULL, SPOTAWLISTB_BPR},
+    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  50, PR_H}, false, "S/P/A watch:", "Off", NULL,
+                                                                                        SPOTAWLISTB_BPR},
     {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  50, PR_H}, false, NULL, "On", "Only", SPOTAWLISTA_BPR},
                                                 // 3x entangled: Off: FX  On: TF  Only: TT
 
@@ -502,14 +512,17 @@ static BoolPrompt bool_pr[N_BPR] = {
 
 
     {4, {10,  R2Y(1), 170, PR_H},  {180, R2Y(1), 150, PR_H}, false, "Week starts?", "Sunday","Monday",NOMATE},
+
     {4, {400, R2Y(1), 170, PR_H},  {570, R2Y(1), 150, PR_H}, false, "Demo mode?", "No", "Yes", NOMATE},
 
 
     {4, {10,  R2Y(2), 170, PR_H},  {180, R2Y(2), 150, PR_H}, false, "Units?", "Imperial", "Metric", NOMATE},
+
     {4, {400, R2Y(2), 170, PR_H},  {570, R2Y(2), 150, PR_H}, false, "Bearings?","True N","Magnetic N",NOMATE},
 
 
     {4, {10 , R2Y(3), 170, PR_H},  {180, R2Y(3), 150, PR_H}, false, "Rank SpcWx?", "No", "Yes", NOMATE},
+
     {4, {400, R2Y(3), 170, PR_H},  {570, R2Y(3), 150, PR_H}, false, "New DX Wx?",  "No", "Yes", NOMATE},
 
 
@@ -523,8 +536,8 @@ static BoolPrompt bool_pr[N_BPR] = {
                                                 // 3x entangled: No: FX  Thin: TF  Wide: TT
 
 
-    {4, {10,  R2Y(5), 170, PR_H},  {180, R2Y(5), 150, PR_H}, false, "Scroll dir?", "Bottom-Up", "Top-Down",
-                                                                                                NOMATE},
+    {4, {10,  R2Y(5), 170, PR_H},  {180, R2Y(5), 150, PR_H}, false, "Scroll direction?",
+                                                                        "Bottom-Up", "Top-Down", NOMATE},
 
 
     {4, {400, R2Y(5), 170, PR_H},  {570, R2Y(5), 150, PR_H}, false, "Scroll length?", "0","10",SCROLLBIG_BPR},
@@ -535,8 +548,19 @@ static BoolPrompt bool_pr[N_BPR] = {
 
 
     {4, {10,  R2Y(6), 170, PR_H}, {180, R2Y(6), 150, PR_H}, false, "Full scrn web?", "No", "Yes", NOMATE},
+
     {4, {400, R2Y(6), 170, PR_H}, {570, R2Y(6), 150, PR_H}, false, "Full scrn direct?", "No", "Yes", NOMATE},
                                                 // N.B. state box must be wide enough for "Won't fit"
+
+
+    {4, {10,  R2Y(7), 170, PR_H}, {180, R2Y(7), 150, PR_H}, false, "Pane rotation?",
+                                                "5 seconds", "10 seconds", PANE_ROTPB_BPR},
+    {4, {10,  R2Y(7), 170, PR_H}, {180, R2Y(7), 150, PR_H}, false, NULL,
+                                                "20 seconds", "40 seconds", PANE_ROTPA_BPR},
+                                                // 4x entangled:  5: FF  10: TF   20: FT  40: TT
+                                                // FF -> TF -> FT -> TT -> ...
+
+    {4, {400, R2Y(7), 170, PR_H}, {570, R2Y(7), 150, PR_H}, false, "Show public IP?", "No", "Yes", NOMATE},
 
 
 
@@ -732,13 +756,14 @@ static const SBox csel_ctl_b = {CSEL_SCX, CSEL_SCY, CSEL_SCW+CSEL_VDX+CSEL_NW, 3
 #define V2X(v)  (CSEL_SCX+(CSEL_SCW-1)*(v)/255)
 
 
-// save/load controls
+// save/load/done controls
 static const SBox ctsl_save1_b = {CTSL_SA_X, CTSL_Y, CTSL_SA_W, KB_SPC_H};
 static const SBox ctsl_save2_b = {CTSL_SB_X, CTSL_Y, CTSL_SB_W, KB_SPC_H};
 static const SBox ctsl_load1_b = {CTSL_LA_X, CTSL_Y, CTSL_LA_W, KB_SPC_H};
 static const SBox ctsl_load2_b = {CTSL_LB_X, CTSL_Y, CTSL_LB_W, KB_SPC_H};
 static const SBox ctsl_loadp_b = {CTSL_LP_X, CTSL_Y, CTSL_LP_W, KB_SPC_H};
 static const SBox ctsl_loadd_b = {CTSL_LD_X, CTSL_Y, CTSL_LD_W, KB_SPC_H};
+static const SBox ctsl_done_b  = {CTSL_DO_X, CTSL_Y, CTSL_DO_W, KB_SPC_H};
 
 
 // virtual qwerty keyboard
@@ -1073,9 +1098,14 @@ static void drawPageButton()
     drawStringInBox (buf, page_b, false, DONE_C);
 }
 
+/* draw the Done button, depending on state and page
+ */
 static void drawDoneButton(bool on)
 {
-    drawStringInBox (_FX("Done"), done_b, on, DONE_C);
+    if (cur_page == COLOR_PAGE)
+        drawStringInBox (_FX("Done"), ctsl_done_b, on, DONE_C);
+    else
+        drawStringInBox (_FX("Done"), done_b, on, DONE_C);
 }
 
 
@@ -1104,11 +1134,6 @@ static bool boolIsRelevant (BoolPrompt *bp)
         if (!bool_pr[CLUSTER_BPR].state)
             return (false);
     }
-
-    #if !defined(_SUPPORT_SPOTPATH)
-        if (bp == &bool_pr[SPOTPATH_BPR] || bp == &bool_pr[SPOTPATHSZ_BPR])
-            return (false);
-    #endif
 
     if (bp == &bool_pr[DXCLCMDPGA_BPR] || bp == &bool_pr[DXCLCMDPGB_BPR]) {
         if (!bool_pr[CLUSTER_BPR].state || bool_pr[CLISWSJTX_BPR].state)
@@ -1150,12 +1175,6 @@ static bool boolIsRelevant (BoolPrompt *bp)
             return (false);
     }
 
-    if (bp == &bool_pr[I2CON_BPR]) {
-        #if defined(_I2C_ESP)
-            return (false);
-        #endif
-    }
-
     if (bp == &bool_pr[GPIOOK_BPR]) {
         #if !defined(_SUPPORT_NATIVE_GPIO)
             return (false);
@@ -1166,19 +1185,6 @@ static bool boolIsRelevant (BoolPrompt *bp)
         if (!bool_pr[GPSDON_BPR].state)
             return (false);
     }
-
-    #if !defined(_SUPPORT_ADIFILE)
-        // always irrelevant if not supporting ADIF file reading
-        if (bp == &bool_pr[ADIFSET_BPR])
-            return (false);
-    #endif
-
-
-    #if !defined(_SUPPORT_SCROLLLEN)
-        // not allowed to change on ESP
-        if (bp == &bool_pr[SCROLLLEN_BPR] || bp == &bool_pr[SCROLLBIG_BPR])
-            return (false);
-    #endif
 
     // use by default
     return (true);
@@ -1259,11 +1265,7 @@ static bool stringIsRelevant (StringPrompt *sp)
     }
 
     if (sp == &string_pr[I2CFN_SPR]) {
-        #if defined(_I2C_ESP)
-            return (false);
-        #else
-            return (bool_pr[I2CON_BPR].state);
-        #endif
+        return (bool_pr[I2CON_BPR].state);
     }
 
     if (sp == &string_pr[BME76_DT] || sp == &string_pr[BME77_DT]
@@ -1275,11 +1277,8 @@ static bool stringIsRelevant (StringPrompt *sp)
         return (HAVE_ONOFF());
 
     if (sp == &string_pr[ADIFFN_SPR]) {
-        // always irrelevant if not supporting ADIF file reading
-        #if defined(_SUPPORT_ADIFILE)
-            if (!bool_pr[ADIFSET_BPR].state)
-        #endif
-                return (false);
+        if (!bool_pr[ADIFSET_BPR].state)
+            return (false);
     }
 
     // no objections
@@ -1391,6 +1390,8 @@ static void nextTabFocus (bool backwards)
         { NULL, &bool_pr[SCROLLLEN_BPR] },
         { NULL, &bool_pr[WEB_FULLSCRN_BPR] },
         { NULL, &bool_pr[X11_FULLSCRN_BPR] },
+        { NULL, &bool_pr[PANE_ROTPA_BPR] },
+        { NULL, &bool_pr[SHOWPIP_BPR] },
     };
     #define N_TAB_FIELDS    NARRAY(tab_fields)
 
@@ -1737,12 +1738,21 @@ static void drawKeyboard()
 
 
 
-/* convert a screen coord on the virtual keyboard to its char value, if any.
+/* convert a screen coord to its char value, if any.
  */
 static bool s2char (SCoord &s, char &kbchar)
 {
-    // no KB on color page or onoff page
-    if (cur_page == COLOR_PAGE || cur_page == ONOFF_PAGE)
+    // only one button on color page
+    if (cur_page == COLOR_PAGE) {
+        if (inBox(s, ctsl_done_b)) {
+            kbchar = CHAR_NL;
+            return (true);
+        } else
+            return (false);
+    }
+
+    // no KB at all onoff page
+    if (cur_page == ONOFF_PAGE)
         return (false);
 
     // check main qwerty
@@ -2222,6 +2232,7 @@ static void loadDefaultColorTable (void)
 
 /* handle a possible touch event while on the color selection page.
  * return whether ours
+ * N.B. we assume ctsl_done_b has already been handled
  */
 static bool handleCSelTouch (SCoord &s)
 {
@@ -2575,7 +2586,7 @@ static void changePage (int new_page)
 static bool portOK (char *port_str, int min_port, uint16_t *portp)
 {
     char *first_bad;
-    trim (port_str);
+    strtrim (port_str);
     int portn = strtol (port_str, &first_bad, 10);
     if (*first_bad != '\0' || portn < min_port || portn > 65535)
         return (false);
@@ -2691,7 +2702,7 @@ static bool validateStringPrompts (bool show_errors)
 
         // clean up any extra white space in the commands then check for blank entries that are on
         for (int i = 0; i < N_DXCLCMDS; i++) {
-            trim(dxcl_cmds[i]);
+            strtrim(dxcl_cmds[i]);
             if (strlen(dxcl_cmds[i]) == 0 && bool_pr[DXCLCMD0_BPR+i].state)
                 badsids[n_badsids++] = (SPIds)(DXCLCMD0_SPR+i);
         }
@@ -2699,7 +2710,7 @@ static bool validateStringPrompts (bool show_errors)
         // watch list must not be blank if being used
         const char *v = getEntangledValue (&bool_pr[DXWLISTA_BPR], &bool_pr[DXWLISTB_BPR]);
         if (strcmp (v, bool_pr[DXWLISTA_BPR].f_str)) {  // not Off
-            trim(string_pr[DXWLIST_SPR].v_str);
+            strtrim(string_pr[DXWLIST_SPR].v_str);
             if (strlen(string_pr[DXWLIST_SPR].v_str) == 0)
                 badsids[n_badsids++] = DXWLIST_SPR;
         }
@@ -2708,7 +2719,7 @@ static bool validateStringPrompts (bool show_errors)
     // SPOTA watch list must not be blank if being used
     const char *v = getEntangledValue (&bool_pr[SPOTAWLISTA_BPR], &bool_pr[SPOTAWLISTB_BPR]);
     if (strcmp (v, bool_pr[SPOTAWLISTA_BPR].f_str)) {  // not Off
-        trim(string_pr[SPOTAWL_SPR].v_str);
+        strtrim(string_pr[SPOTAWL_SPR].v_str);
         if (strlen(string_pr[SPOTAWL_SPR].v_str) == 0)
             badsids[n_badsids++] = SPOTAWL_SPR;
     }
@@ -2805,14 +2816,14 @@ static bool validateStringPrompts (bool show_errors)
 
     // ADIF file name must not be blank if used
     if (bool_pr[ADIFSET_BPR].state) {
-        trim (adif_fn);
+        strtrim (adif_fn);
         if (adif_fn[0] == '\0')
             badsids[n_badsids++] = ADIFFN_SPR;
     }
 
     // check I2C file name
     if (bool_pr[I2CON_BPR].state) {
-        trim (i2c_fn);
+        strtrim (i2c_fn);
         if (!I2CFnOk())
             badsids[n_badsids++] = I2CFN_SPR;
     }
@@ -3456,6 +3467,13 @@ static void initSetup()
     }
     bool_pr[RANKSW_BPR].state = (auto_sw != 0);
 
+    uint8_t show_pip;
+    if (!NVReadUInt8 (NV_SHOWPIP, &show_pip)) {
+        show_pip = 0;
+        NVWriteUInt8 (NV_SHOWPIP, show_pip);
+    }
+    bool_pr[SHOWPIP_BPR].state = (show_pip != 0);
+
     uint8_t newdxdewx;
     if (!NVReadUInt8 (NV_NEWDXDEWX, &newdxdewx)) {
         newdxdewx = 1;                                  // default yes
@@ -3471,36 +3489,56 @@ static void initSetup()
     bool_pr[WEB_FULLSCRN_BPR].state = (webfs != 0);
 
 
-    #if defined(_SUPPORT_SCROLLLEN)
-        uint8_t scroll_len;
-        if (!NVReadUInt8 (NV_SCROLLLEN, &scroll_len)) {
-            scroll_len = NSCROLL_C;
-            NVWriteUInt8 (NV_SCROLLLEN, scroll_len);
-        }
+    uint8_t scroll_len;
+    if (!NVReadUInt8 (NV_SCROLLLEN, &scroll_len)) {
+        scroll_len = NSCROLL_C;
+        NVWriteUInt8 (NV_SCROLLLEN, scroll_len);
+    }
 
-        // entangled: 0: FF  10: TF   25: TT  50: FT
-        if (scroll_len < NSCROLL_B) {
-            // NSCROLL_A
-            bool_pr[SCROLLLEN_BPR].state = false;
-            bool_pr[SCROLLBIG_BPR].state = false;
-        } else if (scroll_len < NSCROLL_C) {
-            // NSCROLL_B
-            bool_pr[SCROLLLEN_BPR].state = true;
-            bool_pr[SCROLLBIG_BPR].state = false;
-        } else if (scroll_len < NSCROLL_D) {
-            // NSCROLL_C
-            bool_pr[SCROLLLEN_BPR].state = false;
-            bool_pr[SCROLLBIG_BPR].state = true;
-        } else {
-            // NSCROLL_D
-            bool_pr[SCROLLLEN_BPR].state = true;
-            bool_pr[SCROLLBIG_BPR].state = true;
-        }
-    #else
-        // always force to zero
-        NVWriteUInt8 (NV_SCROLLLEN, 0);
-        bool_pr[SCROLLLEN_BPR].state = bool_pr[SCROLLBIG_BPR].state = false;
-    #endif
+    // entangled: 0: FF  10: TF   25: TT  50: FT
+    if (scroll_len < NSCROLL_B) {
+        // NSCROLL_A
+        bool_pr[SCROLLLEN_BPR].state = false;
+        bool_pr[SCROLLBIG_BPR].state = false;
+    } else if (scroll_len < NSCROLL_C) {
+        // NSCROLL_B
+        bool_pr[SCROLLLEN_BPR].state = true;
+        bool_pr[SCROLLBIG_BPR].state = false;
+    } else if (scroll_len < NSCROLL_D) {
+        // NSCROLL_C
+        bool_pr[SCROLLLEN_BPR].state = false;
+        bool_pr[SCROLLBIG_BPR].state = true;
+    } else {
+        // NSCROLL_D
+        bool_pr[SCROLLLEN_BPR].state = true;
+        bool_pr[SCROLLBIG_BPR].state = true;
+    }
+
+
+    uint8_t pane_rotp;
+    if (!NVReadUInt8 (NV_PANEROTP, &pane_rotp)) {
+        pane_rotp = PANEROTP_C;
+        NVWriteUInt8 (NV_PANEROTP, pane_rotp);
+    }
+
+    // entangled: 5: FF  10: TF   20: TT  40: FT
+    if (pane_rotp < PANEROTP_B) {
+        // PANEROTP_A
+        bool_pr[PANE_ROTPA_BPR].state = false;
+        bool_pr[PANE_ROTPB_BPR].state = false;
+    } else if (pane_rotp < PANEROTP_C) {
+        // PANEROTP_B
+        bool_pr[PANE_ROTPA_BPR].state = true;
+        bool_pr[PANE_ROTPB_BPR].state = false;
+    } else if (pane_rotp < PANEROTP_D) {
+        // PANEROTP_C
+        bool_pr[PANE_ROTPA_BPR].state = false;
+        bool_pr[PANE_ROTPB_BPR].state = true;
+    } else {
+        // PANEROTP_D
+        bool_pr[PANE_ROTPA_BPR].state = true;
+        bool_pr[PANE_ROTPB_BPR].state = true;
+    }
 }
 
 
@@ -3653,7 +3691,8 @@ static void runSetup()
 
         if (cur_page == COLOR_PAGE) {
 
-            if (handleCSelTouch(s))
+            // check color page unless we already know it was Done
+            if (c != CHAR_NL && handleCSelTouch(s))
                 continue;
         }
 
@@ -4084,6 +4123,8 @@ static void saveParams2NV()
     NVWriteUInt8 (NV_RANKSW, bool_pr[RANKSW_BPR].state);
     NVWriteUInt8 (NV_NEWDXDEWX, bool_pr[NEWDXDEWX_BPR].state);
     NVWriteUInt8 (NV_WEBFS, bool_pr[WEB_FULLSCRN_BPR].state);
+    NVWriteUInt8 (NV_PANEROTP, getPaneRotationPeriod());
+    NVWriteUInt8 (NV_SHOWPIP, showPIP());
 
     // save and engage user's X11 settings
     uint16_t x11flags = 0;
@@ -4364,14 +4405,10 @@ bool useMagBearing()
  */
 int getSpotPathSize()
 {
-#if defined(_SUPPORT_SPOTPATH)
     if (bool_pr[SPOTPATH_BPR].state)
         return (bool_pr[SPOTPATHSZ_BPR].state ? WIDEPATHSZ : THINPATHSZ);
     else
         return (0);
-#else
-    return (0);
-#endif
 }
 
 /* return whether to label spots with either call or prefix.
@@ -4748,7 +4785,9 @@ const char *getI2CFilename(void)
  */
 bool onDXWatchList (const char *call)
 {
-    return (onWatchList (dx_wlist, NV_DXWLIST_LEN, call));
+    const char *v = getEntangledValue (&bool_pr[DXWLISTA_BPR], &bool_pr[DXWLISTB_BPR]);
+    bool off = strcmp (v, bool_pr[DXWLISTA_BPR].f_str) == 0;
+    return (!off && onWatchList (dx_wlist, NV_DXWLIST_LEN, call));
 }
 
 /* return whether to display only calls in the DX watch list
@@ -4756,7 +4795,8 @@ bool onDXWatchList (const char *call)
 bool showOnlyOnDXWatchList()
 {
     const char *v = getEntangledValue (&bool_pr[DXWLISTA_BPR], &bool_pr[DXWLISTB_BPR]);
-    return (strcmp (v, bool_pr[DXWLISTB_BPR].t_str) == 0);
+    bool only = strcmp (v, bool_pr[DXWLISTB_BPR].t_str) == 0;
+    return (only);
 }
 
 
@@ -4765,7 +4805,9 @@ bool showOnlyOnDXWatchList()
  */
 bool onSPOTAWatchList (const char *call)
 {
-    return (onWatchList (spota_wlist, NV_SPOTAWLIST_LEN, call));
+    const char *v = getEntangledValue (&bool_pr[SPOTAWLISTA_BPR], &bool_pr[SPOTAWLISTB_BPR]);
+    bool off = strcmp (v, bool_pr[SPOTAWLISTA_BPR].f_str) == 0;
+    return (!off && onWatchList (spota_wlist, NV_SPOTAWLIST_LEN, call));
 }
 
 /* return whether to display only calls in the SPOTA watch list
@@ -4773,7 +4815,8 @@ bool onSPOTAWatchList (const char *call)
 bool showOnlyOnSPOTAWatchList()
 {
     const char *v = getEntangledValue (&bool_pr[SPOTAWLISTA_BPR], &bool_pr[SPOTAWLISTB_BPR]);
-    return (strcmp (v, bool_pr[SPOTAWLISTB_BPR].t_str) == 0);
+    bool only = strcmp (v, bool_pr[SPOTAWLISTB_BPR].t_str) == 0;
+    return (only);
 }
 
 
@@ -4805,4 +4848,18 @@ bool rankSpaceWx(void)
 bool showNewDXDEWx(void)
 {
     return (bool_pr[NEWDXDEWX_BPR].state);
+}
+
+/* return the desired pane rotation period, seconds
+ */
+int getPaneRotationPeriod (void)
+{
+    return (atoi (getEntangledValue (&bool_pr[PANE_ROTPA_BPR], &bool_pr[PANE_ROTPB_BPR])));
+}
+
+/* return whether to show the puplic IP address
+ */
+bool showPIP()
+{
+    return (bool_pr[SHOWPIP_BPR].state);
 }

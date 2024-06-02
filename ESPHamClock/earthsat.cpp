@@ -752,6 +752,7 @@ static void fatalSatError (const char *fmt, ...)
         false,                                  // whether to update clocks while waiting
         s,                                      // tap location or ...
         c,                                      // keyboard char code
+        false, false,
     };
     (void) waitForUser (ui);
 
@@ -926,6 +927,7 @@ static bool askSat()
         false,
         tap_s,
         typed_c,
+        false, false,
     };
 
     // init selected item to none, might be set while drawing the matrix
@@ -1646,6 +1648,7 @@ void drawSatNameOnRow(uint16_t y0)
  */
 bool checkSatMapTouch (const SCoord &s)
 {
+    // skip if no sat
     if (!sat || !sat_path)
         return (false);
 
@@ -1655,7 +1658,7 @@ bool checkSatMapTouch (const SCoord &s)
     sat_b.w = 2*SAT_TOUCH_R;
     sat_b.h = 2*SAT_TOUCH_R;
 
-    return (inBox (s, sat_b) || (!dx_info_for_sat && inBox (s, map_name_b)));
+    return (inBox (s, sat_b) || inBox (s, map_name_b));
 }
 
 /* return whether user has tapped the "DX" label while showing DX info which means op wants
@@ -1697,12 +1700,6 @@ void drawSatPass()
 bool querySatSelection()
 {
     resetWatchdog();
-
-    // not allowed to show sat if too many memory intensive panes are up
-    if (!paneComboOk(plot_rotset)) {
-        fatalSatError (_FX("Too many hi-memory panes to add a satellite also"));
-        return (false);
-    }
 
     // we need the whole screen
     closeDXCluster();       // prevent inbound msgs from clogging network

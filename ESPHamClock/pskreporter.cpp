@@ -1,12 +1,11 @@
 /* manage PSKReporter, WSPR and RBN records and drawing.
- * ESP does not draw paths and only shows max dist on each band.
  */
 
 #include "HamClock.h"
 
 
 
-// global state
+// global state for webserver
 uint8_t psk_mask;                               // one of PSKModeBits
 uint32_t psk_bands;                             // bitmask of PSKBandSetting
 uint16_t psk_maxage_mins;                       // query period, minutes
@@ -24,7 +23,11 @@ static const char rbn_page[] PROGMEM = "/fetchRBN.pl";
 #define markSpots()     (dotSpots() || labelSpots())
 
 // private state
-static int n_reports;                           // count of reports in psk_bands
+static PSKReport *reports;                      // malloced list of reports
+static int n_reports;                           // count of reports used in psk_bands, might be < n_malloced
+static int n_malloced;                          // total n malloced in reports[]
+static int spot_maxrpt[PSKBAND_N];              // indices into reports[] for the farthest spot per band
+static KD3Node *kd3tree, *kd3root;              // n_reports of nodes that point into reports[] and tree
 
 // band stats
 PSKBandStats bstats[PSKBAND_N];
@@ -81,79 +84,6 @@ static uint16_t targetSz(void)
 }
 
 
-#if defined(_IS_UNIX)
-
-/* only UNIX stores all spots and adds fast lookup. ESP only stores the spot at max dist per band in bstats.
- */
-
-// UNIX private UNIX state
-static PSKReport *reports;                      // malloced list of reports
-static int n_malloced;                          // n malloced in reports[]
-static int spot_maxrpt[PSKBAND_N];              // indices into reports[] for the farthest spot per band
-static KD3Node *kd3tree, *kd3root;              // n_reports of nodes that point into reports[] and tree
-
-
-#else 
-
-/* erase all distance markers
- * ESP only
- */
-static void eraseFarthestPSKSpots (void)
-{
-    // ignore if not in any rotation set or not showing dots
-    if (findPaneForChoice(PLOT_CH_PSK) == PANE_NONE || !markSpots())
-        return;
-
-    resetWatchdog();
-
-    for (int i = 0; i < PSKBAND_N; i++) {
-        PSKBandStats &pbs = bstats[i];
-        if (pbs.maxkm > 0) {
-            // erase target for sure
-            for (int8_t dy = -targetSz(); dy <= targetSz(); dy += 1) {
-                for (int8_t dx = -targetSz(); dx <= targetSz(); dx += 1) {
-                    drawMapCoord (bstats[i].max_s.x+dx, bstats[i].max_s.y+dy);
-                }
-            }
-            // erase tag if set
-            if (labelSpots()) {
-                for (uint8_t dy = 0; dy < pbs.maxtag_b.h; dy++) {
-                    for (uint8_t dx = 0; dx < pbs.maxtag_b.w; dx++) {
-                        drawMapCoord (pbs.maxtag_b.x+dx, pbs.maxtag_b.y+dy);
-                    }
-                }
-            }
-        }
-    }
-}
-
-/* return whether the given screen coord is over any visible psk spot or its tag
- * ESP only
- */
-bool overAnyFarthestPSKSpots (const SCoord &s)
-{
-    // ignore if not in any rotation set or not showing dots
-    if (findPaneForChoice(PLOT_CH_PSK) == PANE_NONE || !markSpots())
-        return (false);
-
-    for (int i = 0; i < PSKBAND_N; i++) {
-        PSKBandStats &pbs = bstats[i];
-        if (pbs.maxkm > 0 && TST_PSKBAND(i)) {
-            if (inCircle (s, SCircle {pbs.max_s, targetSz()}))
-                return (true);
-            if (labelSpots() && inBox (s, pbs.maxtag_b))
-                return (true);
-        }
-    }
-
-    // nope
-    return (false);
-}
-
-#endif  // _IS_UNIX
-
-
-
 /* return index of bands[] containing Hz, else -1
  */
 static int findBand (long Hz)
@@ -182,8 +112,8 @@ static int findBand (long Hz)
 static void ditherLL (LatLong &ll)
 {
     // tweak some fraction of a 4 char grid: 1 deg in lat, 2 deg in lng
-    ll.lat_d += random(1000)/1000.0F - 0.5F;
-    ll.lng_d += random(2000)/1000.0F - 1.0F;
+    ll.lat_d += (random(1000)/1000.0F - 0.5F)/pan_zoom.zoom;
+    ll.lng_d += (random(2000)/1000.0F - 1.0F)/pan_zoom.zoom;
     normalizeLL(ll);
 }
 
@@ -374,15 +304,12 @@ static void drawPSKPane (const SBox &box)
     }
 }
 
-/* query PSK reporter or WSPR for new reports, draw results and return whether all ok
+/* retrieve spots into reports[] according to current settings.
+ * return TODO
  */
-bool updatePSKReporter (const SBox &box)
+static bool retrievePSK (void)
 {
-#if defined (_IS_ESP8266)
-    // erase current max distance markers
-    eraseFarthestPSKSpots();
-#endif
-
+    // get fresh
     WiFiClient psk_client;
     bool ok = false;
     int n_totspots = 0;
@@ -428,7 +355,7 @@ bool updatePSKReporter (const SBox &box)
             goto out;
         }
 
-        // reset
+        // reset lists
         n_reports = 0;
         memset (bstats, 0, sizeof(bstats));
 
@@ -474,8 +401,6 @@ bool updatePSKReporter (const SBox &box)
                 // update count of this band and total
                 bstats[band].count++;
 
-            #if defined (_IS_UNIX)
-
                 // add to reports[] if want this band for plotting
                 if (TST_PSKBAND(band)) {
 
@@ -489,8 +414,6 @@ bool updatePSKReporter (const SBox &box)
                     // save new spot
                     reports[n_reports++] = new_r;
                 }
-
-            #endif // _IS_UNIX
 
                 // update max distance and its location for this band. need all bands for the pane table.
                 float dist, bearing;        
@@ -510,15 +433,11 @@ bool updatePSKReporter (const SBox &box)
                     }
                     // N.B. do not set max_s or maxtag_b here, rely on drawFarthestPSKSpots() as needed
 
-            #if defined (_IS_UNIX)
                     spot_maxrpt[band] = n_reports-1;            // -1 because already incremented
-            #endif // _IS_UNIX
 
                 }
             }
         }
-
-    #if defined (_IS_UNIX)
 
         // finished collecting reports now make the fast lookup tree.
         // N.B. can't build incrementally because left/right pointers can move with each realloc
@@ -534,9 +453,7 @@ bool updatePSKReporter (const SBox &box)
         }
         kd3root = mkKD3NodeTree (kd3tree, n_reports, 0);
 
-    #endif
-
-        // ok
+        // ok!
         ok = true;
 
     } else
@@ -552,13 +469,6 @@ out:
         }
     }
 
-    drawPSKPane (box);
-
-#if defined (_IS_ESP8266)
-    // draw everyhing in case erase clobbered
-    drawAllSymbols(true);
-#endif
-
     // finish up
     psk_client.stop();
     Serial.printf (_FX("PSK: found %d %s reports %s %s\n"),
@@ -567,8 +477,41 @@ out:
                         of_de ? "of" : "by",
                         use_call ? getCallsign() : de_maid);
 
-    // already reported any problems
+    // already logged any problems
     return (ok);
+}
+
+/* query PSK reporter etc for new reports, draw results and return whether all ok
+ */
+bool updatePSKReporter (const SBox &box)
+{
+    // save last retrieval settings to know whether reports[] can be reused
+    static uint8_t my_psk_mask;                         // setting used for reports[]
+    static uint32_t my_psk_bands;                       // setting used for reports[]
+    static uint16_t my_psk_maxage_mins;                 // setting used for reports[]
+    static bool last_ok;                                // used to force retry
+
+    // just use cache if settings all match and not too old
+    if (last_ok && reports && n_malloced > 0
+                            && my_psk_mask == psk_mask && my_psk_maxage_mins == psk_maxage_mins
+                            && my_psk_bands == psk_bands) {
+        drawPSKPane (box);
+        return (true);
+    }
+
+    // save settings
+    my_psk_mask = psk_mask;
+    my_psk_maxage_mins = psk_maxage_mins;
+    my_psk_bands = psk_bands;
+
+    // get fresh
+    last_ok = retrievePSK();
+
+    // display whatever we got regardless
+    drawPSKPane (box);
+
+    // reply
+    return (last_ok);
 }
 
 /* check for tap at s known to be within a PLOT_CH_PSK box.
@@ -688,7 +631,6 @@ bool checkPSKTouch (const SCoord &s, const SBox &box)
             if (mitems[27].set) SET_PSKBAND(PSKBAND_10M);
             if (mitems[28].set) SET_PSKBAND(PSKBAND_6M);
             if (mitems[29].set) SET_PSKBAND(PSKBAND_2M);
-            Serial.printf (_FX("PSK: new bands mask 0x%x\n"), psk_bands);
 
             // get new age
             if (mitems[14].set)
@@ -743,11 +685,6 @@ bool getPSKBandStats (PSKBandStats stats[PSKBAND_N], const char *names[PSKBAND_N
 }
 
 
-
-
-#if defined(_IS_UNIX)
-
-
 /* return whether the path for the given freq should be drawn dashed
  */
 bool getBandDashed (long Hz)
@@ -757,57 +694,62 @@ bool getBandDashed (long Hz)
 }
 
 /* draw path for the given report
- * UNIX only
  */
 static void drawPSKPath (const PSKReport &rpt)
 {
-    float dist, bear;
-    propPath (false, de_ll, sdelat, cdelat, rpt.dx_ll, &dist, &bear);
-    const int n_step = (int)(ceilf(dist/deg2rad(PATH_SEGLEN))) | 1;     // odd so dashed ends always drawn
-    const float step = dist/n_step;
-    bool dashed = getBandDashed (rpt.Hz);
-    uint16_t color = getBandColor(rpt.Hz);
-    SCoord dx_s = {0, 0};                                               // last path coord is DX
-    SCoord prev_s = {0, 0};                                             // .x == 0 means don't show
-    uint16_t lwRaw, mkRaw;                                              // raw path and marker sizes
-
+    // raw path and marker sizes and color
+    uint16_t lwRaw, mkRaw;
     getRawSpotSizes (lwRaw, mkRaw);
+    uint16_t color = getBandColor(rpt.Hz);
 
-    // N.B. compute each segment even if not showing paths in order to find dx_s
-    for (int i = 0; i <= n_step; i++) {     // fence posts
-        float r = i*step;
-        float ca, B;
-        SCoord s;
-        solveSphere (bear, r, sdelat, cdelat, &ca, &B);
-        ll2sRaw (asinf(ca), fmodf(de_ll.lng+B+5*M_PIF,2*M_PIF)-M_PIF, s, lwRaw);
-        if (prev_s.x > 0) {
-            if (segmentSpanOkRaw(prev_s, s, lwRaw)) {
-                if (lwRaw && (!dashed || n_step < 7 || (i & 1)))
-                    tft.drawLineRaw (prev_s.x, prev_s.y, s.x, s.y, lwRaw, color);
-                dx_s = s;
-            } else
-               s.x = 0;
-        }
-        prev_s = s;
-    } 
+    // draw path if desired
+    if (lwRaw > 0) {
+
+        float dist, bear;
+        propPath (false, de_ll, sdelat, cdelat, rpt.dx_ll, &dist, &bear);
+        const int n_step = (int)(ceilf(dist/deg2rad(PATH_SEGLEN))) | 1; // odd so dashed ends always drawn
+        const float step = dist/n_step;
+        bool dashed = getBandDashed (rpt.Hz);
+        SCoord prev_s = {0, 0};                                         // .x == 0 means don't show
+
+        for (int i = 0; i <= n_step; i++) {     // fence posts
+            float r = i*step;
+            float ca, B;
+            SCoord s;
+            solveSphere (bear, r, sdelat, cdelat, &ca, &B);
+            ll2sRaw (asinf(ca), fmodf(de_ll.lng+B+5*M_PIF,2*M_PIF)-M_PIF, s, lwRaw);
+            if (prev_s.x > 0) {
+                if (segmentSpanOkRaw(prev_s, s, lwRaw)) {
+                    if (!dashed || n_step < 7 || (i & 1))
+                        tft.drawLineRaw (prev_s.x, prev_s.y, s.x, s.y, lwRaw, color);
+                } else
+                   s.x = 0;
+            }
+            prev_s = s;
+        } 
+    }
 
     // mark dx end if desired
-    if (dx_s.x > 0 && markSpots()) {
-        if (psk_mask & PSKMB_OFDE) {
-            // DE is tx so DX is rx: draw a square
-            tft.fillRectRaw (dx_s.x-mkRaw, dx_s.y-mkRaw, 2*mkRaw, 2*mkRaw, color);
-            tft.drawRectRaw (dx_s.x-mkRaw, dx_s.y-mkRaw, 2*mkRaw, 2*mkRaw, RA8875_BLACK);
-        } else {
-            // DE is rx so DX is tx: draw a cicle (like an expanding wave??)
-            tft.fillCircleRaw (dx_s.x, dx_s.y, mkRaw, color);
-            tft.drawCircleRaw (dx_s.x, dx_s.y, mkRaw, RA8875_BLACK);
+    if (markSpots()) {
+        SCoord dx_s;
+        ll2s (rpt.dx_ll, dx_s, mkRaw);
+        if (overMap (dx_s)) {
+            ll2sRaw (rpt.dx_ll, dx_s, mkRaw);
+            if (psk_mask & PSKMB_OFDE) {
+                // DE is tx so DX is rx: draw a square
+                tft.fillRectRaw (dx_s.x-mkRaw, dx_s.y-mkRaw, 2*mkRaw, 2*mkRaw, color);
+                tft.drawRectRaw (dx_s.x-mkRaw, dx_s.y-mkRaw, 2*mkRaw, 2*mkRaw, RA8875_BLACK);
+            } else {
+                // DE is rx so DX is tx: draw a cicle (like an expanding wave??)
+                tft.fillCircleRaw (dx_s.x, dx_s.y, mkRaw, color);
+                tft.drawCircleRaw (dx_s.x, dx_s.y, mkRaw, RA8875_BLACK);
+            }
         }
     }
 }
 
 
 /* draw the current set of spot paths in reports[] if enabled
- * UNIX only
  */
 void drawPSKPaths ()
 {
@@ -831,7 +773,6 @@ void drawPSKPaths ()
 }
 
 /* return report of spot closest to ll as appropriate.
- * UNIX only
  */
 bool getClosestPSK (const LatLong &ll, const PSKReport **rpp)
 {
@@ -901,6 +842,3 @@ void getPSKSpots (const PSKReport* &rp, int &n_rep)
     rp = reports;
     n_rep = n_reports;
 }
-
-
-#endif // _IS_UNIX

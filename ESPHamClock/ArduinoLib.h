@@ -34,9 +34,7 @@
   #endif
 #endif
     
-#if defined(_IS_ESP8266)
-  #define _I2C_ESP
-#elif defined(__has_include)
+#if defined(__has_include)
   #if defined(_IS_FREEBSD) && __has_include(<dev/iicbus/iic.h>)
     #define _NATIVE_I2C_FREEBSD
   #elif defined(_IS_LINUX) && (__has_include(<linux/i2c-dev.h>) || __has_include("linux/i2c-dev.h"))
@@ -44,9 +42,7 @@
   #endif
 #endif
 
-#if defined(_IS_ESP8266)
-  #define _NATIVE_GPIO_ESP
-#elif defined(__has_include)
+#if defined(__has_include)
   #if defined(_IS_FREEBSD)
     #if __has_include(<libgpio.h>)
         #define _NATIVE_GPIO_FREEBSD
@@ -112,6 +108,7 @@ extern const char *hc_version;
 extern std::string our_dir;
 extern void doExit(void);
 extern bool testPassword (const char *category, const char *candidate_pw);
+extern const char *pw_file;
 
 #define N_DIAG_FILES 4
 extern const char *diag_files[N_DIAG_FILES];

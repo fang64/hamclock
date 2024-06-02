@@ -36,3 +36,46 @@ void strtoupper (char *str)
             *str = toupper(c);
 }
 
+
+/* remove leading and trailing white space IN PLACE, return str.
+ */
+char *strtrim (char *str)
+{
+    if (!str)
+        return (str);
+
+    // skip leading blanks
+    char *blank = str;
+    while (isspace(*blank))
+        blank++;
+
+    // copy from first-nonblank back to beginning
+    size_t sl = strlen (blank);
+    if (blank > str)
+        memmove (str, blank, sl+1);             // include \0
+
+    // skip back from over trailing blanks
+    while (sl > 0 && isspace(str[sl-1]))
+        str[--sl] = '\0';
+
+    // return same starting point
+    return (str);
+}
+
+/* return the bounding box of the given string in the current font.
+ */
+void getTextBounds (const char str[], uint16_t *wp, uint16_t *hp)
+{
+    int16_t x, y;
+    tft.getTextBounds ((char*)str, 100, 100, &x, &y, wp, hp);
+}
+
+
+/* return width in pixels of the given string in the current font
+ */
+uint16_t getTextWidth (const char str[])
+{
+    uint16_t w, h;
+    getTextBounds (str, &w, &h);
+    return (w);
+}

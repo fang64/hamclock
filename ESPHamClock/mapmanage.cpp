@@ -571,9 +571,6 @@ static File openMapFile (bool *downloaded, const char *file, const char *title)
                 LittleFS.remove(file);
             }
 
-            // insure room
-            cleanupMaps (title);
-
             // download and open again if success
             if (downloadMapFile (client, file, title)) {
                 *downloaded = true;
@@ -615,7 +612,6 @@ static bool installFileMaps()
             day_file.close();
         if (night_file)
             night_file.close();
-        cleanupMaps (style);
 
         // open each file, downloading if newer or not found locally
         bool dd = false, nd = false;
@@ -669,20 +665,28 @@ static bool installPropMaps (void)
 
 /* install fresh maps depending on prop_map and core_map.
  * return whether ok
+ * N.B. drain pending clicks that may have accumulated during slow downloads.
  */
 bool installFreshMaps()
 {
-        if (prop_map.active)
-            return (installPropMaps());
+        bool ok = false;
 
-        bool core_ok = false;
-        if (core_map == CM_MUF)
-            core_ok = installMUFMaps();
-        else
-            core_ok = installFileMaps();
-        if (core_ok)
-            NVWriteString (NV_COREMAPSTYLE, coremap_names[core_map]);
-        return (core_ok);
+        if (prop_map.active)
+            ok = installPropMaps();
+        else {
+            bool core_ok = false;
+            if (core_map == CM_MUF)
+                core_ok = installMUFMaps();
+            else
+                core_ok = installFileMaps();
+            if (core_ok)
+                NVWriteString (NV_COREMAPSTYLE, coremap_names[core_map]);
+            ok = core_ok;
+        }
+
+        drainTouch();
+
+        return (ok);
 }
 
 /* init core_map from NV, or set a default, and always disable prop_map.
@@ -1002,15 +1006,22 @@ void drawMapScale()
     // determine marker location, if used
     uint16_t marker_x = 0;
     if (!prop_map.active) {
-        float v = SPW_ERR;
+        float v = 0;
+        bool v_ok = false;
         if (core_map == CM_DRAP) {
-            checkDRAP();
-            v = space_wx[SPCWX_DRAP].value;
+            (void) checkForNewDRAP();
+            if (space_wx[SPCWX_DRAP].value_ok) {
+                v = space_wx[SPCWX_DRAP].value;
+                v_ok = true;
+            }
         } else if (core_map == CM_AURORA) {
-            checkAurora();
-            v = space_wx[SPCWX_AURORA].value;
+            (void) checkForNewAurora();
+            if (space_wx[SPCWX_AURORA].value_ok) {
+                v = space_wx[SPCWX_AURORA].value;
+                v_ok = true;
+            }
         }
-        if (v != SPW_ERR) {
+        if (v_ok) {
             // find marker but beware range overflow and leave room for full width
             float clamp_v = CLAMPF (v, _MS_MINV, _MS_MAXV);
             marker_x = CLAMPF (_MS_V2X(clamp_v), mapscale_b.x + 3, mapscale_b.x + mapscale_b.w - 4);

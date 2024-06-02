@@ -29,6 +29,7 @@
 static WiFiClient dx_client;                    // persistent TCP connection while displayed ...
 static WiFiUDP wsjtx_server;                    // or persistent UDP "connection" to WSJT-X client program
 static uint32_t last_action;                    // time of most recent spot or user activity, millis()
+static bool multi_cntn;                         // set when cluster has noticed multiple connections
 #define MAX_LCN        10                       // max lost connections per MAX_LCDT
 #define MAX_LCDT       3600                     // max lost connections period, seconds
 
@@ -132,65 +133,8 @@ static void dxcLog (const char *fmt, ...)
         strcat (msg, "\n");
 
     // print with prefix
-    Serial.printf (_FX("DXC: %s"), msg);
+    Serial.printf ("DXC: %s", msg);
 }
-
-/* return whether the given cluster response line looks like their prompt.
- */
-static bool isClusterPrompt (const char *line, int ll)
-{
-    if (cl_type == CT_DXSPIDER)
-        return (ll >= 2 && line[ll-1] == '>' && line[ll-2] == ' ');
-    if (cl_type == CT_ARCLUSTER)
-        return (ll >= 2 && line[ll-1] == '>' && line[ll-2] == '6');
-    return (false);
-}
-
-/* read cluster until find next line that looks like a prompt.
- * return whether found
- * TODO: this might skip through more spots
- */
-static bool lookForDXClusterPrompt()
-{
-    char line[150];
-    uint16_t ll;
-
-    while (getTCPLine (dx_client, line, sizeof(line), &ll)) {
-        dxcLog (_FX("%s\n"), line);
-        if (isClusterPrompt (line, ll))
-            return (true);
-    }
-
-    dxcLog (_FX("Can not find prompt\n"));
-    return (false);
-}
-
-/* read lines from cluster. if find one containing needle return it in buf.
- * intended for seeking command responses.
- * N.B. we assume needle is all lower case
- */
-static bool lookForDXClusterString (char *buf, uint16_t bufl, const char *needle)
-{
-    // expect within next few lines
-    // dxcLog (_FX("looking for %s\n"), needle);
-    bool found = false;
-    for (int i = 0; !found && i < 5; i++) {
-        if (getTCPLine (dx_client, buf, bufl, NULL)) {
-            dxcLog (_FX("%s\n"), buf);
-            strtolower (buf);
-            if (strstr (buf, needle))
-                found = true;
-        }
-    }
-
-    // log if failure
-    if (!found)
-        dxcLog (_FX("Failed to find cluster response '%s'\n"), needle);
-
-    // return whether successful
-    return (found);
-}
-
 
 /* set radio and DX from given row, known to be defined
  */
@@ -198,14 +142,10 @@ static void engageDXCRow (DXClusterSpot &s)
 {
     setRadioSpot(s.kHz);
 
-    #if defined (_SUPPORT_DXCPLOT)
-
     LatLong ll;
     ll.lat_d = rad2deg(s.dx_lat);
     ll.lng_d = rad2deg(s.dx_lng);
     newDX (ll, NULL, s.dx_call);       // normalizes
-
-    #endif // _SUPPORT_DXCPLOT
 }
 
 
@@ -218,7 +158,7 @@ static void addDXClusterSpot (const SBox &box, DXClusterSpot &new_spot)
     for (int i = 0; i < dxc_ss.n_data; i++) {
         DXClusterSpot &spot = dx_spots[i];
         if (fabsf(new_spot.kHz-spot.kHz) < 0.1F && strcmp (new_spot.dx_call, spot.dx_call) == 0) {
-            dxcLog (_FX("DXC: %s dup\n"), new_spot.dx_call);
+            dxcLog ("DXC: %s dup\n", new_spot.dx_call);
             return;
         }
     }
@@ -235,7 +175,7 @@ static void addDXClusterSpot (const SBox &box, DXClusterSpot &new_spot)
         // grow dx_spots
         dx_spots = (DXClusterSpot *) realloc (dx_spots, (dxc_ss.n_data+1) * sizeof(DXClusterSpot));
         if (!dx_spots)
-            fatalError (_FX("No memory for %d spots"), dxc_ss.n_data);
+            fatalError ("No memory for %d spots", dxc_ss.n_data);
     }
 
     // append
@@ -246,14 +186,10 @@ static void addDXClusterSpot (const SBox &box, DXClusterSpot &new_spot)
     dxc_ss.scrollToNewest();
     drawAllVisDXCSpots(box);
 
- #if defined (_SUPPORT_DXCPLOT)
-
     // show on map
     setDXCSpotPosition (list_spot);
     drawDXPathOnMap (list_spot);
     drawDXCLabelOnMap (list_spot);
-
- #endif // _SUPPORT_DXCPLOT
 }
 
 /* given address of pointer into a WSJT-X message, extract bool and advance pointer to next field.
@@ -297,7 +233,7 @@ static char *wsjtx_utf8 (uint8_t **bpp)
     memmove (bp0, bp0+4, len);
     bp0[len] = '\0';
 
-    // dxcLog (_FX("utf8 %d '%s'\n"), len, (char*)bp0);
+    // dxcLog ("utf8 %d '%s'\n", len, (char*)bp0);
 
     // return address of content now within packet
     return ((char *)bp0);
@@ -320,13 +256,12 @@ static uint64_t wsjtx_quint64 (uint8_t **bpp)
  */
 static bool wsjtxIsStatusMsg (uint8_t **bpp)
 {
-    resetWatchdog();
 
     // crack magic header
     uint32_t magic = wsjtx_quint32 (bpp);
-    // dxcLog (_FX("magic 0x%x\n"), magic);
+    // dxcLog ("magic 0x%x\n", magic);
     if (magic != 0xADBCCBDA) {
-        dxcLog (_FX("packet received but wrong magic\n"));
+        dxcLog ("packet received but wrong magic\n");
         return (false);
     }
 
@@ -335,7 +270,7 @@ static bool wsjtxIsStatusMsg (uint8_t **bpp)
 
     // crack message type. we only care about Status messages which are type 1
     uint32_t msgtype = wsjtx_quint32 (bpp);
-    // dxcLog (_FX("type %d\n"), msgtype);
+    // dxcLog ("type %d\n", msgtype);
     if (msgtype != 1)
         return (false);
 
@@ -343,7 +278,7 @@ static bool wsjtxIsStatusMsg (uint8_t **bpp)
     // crack ID but ignore to allow compatibility with clones.
     volatile char *id = wsjtx_utf8 (bpp);
     (void)id;           // lint
-    // dxcLog (_FX("id '%s'\n"), id);
+    // dxcLog ("id '%s'\n", id);
     // if (strcmp ("WSJT-X", id) != 0)
         // return (false);
 
@@ -358,8 +293,7 @@ static bool wsjtxIsStatusMsg (uint8_t **bpp)
  */
 static bool wsjtxParseStatusMsg (const SBox &box, uint8_t **bpp)
 {
-    resetWatchdog();
-    // dxcLog (_FX("Parsing status\n"));
+    // dxcLog ("Parsing status\n");
 
     // crack remaining fields down to grid
     uint32_t hz = wsjtx_quint64 (bpp);                      // capture freq
@@ -376,7 +310,7 @@ static bool wsjtxParseStatusMsg (const SBox &box, uint8_t **bpp)
     char *de_grid = wsjtx_utf8 (bpp);                       // capture DE grid
     char *dx_grid = wsjtx_utf8 (bpp);                       // capture DX grid
 
-    // dxcLog (_FX("WSJT: %7d %s %s %s %s\n"), hz, de_call, de_grid, dx_call, dx_grid);
+    // dxcLog ("WSJT: %7d %s %s %s %s\n", hz, de_call, de_grid, dx_call, dx_grid);
 
     // ignore if frequency is clearly bogus (which I have seen)
     if (hz == 0)
@@ -385,11 +319,11 @@ static bool wsjtxParseStatusMsg (const SBox &box, uint8_t **bpp)
     // get each ll from grids
     LatLong ll_de, ll_dx;
     if (!maidenhead2ll (ll_de, de_grid)) {
-        dxcLog (_FX("%s invalid or missing DE grid: %s\n"), de_call, de_grid);
+        dxcLog ("%s invalid or missing DE grid: %s\n", de_call, de_grid);
         return (false);
     }
     if (!maidenhead2ll (ll_dx, dx_grid)) {
-        dxcLog (_FX("%s invalid or missing DX grid: %s\n"), dx_call, dx_grid);
+        dxcLog ("%s invalid or missing DX grid: %s\n", dx_call, dx_grid);
         return (false);
     }
 
@@ -423,14 +357,14 @@ static void showDXClusterErr (const SBox &box, const char *fmt, ...)
     char buf[500];
     va_list ap;
     va_start (ap, fmt);
-    size_t ml = snprintf (buf, sizeof(buf), _FX("DX Cluster error: "));
+    size_t ml = snprintf (buf, sizeof(buf), "DX Cluster error: ");
     vsnprintf (buf+ml, sizeof(buf)-ml, fmt, ap);
     va_end (ap);
 
     plotMessage (box, RA8875_RED, buf);
 
     // log
-    dxcLog (_FX("%s\n"), buf);
+    dxcLog ("%s\n", buf);
 
     // shut down connection
     closeDXCluster();
@@ -446,7 +380,7 @@ static void incLostConn(void)
         n_lostconn = 0;
     n_lostconn += 1;
     NVWriteUInt8 (NV_DXMAX_N, n_lostconn);
-    dxcLog (_FX("lost connection: now %u\n"), n_lostconn);
+    dxcLog ("lost connection: now %u\n", n_lostconn);
 }
 
 /* return whether max lost connection rate has been reached
@@ -466,7 +400,7 @@ static bool checkLostConnRate()
         n_lostconn = 0;
         NVWriteUInt8 (NV_DXMAX_N, n_lostconn);
     }
-    dxcLog (_FX("%u lost connections since %u\n"), n_lostconn, t_maxconn);
+    dxcLog ("%u lost connections since %u\n", n_lostconn, t_maxconn);
 
     // check if max lost connections have been hit
     bool hit_max = false;
@@ -485,6 +419,18 @@ static bool checkLostConnRate()
     return (hit_max);
 }
 
+/* given a cluster line, set multi_cntn if it seems to be telling us it has detected multiple connections
+ *   from the same call-ssid.
+ * not at all sure this works everywhere.
+ * Only Spiders seem to care enough to dicsonnect, AR clusters report but otherwise don't care.
+ */
+static void detectMultiConnection (const char *line)
+{
+    // first seems typical for spiders, second for AR
+    if (strstr (line, "econnected") != NULL || strstr (line, "Dupe call") != NULL)
+        multi_cntn = true;
+}
+
 /* try to connect to the cluster.
  * if success: dx_client or wsjtx_server is live and return true,
  * else: both are closed, display error msg in box, return false.
@@ -494,16 +440,18 @@ static bool connectDXCluster (const SBox &box)
 {
     // check max lost connection rate
     if (checkLostConnRate()) {
-        showDXClusterErr (box, _FX("Hit max %d lost connections/hr limit"), MAX_LCN);
+        showDXClusterErr (box, "Hit max %d lost connections/hr limit", MAX_LCN);
         return (false);
     }
+
+    // reset connection flag
+    multi_cntn = false;
 
     // get cluster connection info
     const char *dxhost = getDXClusterHost();
     int dxport = getDXClusterPort();
 
-    dxcLog (_FX("Connecting to %s:%d\n"), dxhost, dxport);
-    resetWatchdog();
+    dxcLog ("Connecting to %s:%d\n", dxhost, dxport);
 
     if (useWSJTX()) {
 
@@ -517,8 +465,8 @@ static bool connectDXCluster (const SBox &box)
 
             // reformat as IPAddress
             unsigned o1, o2, o3, o4;
-            if (sscanf (dxhost, _FX("%u.%u.%u.%u"), &o1, &o2, &o3, &o4) != 4) {
-                showDXClusterErr (box, _FX("Multicast address must be formatted as a.b.c.d: %s"),
+            if (sscanf (dxhost, "%u.%u.%u.%u", &o1, &o2, &o3, &o4) != 4) {
+                showDXClusterErr (box, "Multicast address must be formatted as a.b.c.d: %s",
                                                 dxhost);
                 return (false);
             }
@@ -527,7 +475,7 @@ static bool connectDXCluster (const SBox &box)
 
             ok = wsjtx_server.beginMulticast (ifIP, mcIP, dxport);
             if (ok)
-                dxcLog (_FX("multicast %s:%d ok\n"), dxhost, dxport);
+                dxcLog ("multicast %s:%d ok\n", dxhost, dxport);
 
         } else {
 
@@ -551,48 +499,50 @@ static bool connectDXCluster (const SBox &box)
             // valid connection -- keep an eye out for lost connection
 
             // look alive
-            resetWatchdog();
             updateClocks(false);
-            dxcLog (_FX("connect ok\n"));
+            dxcLog ("connect ok\n");
 
             // assume first question is asking for call
             wdDelay(100);
             const char *login = getDXClusterLogin();
-            dxcLog (_FX("logging in as %s\n"), login);
+            dxcLog ("logging in as %s\n", login);
             dx_client.println (login);
 
-            // like lookForDXClusterPrompt() but look for clue about type of cluster along the way
+            // look for clue about type of cluster along the way
             uint16_t bl;
             char buf[200];
             size_t bufl = sizeof(buf);
             cl_type = CT_UNKNOWN;
             while (getTCPLine (dx_client, buf, bufl, &bl)) {
-                dxcLog (_FX("%s\n"), buf);
+                dxcLog ("< %s\n", buf);
+                detectMultiConnection (buf);
                 strtolower(buf);
-                if (strstr (buf, _FX("dx")) && strstr (buf, _FX("spider")))
+                if (strstr (buf, "dx") && strstr (buf, "spider"))
                     cl_type = CT_DXSPIDER;
-                else if (strstr (buf, _FX("ar-cluster")))
+                else if (strstr (buf, "ar-cluster"))
                     cl_type = CT_ARCLUSTER;
-                if (isClusterPrompt(buf,bl))
+
+                // could just wait for timeout but usually ok to stop if find what looks like a prompt
+                if (buf[bl-1] == '>')
                     break;
             }
 
             // what is it?
             if (cl_type == CT_UNKNOWN) {
                 incLostConn();
-                showDXClusterErr (box, _FX("Type unknown or Login rejected"));
+                showDXClusterErr (box, "Type unknown or Login rejected");
                 dx_client.stop();
                 return (false);
             }
             if (cl_type == CT_DXSPIDER)
-                dxcLog (_FX("Cluster is Spider\n"));
+                dxcLog ("Cluster is Spider\n");
             if (cl_type == CT_ARCLUSTER)
-                dxcLog (_FX("Cluster is AR\n"));
+                dxcLog ("Cluster is AR\n");
 
             // send our location
             if (!sendDXClusterDELLGrid()) {
                 incLostConn();
-                showDXClusterErr (box, _FX("Error sending DE grid"));
+                showDXClusterErr (box, "Error sending DE grid");
                 dx_client.stop();
                 return (false);
             }
@@ -604,21 +554,17 @@ static bool connectDXCluster (const SBox &box)
             for (int i = 0; i < N_DXCLCMDS; i++) {
                 if (dx_on[i] && strlen(dx_cmds[i]) > 0) {
                     dx_client.println(dx_cmds[i]);
-                    dxcLog (_FX("> %s\n"), dx_cmds[i]);
-                    if (!lookForDXClusterPrompt()) {
-                        incLostConn();
-                        showDXClusterErr (box, _FX("Err from cmd: %s"), dx_cmds[i]);
-                        dx_client.stop();
-                        return (false);
-                    }
+                    dxcLog ("> %s\n", dx_cmds[i]);
                 }
             }
 
             // confirm still ok
             if (!dx_client) {
                 incLostConn();
-                showDXClusterErr (box, _FX("Login failed"));
-                dx_client.stop();
+                if (multi_cntn)
+                    showDXClusterErr (box, "Multiple logins");
+                else
+                    showDXClusterErr (box, "Login failed");
                 return (false);
             }
 
@@ -637,7 +583,7 @@ static bool connectDXCluster (const SBox &box)
     }
 
     // sorry
-    showDXClusterErr (box, _FX("%s:%d Connection failed"), dxhost, dxport);    // calls dx_client.stop()
+    showDXClusterErr (box, "%s:%d Connection failed", dxhost, dxport);    // calls dx_client.stop()
     return (false);
 }
 
@@ -661,13 +607,9 @@ static bool sendDXClusterHeartbeat()
     if (!useDXCluster() || !dx_client)
         return (true);
 
-    const char *hbcmd = _FX("ping\n");
-    dxcLog (_FX("feeding %s"), hbcmd);
+    const char *hbcmd = "ping\n";
+    dxcLog ("feeding %s", hbcmd);
     dx_client.print (hbcmd);
-    if (!lookForDXClusterPrompt()) {
-        dxcLog (_FX("No > after %s"), hbcmd);
-        return (false);
-    }
 
     return (true);
 }
@@ -688,7 +630,7 @@ bool sendDXClusterDELLGrid()
 
     // handy DE lat/lon in common format
     char llstr[30];
-    snprintf (llstr, sizeof(llstr), _FX("%.0f %.0f %c %.0f %.0f %c"),
+    snprintf (llstr, sizeof(llstr), "%.0f %.0f %c %.0f %.0f %c",
             floorf(fabsf(de_ll.lat_d)), floorf(fmodf(60*fabsf(de_ll.lat_d), 60)), de_ll.lat_d<0?'S':'N',
             floorf(fabsf(de_ll.lng_d)), floorf(fmodf(60*fabsf(de_ll.lng_d), 60)), de_ll.lng_d<0?'W':'E');
 
@@ -697,18 +639,14 @@ bool sendDXClusterDELLGrid()
         char buf[100];
 
         // set grid
-        snprintf (buf, sizeof(buf), _FX("set/qra %s\n"), maid);
+        snprintf (buf, sizeof(buf), "set/qra %s\n", maid);
         dx_client.print(buf);
-        dxcLog (_FX("> %s"), buf);
-        if (!lookForDXClusterPrompt())
-            return (false);
+        dxcLog ("> %s", buf);
 
         // set DE ll
-        snprintf (buf, sizeof(buf), _FX("set/location %s\n"), llstr);
+        snprintf (buf, sizeof(buf), "set/location %s\n", llstr);
         dx_client.print(buf);
-        dxcLog (_FX("> %s"), buf);
-        if (!lookForDXClusterPrompt())
-            return (false);
+        dxcLog ("> %s", buf);
 
         // ok!
         return (true);
@@ -718,25 +656,19 @@ bool sendDXClusterDELLGrid()
         char buf[100];
 
         // friendly turn off skimmer just avoid getting swamped
-        strcpy (buf, _FX("set dx filter not skimmer\n"));
+        strcpy (buf, "set dx filter not skimmer\n");
         dx_client.print(buf);
-        dxcLog (_FX("> %s"), buf);
-        if (!lookForDXClusterString (buf, sizeof(buf), _FX("filter")))
-            return (false);
+        dxcLog ("> %s", buf);
 
         // set grid
-        snprintf (buf, sizeof(buf), _FX("set station grid %s\n"), maid);
+        snprintf (buf, sizeof(buf), "set station grid %s\n", maid);
         dx_client.print(buf);
-        dxcLog (_FX("> %s"), buf);
-        if (!lookForDXClusterString (buf, sizeof(buf), _FX("set to")))
-            return (false);
+        dxcLog ("> %s", buf);
 
         // set ll
-        snprintf (buf, sizeof(buf), _FX("set station latlon %s\n"), llstr);
+        snprintf (buf, sizeof(buf), "set station latlon %s\n", llstr);
         dx_client.print(buf);
-        dxcLog (_FX("> %s"), buf);
-        if (!lookForDXClusterString (buf, sizeof(buf), _FX("location")))
-            return (false);
+        dxcLog ("> %s", buf);
 
 
         // ok!
@@ -756,7 +688,7 @@ static void initDXGUI (const SBox &box)
     prepPlotBox (box);
 
     // title
-    const char *title = BOX_IS_PANE_0(box) ? _FX("DX") : _FX("DX Cluster");
+    const char *title = BOX_IS_PANE_0(box) ? "Cluster" : "DX Cluster";
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
     tft.setTextColor(DXC_COLOR);
     uint16_t tw = getTextWidth(title);
@@ -820,8 +752,8 @@ static bool crackClusterSpot (char line[], DXClusterSpot &news)
     // fresh
     memset (&news, 0, sizeof(news));
 
-    if (sscanf (line, _FX("DX de %11[^ :]: %f %11s"), news.de_call, &news.kHz, news.dx_call) != 3) {
-        dxcLog (_FX("??? %s\n"), line);
+    if (sscanf (line, "DX de %11[^ :]: %f %11s", news.de_call, &news.kHz, news.dx_call) != 3) {
+        // already logged
         return (false);
     }
 
@@ -831,8 +763,6 @@ static bool crackClusterSpot (char line[], DXClusterSpot &news)
     tm.Hour = 10*(line[70]-'0') + (line[71]-'0');
     tm.Minute = 10*(line[72]-'0') + (line[73]-'0');
     news.spotted = makeTime (tm);
-
-    #if defined (_SUPPORT_DXCPLOT)
 
     // find locations
     LatLong ll;
@@ -848,8 +778,6 @@ static bool crackClusterSpot (char line[], DXClusterSpot &news)
     news.dx_lat = ll.lat;
     news.dx_lng = ll.lng;
     ll2maidenhead (news.dx_grid, ll);
-
-    #endif // _SUPPORT_DXCPLOT
 
     // ok!
     return (true);
@@ -878,11 +806,11 @@ bool updateDXCluster(const SBox &box)
         char line[120];
         while (dx_client.available() && getTCPLine (dx_client, line, sizeof(line), NULL)) {
             // DX de KD0AA:     18100.0  JR1FYS       FT8 LOUD in FL!                2156Z EL98
-            dxcLog (_FX("%s\n"), line);
+            dxcLog ("< %s\n", line);
+            detectMultiConnection (line);
 
             // look alive
             updateClocks(false);
-            resetWatchdog();
 
             // crack
             DXClusterSpot new_spot;
@@ -891,7 +819,7 @@ bool updateDXCluster(const SBox &box)
 
                 // add and display unless not on exclusive watch list
                 if (showOnlyOnDXWatchList() && !onDXWatchList(new_spot.dx_call)) {
-                    dxcLog (_FX("%s not on watch list\n"), new_spot.dx_call);
+                    dxcLog ("%s not on watch list\n", new_spot.dx_call);
                 } else {
                     addDXClusterSpot (box, new_spot);
                     any_new = true;
@@ -902,7 +830,10 @@ bool updateDXCluster(const SBox &box)
         // check for lost connection
         if (!dx_client) {
             incLostConn();
-            showDXClusterErr (box, _FX("Lost connection"));
+            if (multi_cntn)
+                showDXClusterErr (box, "Multiple logins");
+            else
+                showDXClusterErr (box, "Lost connection");
             return(false);
         }
 
@@ -910,14 +841,13 @@ bool updateDXCluster(const SBox &box)
         if (millis() - last_action > KEEPALIVE_DT) {
             last_action = millis();        // avoid banging
             if (!sendDXClusterHeartbeat()) {
-                showDXClusterErr (box, _FX("Heartbeat lost connection"));
+                showDXClusterErr (box, "Heartbeat lost connection");
                 return(false);
             }
         }
 
     } else if (cl_type == CT_WSJTX && wsjtx_server) {
 
-        resetWatchdog();
 
         // drain ALL pending packets, retain most recent Status message if any
 
@@ -926,22 +856,21 @@ bool updateDXCluster(const SBox &box)
 
         int packet_size;
         while ((packet_size = wsjtx_server.parsePacket()) > 0) {
-            // dxcLog (_FX("WSJT-X size= %d heap= %d\n"), packet_size, ESP.getFreeHeap());
+            // dxcLog ("WSJT-X size= %d heap= %d\n", packet_size, ESP.getFreeHeap());
             any_msg = (uint8_t *) realloc (any_msg, packet_size);
             if (!any_msg)
-                fatalError (_FX("wsjt packet alloc %d"), packet_size);
-            resetWatchdog();
+                fatalError ("wsjt packet alloc %d", packet_size);
             if (wsjtx_server.read (any_msg, packet_size) > 0) {
                 uint8_t *bp = any_msg;
                 if (wsjtxIsStatusMsg (&bp)) {
                     // save from bp to the end in prep for wsjtxParseStatusMsg()
                     int n_skip = bp - any_msg;
                     int n_keep = packet_size - n_skip;
-                    // dxcLog (_FX("skip= %d packet_size= %d\n"), n_skip, packet_size);
+                    // dxcLog ("skip= %d packet_size= %d\n", n_skip, packet_size);
                     if (n_keep > 0) {
                         sts_msg = (uint8_t *) realloc (sts_msg, n_keep);
                         if (!sts_msg)
-                            fatalError (_FX("wsjt alloc fail %d"), n_keep);
+                            fatalError ("wsjt alloc fail %d", n_keep);
                         memcpy (sts_msg, any_msg + n_skip, n_keep);
 // #define _WSJT_TRACE
 #if defined(_WSJT_TRACE)
@@ -991,12 +920,15 @@ void closeDXCluster()
     // make sure either/both connection is/are closed
     if (dx_client) {
         dx_client.stop();
-        dxcLog (_FX("disconnect %s\n"), dx_client ? "failed" : "ok");
+        dxcLog ("disconnect %s\n", dx_client ? "failed" : "ok");
     }
     if (wsjtx_server) {
         wsjtx_server.stop();
-        dxcLog (_FX("WSTJ-X disconnect %s\n"), wsjtx_server ?"failed":"ok");
+        dxcLog ("WSTJ-X disconnect %s\n", wsjtx_server ?"failed":"ok");
     }
+
+    // reset multi flag
+    multi_cntn = false;
 }
 
 /* determine and engage a dx cluster pane touch.
@@ -1066,12 +998,8 @@ bool getDXClusterSpots (DXClusterSpot **spp, uint8_t *nspotsp)
  */
 void updateDXClusterSpotMapLocations()
 {
-    #if defined (_SUPPORT_DXCPLOT)
-
     for (uint8_t i = 0; i < dxc_ss.n_data; i++)
         setDXCSpotPosition (dx_spots[i]);
-
-    #endif // _SUPPORT_DXCPLOT
 }
 
 /* draw all path and spots on map, as desired
@@ -1203,6 +1131,7 @@ bool getClosestDXC (const DXClusterSpot *list, int n_list, const LatLong &from_l
 
 
 /* set map.map_b/c for the given spot DX location.
+ * N.B. map_b in canonical coords, map_c in full raw coords
  */
 void setDXCSpotPosition (DXClusterSpot &s)
 {
@@ -1213,6 +1142,9 @@ void setDXCSpotPosition (DXClusterSpot &s)
     ll.lat_d = rad2deg(ll.lat);
     ll.lng = s.dx_lng;
     ll.lng_d = rad2deg(ll.lng);
+
+    uint16_t lwRaw, mkRaw;
+    getRawSpotSizes (lwRaw, mkRaw);
 
     if (labelSpots()) {
 
@@ -1228,15 +1160,16 @@ void setDXCSpotPosition (DXClusterSpot &s)
             tag = prefix;
         }
 
-        ll2s (ll, center, 0);       // setMapTagBox will adjust edge
-        setMapTagBox (tag, center, 0, s.dx_map.map_b);
+        int r = mkRaw/tft.SCALESZ+1;
+
+        ll2s (ll, center, r);
+        setMapTagBox (tag, center, r, s.dx_map.map_b);
+
 
     } else {
 
         // set map_c using marker radius to insure inside map boundary
 
-        uint16_t lwRaw, mkRaw;
-        getRawSpotSizes (lwRaw, mkRaw);
         ll2sRaw (ll, center, mkRaw);
         s.dx_map.map_c.s = center;
         s.dx_map.map_c.r = mkRaw;
@@ -1256,8 +1189,12 @@ void getRawSpotSizes (uint16_t &lwRaw, uint16_t &mkRaw)
  */
 void drawDXPathOnMap (const DXClusterSpot &spot)
 {
-    #if defined(_SUPPORT_SPOTPATH)
+    // handy drawing info
+    uint16_t lwRaw, mkRaw;                                          // raw path and marker sizes
+    getRawSpotSizes (lwRaw, mkRaw);
+    const uint16_t color = getBandColor(spot.kHz * 1000);           // wants Hz
 
+    // handy LatLong's
     LatLong from_ll, to_ll;
     from_ll.lat = spot.de_lat;
     from_ll.lat_d = rad2deg(from_ll.lat);
@@ -1267,50 +1204,48 @@ void drawDXPathOnMap (const DXClusterSpot &spot)
     to_ll.lat_d = rad2deg(to_ll.lat);
     to_ll.lng = spot.dx_lng;
     to_ll.lng_d = rad2deg(to_ll.lng);
-    float sdelatx = sinf(from_ll.lat);
-    float cdelatx = cosf(from_ll.lat);
-    float dist, bear;
-    propPath (false, from_ll, sdelatx, cdelatx, to_ll, &dist, &bear);
-    const int n_step = (int)ceilf(dist/deg2rad(PATH_SEGLEN)) | 1;   // always odd for dashed ends
-    const float step = dist/n_step;
-    const uint16_t color = getBandColor(spot.kHz * 1000);           // wants Hz
-    const bool dashed = getBandDashed (spot.kHz * 1000);
-    SCoord prev_s = {0, 0};                                         // .x == 0 means don't show
-    SCoord de_s = {0, 0};                                           // first point will be the DE end
-    uint16_t lwRaw, mkRaw;                                          // raw path and marker sizes
 
-    getRawSpotSizes (lwRaw, mkRaw);
+    // draw path if desired
+    if (lwRaw > 0) {
 
-    for (int i = 0; i <= n_step; i++) {                             // fence posts
-        float r = i*step;
-        float ca, B;
-        SCoord s;
-        solveSphere (bear, r, sdelatx, cdelatx, &ca, &B);
-        ll2sRaw (asinf(ca), fmodf(from_ll.lng+B+5*M_PIF,2*M_PIF)-M_PIF, s, lwRaw);
-        if (i == 0)
-            de_s = s;
-        if (prev_s.x > 0) {
-            if (segmentSpanOkRaw(prev_s, s, lwRaw)) {
-                if (lwRaw && (!dashed || n_step < 7 || (i & 1)))
-                    tft.drawLineRaw (prev_s.x, prev_s.y, s.x, s.y, lwRaw, color);
-            } else
-               s.x = 0;
+        float sdelatx = sinf(from_ll.lat);
+        float cdelatx = cosf(from_ll.lat);
+        float dist, bear;
+        propPath (false, from_ll, sdelatx, cdelatx, to_ll, &dist, &bear);
+        const int n_step = (int)ceilf(dist/deg2rad(PATH_SEGLEN)) | 1;   // always odd for dashed ends
+        const float step = dist/n_step;
+        const bool dashed = getBandDashed (spot.kHz * 1000);
+        SCoord prev_s = {0, 0};                                         // .x == 0 means don't show
+
+        for (int i = 0; i <= n_step; i++) {                             // fence posts
+            float r = i*step;
+            float ca, B;
+            SCoord s;
+            solveSphere (bear, r, sdelatx, cdelatx, &ca, &B);
+            ll2sRaw (asinf(ca), fmodf(from_ll.lng+B+5*M_PIF,2*M_PIF)-M_PIF, s, lwRaw);
+            if (prev_s.x > 0) {
+                if (segmentSpanOkRaw(prev_s, s, lwRaw)) {
+                    if (!dashed || n_step < 7 || (i & 1))
+                        tft.drawLineRaw (prev_s.x, prev_s.y, s.x, s.y, lwRaw, color);
+                } else
+                   s.x = 0;
+            }
+            prev_s = s;
         }
-        prev_s = s;
     }
 
     // mark de end if want
-    if (de_s.x && (dotSpots() || labelSpots()) && overMap(de_s)) {
-        // draw square to signify this is the listener end
-        tft.fillRectRaw (de_s.x-mkRaw, de_s.y-mkRaw, 2*mkRaw, 2*mkRaw, color);
-        tft.drawRectRaw (de_s.x-mkRaw, de_s.y-mkRaw, 2*mkRaw, 2*mkRaw, RA8875_BLACK);
+    if (dotSpots() || labelSpots()) {
+        SCoord de_s;
+        ll2s (from_ll, de_s, mkRaw);
+        SBox de_b = {(uint16_t)(de_s.x-mkRaw), (uint16_t)(de_s.y-mkRaw), (uint16_t)(2*mkRaw), (uint16_t)(2*mkRaw)};
+        if (overMap (de_b)) {
+            // draw square to signify this is the listener end
+            ll2sRaw (from_ll, de_s, mkRaw);
+            tft.fillRectRaw (de_s.x-mkRaw, de_s.y-mkRaw, 2*mkRaw, 2*mkRaw, color);
+            tft.drawRectRaw (de_s.x-mkRaw, de_s.y-mkRaw, 2*mkRaw, 2*mkRaw, RA8875_BLACK);
+        }
     }
-
-    #else
-
-    (void)spot;     // lint
-
-    #endif // _SUPPORT_SPOTPATH 
 }
 
 /* draw the given spot in the given pane row with given bg color, known to be visible.
@@ -1327,7 +1262,7 @@ void drawSpotOnList (const SBox &box, const DXClusterSpot &spot, int row, uint16
     tft.fillRect (x, y-2, box.w-6, h, bg_col);
 
     // pretty freq, fixed 8 chars, bg matching band color assignment
-    const char *f_fmt = spot.kHz < 1e6F ? _FX("%8.1f") : _FX("%8.0f");
+    const char *f_fmt = spot.kHz < 1e6F ? "%8.1f" : "%8.0f";
     snprintf (line, sizeof(line), f_fmt, spot.kHz);
     const uint16_t fbg_col = getBandColor ((long)(1000*spot.kHz)); // wants Hz
     const uint16_t ffg_col = getGoodTextColor(fbg_col);
@@ -1339,7 +1274,7 @@ void drawSpotOnList (const SBox &box, const DXClusterSpot &spot, int row, uint16
     // add call
     const int max_call = MAX_SPOTCALL_LEN-1;
     tft.setTextColor(RA8875_WHITE);
-    snprintf (line, sizeof(line), _FX(" %-*.*s "), max_call, max_call, spot.dx_call);
+    snprintf (line, sizeof(line), " %-*.*s ", max_call, max_call, spot.dx_call);
     tft.print (line);
 
     // and finally age, width depending on pane

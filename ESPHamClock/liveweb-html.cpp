@@ -445,6 +445,7 @@ char live_html[] =  R"_raw_html_(
                     return;
                 }
 
+                pointermove_ms = Date.now();
                 pointerdown_x = m.x;
                 pointerdown_y = m.y;
                 if (event_verbose)
@@ -473,15 +474,21 @@ char live_html[] =  R"_raw_html_(
                     return;
                 }
 
-                // ignore if pointer moved
+                // ignore if pointer moved so moves don't end with a tap
                 if (Math.abs(m.x-pointerdown_x) > MOUSE_JITTER || Math.abs(m.y-pointerdown_y) > MOUSE_JITTER){
                     if (event_verbose)
                         console.log ('cancel pointerup because pointer moved');
                     return;
                 }
 
+                // code button 1 alone as Button1, other buttons or any modifiers report as Button2.
+                // N.B. event.button 0 means button 1 !
+                var any_mod = event.shiftKey || event.metaKey || event.ctrlKey || event.altKey;
+                var button = (event.button == 0 && !any_mod) ? 0 : 1;
+                console.log ("button " + button);
+
                 // compose and send
-                let msg = 'set_touch?x=' + m.x + '&y=' + m.y;
+                let msg = 'set_touch?x=' + m.x + '&y=' + m.y + '&button=' + button;
                 sendWSMsg (msg);
             });
 

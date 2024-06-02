@@ -1146,7 +1146,7 @@ static void changeBrightness (const SCoord &s)
 
 /* run the brb/ncdxf box menu
  */
-static void runNCDXFMenu (const SCoord &s)
+static void runNCDXFMenu (void)
 {
         // this list of each BRB is to avoid knowing their values, nice BUT must be in same order as mitems[]
         static uint8_t mi_brb_order[BRB_N] = {
@@ -1213,7 +1213,7 @@ static void runNCDXFMenu (const SCoord &s)
             logBRBRotSet();
 
             // match beacons to new state
-            updateBeacons (true, true);
+            updateBeacons (true);
 
             // update on/off times if now used
             if (brb_mode == BRB_SHOW_ONOFF)
@@ -1234,7 +1234,7 @@ void doNCDXFBoxTouch (const SCoord &s)
     if (s.y < NCDXF_b.y + NCDXF_b.h/10) {
 
         // tapped near the top so show menu of options
-        runNCDXFMenu (s);
+        runNCDXFMenu ();
 
     } else {
 

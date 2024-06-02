@@ -1,6 +1,4 @@
 /* handle contest retrieval and display.
- * 3.00 added option to show second line of dates.
- * 3.11 added alarm set and showing specific web page.
  */
 
 #include "HamClock.h"
@@ -252,7 +250,7 @@ static bool runContestMenu (const SCoord &s, const SBox &box)
     // build a version of the title that fits well within box
     const uint16_t menu_gap = 20;
     char title[50];
-    snprintf (title, sizeof(title), cep ? cep->title : "");
+    snprintf (title, sizeof(title), "%s", cep ? cep->title : "");
     for (uint16_t t_l = getTextWidth(title); t_l > box.w-2*menu_gap; t_l = getTextWidth(title)) {
         // try to chop at blank, else just be ruthless
         char *r_space = strrchr (title, ' ');
@@ -320,9 +318,10 @@ static bool runContestMenu (const SCoord &s, const SBox &box)
     return (full_redo);
 }
 
-/* collect Contest info into the contests[] array and show in the given pane box
+/* collect Contest info into the contests[] array.
+ * return whether io ok.
  */
-bool updateContests (const SBox &box)
+static bool retrieveContests (const SBox &box)
 {
     WiFiClient ctst_client;
     bool ok = false;
@@ -419,17 +418,45 @@ bool updateContests (const SBox &box)
 
 out:
 
-    if (ok) {
-        Serial.printf (_FX("CTS: Found %d\n"), cts_ss.n_data);
-        cts_ss.scrollToNewest();
-        drawContestsPane (box);
-    } else {
-        plotMessage (box, CONTEST_COLOR, _FX("Contests error"));
-    }
+    Serial.printf (_FX("CTS: Found %d\n"), cts_ss.n_data);
 
     ctst_client.stop();
 
     return (ok);
+}
+
+/* collect Contest info into the contests[] array and show in the given pane box
+ */
+bool updateContests (const SBox &box)
+{
+    // update if settings change or it's time
+
+    static bool my_show_date;
+    static bool my_show_detz;
+    static PlotPane my_pane = PANE_NONE;
+    static bool last_ok;
+
+    if (!last_ok || my_show_date != show_date || my_show_detz != show_detz
+                 || my_pane != findPaneChoiceNow(PLOT_CH_CONTESTS)) {
+
+        my_show_date = show_date;
+        my_show_detz = show_detz;
+        my_pane = findPaneChoiceNow(PLOT_CH_CONTESTS);
+
+        last_ok = retrieveContests (box);
+    }
+
+    if (last_ok) {
+
+        cts_ss.scrollToNewest();
+        drawContestsPane (box);
+
+    } else {
+
+        plotMessage (box, CONTEST_COLOR, _FX("Contests error"));
+    }
+
+    return (last_ok);
 }
 
 /* return true if user is interacting with the contest pane, false if wants to change pane.

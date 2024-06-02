@@ -137,6 +137,9 @@ uint32_t spi_speed;
 
 Adafruit_RA8875::Adafruit_RA8875(uint8_t CS, uint8_t RST)
 {
+        (void) CS;
+        (void) RST;
+
 	// emulate a bug in the real RA8875 whereby the very first pixel read back is bogus
 	read_first = true;
 
@@ -568,6 +571,9 @@ void Adafruit_RA8875::setCursor(uint16_t x, uint16_t y)
 void Adafruit_RA8875::getTextBounds(char *string, int16_t x, int16_t y,
     int16_t *x1, int16_t *y1, uint16_t *w, uint16_t *h)
 {
+        (void) x;
+        (void) y;
+
 	uint16_t totw = 0;
 	int16_t miny = 0, maxy = 0;
 	char c;
@@ -845,12 +851,14 @@ bool Adafruit_RA8875::touched(void)
 	return (report_down);
 }
 
-void Adafruit_RA8875::touchRead (uint16_t *x, uint16_t *y)
+void Adafruit_RA8875::touchRead (uint16_t *x, uint16_t *y, int *button)
 {
 	// mouse is in fb_si coords return in app coords
 	pthread_mutex_lock(&mouse_lock);
 	    *x = (mouse_x-FB_X0)/SCALESZ;
 	    *y = (mouse_y-FB_Y0)/SCALESZ;
+            if (button)
+                *button = mouse_button;
 
             // clamp the impossible
             if (*x >= APP_WIDTH) {
@@ -1619,7 +1627,7 @@ void Adafruit_RA8875::plotChar (char ch)
  */
 void Adafruit_RA8875::setPR (uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 {
-        if (x >= 0 && y >= 0 && x + w <= FB_XRES && y + h <= FB_YRES) {
+        if (x + w <= FB_XRES && y + h <= FB_YRES) {
             pr_x = x*SCALESZ;
             pr_y = y*SCALESZ;
             pr_w = w*SCALESZ;
@@ -2048,6 +2056,12 @@ void Adafruit_RA8875::fbThread ()
 			mouse_x = event.xbutton.x;
 			mouse_y = event.xbutton.y;
 			mouse_downs++;
+
+                        // code button 1 alone as Button1, other buttons or any modifiers report as Button2
+                        mouse_button =
+                                (event.xbutton.button == Button1 && !(event.xbutton.state & ~Button1Mask))
+                                ? Button1 : Button2;
+
 		    pthread_mutex_unlock (&mouse_lock);
 
                     // record time of mouse situation change for cursor fade
@@ -2062,6 +2076,12 @@ void Adafruit_RA8875::fbThread ()
 			mouse_x = event.xbutton.x;
 			mouse_y = event.xbutton.y;
 			mouse_ups++;
+
+                        // code button 1 alone as Button1, other buttons or any modifiers report as Button2
+                        mouse_button =
+                                (event.xbutton.button == Button1 && !(event.xbutton.state & ~Button1Mask))
+                                ? Button1 : Button2;
+
 		    pthread_mutex_unlock (&mouse_lock);
 
                     // record time of mouse situation change for cursor fade
@@ -2086,6 +2106,7 @@ void Adafruit_RA8875::fbThread ()
 		    pthread_mutex_lock (&mouse_lock);
 			mouse_x = event.xmotion.x;
 			mouse_y = event.xmotion.y;
+                        mouse_button = event.xbutton.button;    // assumes Button1 == 1 etc
 		    pthread_mutex_unlock (&mouse_lock);
 
                     // record time of mouse situation change for cursor fade

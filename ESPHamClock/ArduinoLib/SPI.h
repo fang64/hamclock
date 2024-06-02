@@ -28,8 +28,8 @@ class SPIClass {
 
         // stubs
         void begin(void){}
-        uint8_t transfer(uint8_t data) { return 0; }
-        void beginTransaction(SPISettings settings) { }
+        uint8_t transfer(uint8_t data) { (void)data; return 0; }
+        void beginTransaction(SPISettings settings) { (void)settings; }
         void endTransaction(void) { }
 
 

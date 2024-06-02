@@ -44,10 +44,7 @@ static SCoord moremap_s;                        // drawMoreEarth() scanning loca
 static uint16_t GRIDC, GRIDC00;                 // main and highlighted
 
 // flag to defer drawing over map until opportune time:
-// ESP: draw after any line
-// UNIX: draw after entire map
 bool mapmenu_pending;
-bool panzoom_pending;
 
 // grid spacing, degrees
 #define LL_LAT_GRID     15
@@ -55,6 +52,13 @@ bool panzoom_pending;
 #define RADIAL_GRID     15
 #define THETA_GRID      15
 #define FINESTEP_GRID   (1.0F/pan_zoom.zoom)
+
+// drawMouseLoc() geometry
+#define ML_LINEDY       9                       // line height, pixels
+#define ML_NLINES       12                      // allow this many lines in box
+#define ML_MAXCHARS     9                       // max chars wide
+#define ML_INDENT       2                       // nominal indentation
+
 
 // establish GRIDC and GRIDC00
 static void getGridColorCache()
@@ -312,6 +316,15 @@ static void restoreMap (SBox &box)
         drawRSSBox();
 }
 
+/* check and fix pz to be sure it is legal
+ */
+void normalizePanZoom (PanZoom &pz)
+{
+    pz.zoom  = CLAMPF (pz.zoom, MIN_ZOOM, MAX_ZOOM);            // N.B. set zoom first
+    pz.pan_x = ((pz.pan_x + EARTH_W + EARTH_W/2) % EARTH_W) - EARTH_W/2;
+    pz.pan_y = CLAMPF (pz.pan_y, MIN_PANY(pz.zoom), MAX_PANY(pz.zoom));
+}
+
 /* draw and operate the map popup menu
  */
 static void drawMapPopup(void)
@@ -321,26 +334,28 @@ static void drawMapPopup(void)
     Serial.printf (_FX("POPUP before: pan_x %d pan_y %d zoom %d\n"), pan_zoom.pan_x, pan_zoom.pan_y,
                                 pan_zoom.zoom);
 
-    bool zoom_ok = map_proj == MAPP_MERCATOR;
-    bool zoom_in_ok  = zoom_ok && pan_zoom.zoom < MAX_ZOOM;
-    bool zoom_out_ok = zoom_ok && pan_zoom.zoom > MIN_ZOOM;
-    bool pan_ok = map_proj == MAPP_MERCATOR || map_proj == MAPP_ROB;
-    bool set_de = false;
-    bool set_dx = false;
+    const int ZINDENT = 2;
 
-    bool reset_ok = pan_zoom.zoom > MIN_ZOOM || pan_zoom.pan_x != 0 || pan_zoom.pan_y != 0;
-    MenuFieldType zi_type = zoom_in_ok  ? (zoom_out_ok ? MENU_01OFN : MENU_TOGGLE) : MENU_IGNORE;
-    MenuFieldType zo_type = zoom_out_ok ? (zoom_in_ok  ? MENU_01OFN : MENU_TOGGLE) : MENU_IGNORE;
-    MenuFieldType c_type = pan_ok ? (reset_ok ? MENU_01OFN : MENU_TOGGLE) : MENU_IGNORE;
-    MenuFieldType r_type = reset_ok ? (pan_ok ? MENU_01OFN : MENU_TOGGLE) : MENU_IGNORE;
+    bool zoom_ok = map_proj == MAPP_MERCATOR;
+    bool pan_ok = map_proj == MAPP_MERCATOR || map_proj == MAPP_ROB;
+    bool reset_ok = pan_ok && (pan_zoom.pan_x != 0 || pan_zoom.pan_y != 0 || pan_zoom.zoom != MIN_ZOOM);
+    MenuFieldType z1_mft = zoom_ok ? MENU_1OFN : MENU_IGNORE;
+    MenuFieldType z2_mft = zoom_ok ? MENU_1OFN : MENU_IGNORE;
+    MenuFieldType z3_mft = zoom_ok ? MENU_1OFN : MENU_IGNORE;
+    MenuFieldType z4_mft = zoom_ok && BUILD_W == 800 ? MENU_1OFN : MENU_IGNORE; // only 800x480 can 4x
+    MenuFieldType ctr_mft = pan_ok ? (reset_ok ? MENU_01OFN : MENU_TOGGLE) : MENU_IGNORE;
+    MenuFieldType rst_mft = reset_ok ? (pan_ok ? MENU_01OFN : MENU_TOGGLE) : MENU_IGNORE;
+
     MenuItem mitems[] = {
-        {MENU_01OFN, set_dx,    1, 2, "Set DX"},        // 0
-        {MENU_01OFN, set_de,    1, 2, "Set DE"},        // 1
-        {MENU_BLANK, false,     0, 0, NULL},            // 2
-        {zi_type, false,        2, 2, "Zoom in"},       // 3
-        {zo_type, false,        2, 2, "Zoom out"},      // 4
-        {c_type, false,         4, 2, "Recenter"},      // 5
-        {r_type, false,         4, 2, "Reset"},         // 6
+        {MENU_01OFN, false,          1, ZINDENT, "Set DX"},             // 0
+        {MENU_01OFN, false,          1, ZINDENT, "Set DE"},             // 1
+        {MENU_BLANK, false,          0, ZINDENT, NULL},                 // 2
+        {z1_mft, pan_zoom.zoom == 1, 2, ZINDENT, "Zoom 1x"},            // 3
+        {z2_mft, pan_zoom.zoom == 2, 2, ZINDENT, "Zoom 2x"},            // 4
+        {z3_mft, pan_zoom.zoom == 3, 2, ZINDENT, "Zoom 3x"},            // 5
+        {z4_mft, pan_zoom.zoom == 4, 2, ZINDENT, "Zoom 4x"},            // 6
+        {ctr_mft, false,             4, ZINDENT, "Recenter"},           // 7
+        {rst_mft, false,             4, ZINDENT, "Reset"},              // 8
     };
     const int n_menu = NARRAY(mitems);
 
@@ -352,72 +367,60 @@ static void drawMapPopup(void)
     MenuInfo menu = {menu_b, ok_b, true, false, 1, n_menu, mitems};
     if (runMenu (menu)) {
 
-        int mcl;        // city name length, unused
 
-        // check for new DX or DE
-        if (mitems[0].set) {
-            if (names_on)
-                (void) getNearestCity (map_popup.ll, map_popup.ll, mcl);
+        // init copy for changes
+        PanZoom new_pz = pan_zoom;
+
+        // check for new DX or DE, rely on runMenu to never set both
+        if (mitems[0].set)
             newDX (map_popup.ll, NULL, NULL);
-        } else if (mitems[1].set) {
-            if (names_on)
-                (void) getNearestCity (map_popup.ll, map_popup.ll, mcl);
+        if (mitems[1].set)
             newDE (map_popup.ll, NULL);
-        }
 
-        // if reset do it and only it first
-        if (mitems[6].set) {
-            pan_zoom.zoom = MIN_ZOOM;
-            pan_zoom.pan_x = 0;
-            pan_zoom.pan_y = 0;
+        // reset else other stuff
+        if (mitems[8].set) {
+
+            new_pz.pan_x = new_pz.pan_y = 0;
+            new_pz.zoom = MIN_ZOOM;
 
         } else {
 
-            // center BEFORE changing zoom because that's how the scale at which location was selected
-            if (mitems[5].set) {
-                pan_zoom.pan_x += (map_popup.s.x - (map_b.x + map_b.w/2)) / pan_zoom.zoom;
-                pan_zoom.pan_y += ((map_b.y + map_b.h/2) - map_popup.s.y) / pan_zoom.zoom;
+            // pan BEFORE changing zoom because that's the zoom at which the location was selected
+            if (mitems[7].set) {
+                new_pz.pan_x += (map_popup.s.x - (map_b.x + map_b.w/2)) / new_pz.zoom;
+                new_pz.pan_y += ((map_b.y + map_b.h/2) - map_popup.s.y) / new_pz.zoom;
             }
 
-            // check for zoom. N.B. rely on menu setup to know this ok
+            // N.B. rely on menu setup to know these make sense
             if (mitems[3].set)
-                pan_zoom.zoom += 1;
+                new_pz.zoom = MIN_ZOOM;
             else if (mitems[4].set)
-                pan_zoom.zoom -= 1;
+                new_pz.zoom = MIN_ZOOM + 1;
+            else if (mitems[5].set)
+                new_pz.zoom = MIN_ZOOM + 2;
+            else if (mitems[6].set)
+                new_pz.zoom = MIN_ZOOM + 3;
 
-            // now clamp pan_y using new zoom
-            pan_zoom.pan_y = CLAMPF (pan_zoom.pan_y, MIN_PANY, MAX_PANY);
+            // insure still in bounds
+            normalizePanZoom (new_pz);
         }
 
-        // save
-        NVWriteUInt8 (NV_ZOOM, pan_zoom.zoom);
-        NVWriteInt16 (NV_PANX, pan_zoom.pan_x);
-        NVWriteInt16 (NV_PANY, pan_zoom.pan_y);
-
-        // update
-        initEarthMap();
-        scheduleFreshMap();
+        // save and do full update if pz changed
+        if (memcmp (&pan_zoom, &new_pz, sizeof(pan_zoom))) {
+            pan_zoom = new_pz;
+            NVWriteUInt8 (NV_ZOOM, pan_zoom.zoom);
+            NVWriteInt16 (NV_PANX, pan_zoom.pan_x);
+            NVWriteInt16 (NV_PANY, pan_zoom.pan_y);
+            initEarthMap();
+            scheduleFreshMap();
+        }
 
         Serial.printf (_FX("POPUP after: pan_x %d pan_y %d zoom %d\n"), pan_zoom.pan_x, pan_zoom.pan_y,
                                 pan_zoom.zoom);
     }
-
-#if defined (_IS_ESP8266)
-    restoreMap(menu_b);
-#endif
-
 }
 
-#if defined(_IS_UNIX)
-
-// MouseLoc geometry
-#define ML_LINEDY       9                       // line height, pixels
-#define ML_NLINES       12                      // allow this many lines in box
-#define ML_MAXCHARS     9                       // max chars wide
-#define ML_INDENT       2                       // nominal indentation
-
 /* draw lat/long with given step sizes (used for ll and maidenhead).
- * UNIX only
  */
 static void drawLLGrid (int lat_step, int lng_step)
 {
@@ -455,7 +458,6 @@ static void drawLLGrid (int lat_step, int lng_step)
 }
 
 /* draw azimuthal grid lines from DE
- * UNIX only
  */
 static void drawAzimGrid ()
 {
@@ -526,7 +528,6 @@ static void drawAzimGrid ()
 }
 
 /* draw tropics grid lines from DE
- * UNIX only
  */
 static void drawTropicsGrid()
 {
@@ -558,8 +559,7 @@ static void drawTropicsGrid()
     }
 }
 
-/* draw the complete proper map grid, ESP draws incrementally as map is drawn.
- * UNIX only
+/* draw the complete proper map grid
  */
 static void drawMapGrid()
 {
@@ -607,7 +607,6 @@ static void drawMapGrid()
 
 /* drawMouseLoc() helper to show age in nice units.
  * update ty by dy for each row used.
- * UNIX only
  */
 static void drawMLAge (time_t t, uint16_t tx, int dy, uint16_t &ty)
 {
@@ -623,7 +622,6 @@ static void drawMLAge (time_t t, uint16_t tx, int dy, uint16_t &ty)
 
 /* drawMouseLoc() helper to show DE distance and bearing to given location.
  * update ty by dy for each row used.
- * UNIX only
  */
 static void drawMLDB (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 {
@@ -655,7 +653,6 @@ static void drawMLDB (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 
 /* drawMouseLoc() helper to show weather at the given location,
  * update ty by dy for each row used.
- * UNIX only
  */
 static void drawMLWX (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 {
@@ -687,7 +684,6 @@ static void drawMLWX (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 
 /* drawMouseLoc() helper to show local mean time.
  * update ty by dy for each row used.
- * UNIX only
  */
 static void drawMLLMT (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 {
@@ -698,7 +694,6 @@ static void drawMLLMT (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 
 /* drawMouseLoc() helper to show frequency.
  * update ty by dy for each row used.
- * UNIX only
  */
 static void drawMLFreq (long hz, uint16_t tx, int dy, uint16_t &ty)
 {
@@ -710,9 +705,7 @@ static void drawMLFreq (long hz, uint16_t tx, int dy, uint16_t &ty)
 }
 
 /* draw local information about the current cursor position over the world map.
- * does not work for ESP because there is no way to follow touch without making a tap.
  * called after every map draw so we only have to erase parts of azm outside the hemispheres.
- * UNIX only
  */
 static void drawMouseLoc()
 {
@@ -770,7 +763,7 @@ static void drawMouseLoc()
     const char *city = NULL;
     LatLong city_ll;
     if (names_on) {
-        city = getNearestCity (ll, city_ll, max_cl);
+        city = getNearestCity (ll, city_ll, &max_cl);
         if (city) {
             // background is already erased
             SCoord s;
@@ -956,70 +949,6 @@ static void drawMouseLoc()
     }
 }
 
-#else   // _IS_ESP8266
-
-/* given lat/lng and cos of angle from terminator, return earth map pixel.
- * only used by ESP, all others draw at higher resolution.
- * ESP only
- */
-static uint16_t getEarthMapPix (LatLong ll, float cos_t)
-{
-    // indices into pixel array at this location
-    uint16_t ex = (uint16_t)((EARTH_W*(ll.lng_d+180)/360)+0.5F) % EARTH_W;
-    uint16_t ey = (uint16_t)((EARTH_H*(90-ll.lat_d)/180)+0.5F) % EARTH_H;
-
-    // final color
-    uint16_t pix_c;
-
-    // decide color
-    if (!night_on || cos_t > 0) {
-        // < 90 deg: full sunlit
-        getMapDayPixel (ey, ex, &pix_c);
-    } else if (cos_t > GRAYLINE_COS) {
-        // blend from day to night
-        uint16_t day_c, night_c;
-        getMapDayPixel (ey, ex, &day_c);
-        getMapNightPixel (ey, ex, &night_c);
-        uint8_t day_r = RGB565_R(day_c);
-        uint8_t day_g = RGB565_G(day_c);
-        uint8_t day_b = RGB565_B(day_c);
-        uint8_t night_r = RGB565_R(night_c);
-        uint8_t night_g = RGB565_G(night_c);
-        uint8_t night_b = RGB565_B(night_c);
-        float fract_night = powf(cos_t/GRAYLINE_COS, GRAYLINE_POW);
-        float fract_day = 1 - fract_night;
-        uint8_t twi_r = (fract_day*day_r + fract_night*night_r);
-        uint8_t twi_g = (fract_day*day_g + fract_night*night_g);
-        uint8_t twi_b = (fract_day*day_b + fract_night*night_b);
-        pix_c = RGB565 (twi_r, twi_g, twi_b);
-    } else {
-        // full night side
-        getMapNightPixel (ey, ex, &pix_c);
-    }
-
-    return (pix_c);
-}
-
-/* return whether coordinate s is over any symbol
- * ESP only
- */
-static bool overAnySymbol (const SCoord &s)
-{
-    return (inCircle(s, de_c)
-                || (showDEAPMarker() && inCircle(s, deap_c))
-                || (showDEMarker() && inCircle(s, de_c))
-                || (showDXMarker() && inCircle(s, dx_c))
-                || inCircle (s, sun_c) || inCircle (s, moon_c)
-                || overAnyBeacon(s)
-                || overAnyFarthestPSKSpots(s)
-                || overAnyOnTheAirSpots(s)
-                || overAnyADIFSpots(s)
-                || inBox(s,santa_b)
-                || overMapScale(s));
-}
-
-#endif  // _IS_ESP8266
-
 /* draw some fake stars for the azimuthal projection
  */
 static void drawAzmStars()
@@ -1174,16 +1103,11 @@ static void drawMapMenu()
 
     enum MIName {     // menu items -- N.B. must be in same order as mitems[]
         MI_STY_TTL, MI_STR_CRY, MI_STY_TER, MI_STY_DRA, MI_STY_MUF, MI_STY_AUR, MI_STY_WXX, MI_STY_PRP,
-        MI_GRD_TTL, MI_GRD_NON, MI_GRD_TRO, MI_GRD_LLG, MI_GRD_MAI, MI_GRD_AZM,
-    #if defined(_SUPPORT_ZONES)
-                    MI_GRD_CQZ, MI_GRD_ITU,
-    #endif
+        MI_GRD_TTL, MI_GRD_NON, MI_GRD_TRO, MI_GRD_LLG, MI_GRD_MAI, MI_GRD_AZM, MI_GRD_CQZ, MI_GRD_ITU,
         MI_PRJ_TTL, MI_PRJ_MER, MI_PRJ_AZM, MI_PRJ_AZ1, MI_PRJ_MOL,
         MI_RSS_YES,
         MI_NON_YES,
-    #if defined(_SUPPORT_CITIES)
         MI_CTY_YES,
-    #endif
         MI_N
     };
     #define PRI_INDENT 2
@@ -1203,10 +1127,8 @@ static void drawMapMenu()
             {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_LATLNG]},
             {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_MAID]},
             {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_AZIM]},
-        #if defined(_SUPPORT_ZONES)
             {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_CQZONES]},
             {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_ITUZONES]},
-        #endif
         {MENU_LABEL, false, 0, PRI_INDENT, "Projection:"},
             {MENU_1OFN, false, 3, SEC_INDENT, map_projnames[MAPP_MERCATOR]},
             {MENU_1OFN, false, 3, SEC_INDENT, map_projnames[MAPP_AZIMUTHAL]},
@@ -1214,9 +1136,7 @@ static void drawMapMenu()
             {MENU_1OFN, false, 3, SEC_INDENT, map_projnames[MAPP_ROB]},
         {MENU_TOGGLE, false, 4, PRI_INDENT, "RSS"},
         {MENU_TOGGLE, false, 5, PRI_INDENT, "Night"},
-    #if defined(_SUPPORT_CITIES)
         {MENU_TOGGLE, false, 6, PRI_INDENT, "Cities"},
-    #endif
     };
 
     // init selections with current states
@@ -1244,10 +1164,8 @@ static void drawMapMenu()
     mitems[MI_GRD_LLG].set = mapgrid_choice == MAPGRID_LATLNG;
     mitems[MI_GRD_MAI].set = mapgrid_choice == MAPGRID_MAID;
     mitems[MI_GRD_AZM].set = mapgrid_choice == MAPGRID_AZIM;
-#if defined(_SUPPORT_ZONES)
     mitems[MI_GRD_CQZ].set = mapgrid_choice == MAPGRID_CQZONES;
     mitems[MI_GRD_ITU].set = mapgrid_choice == MAPGRID_ITUZONES;
-#endif
 
     mitems[MI_PRJ_MER].set = map_proj == MAPP_MERCATOR;
     mitems[MI_PRJ_AZM].set = map_proj == MAPP_AZIMUTHAL;
@@ -1256,9 +1174,7 @@ static void drawMapMenu()
 
     mitems[MI_RSS_YES].set = rss_on;
     mitems[MI_NON_YES].set = night_on;
-#if defined(_SUPPORT_CITIES)
     mitems[MI_CTY_YES].set = names_on;
-#endif
 
     // create a box for the menu
     SBox menu_b;
@@ -1315,7 +1231,6 @@ static void drawMapMenu()
             mapgrid_choice = MAPGRID_AZIM;
             NVWriteUInt8 (NV_GRIDSTYLE, mapgrid_choice);
             full_redraw = true;
-#if defined(_SUPPORT_ZONES)
         } else if (mitems[MI_GRD_CQZ].set && map_proj != MAPGRID_CQZONES) {
             mapgrid_choice = MAPGRID_CQZONES;
             NVWriteUInt8 (NV_GRIDSTYLE, mapgrid_choice);
@@ -1324,7 +1239,6 @@ static void drawMapMenu()
             mapgrid_choice = MAPGRID_ITUZONES;
             NVWriteUInt8 (NV_GRIDSTYLE, mapgrid_choice);
             full_redraw = true;
-#endif
         }
 
         // check for different map projection
@@ -1353,14 +1267,11 @@ static void drawMapMenu()
             full_redraw = true;
         }
 
-
-    #if defined(_SUPPORT_CITIES)
         // check for change of names option
         if (mitems[MI_CTY_YES].set != names_on) {
             names_on = mitems[MI_CTY_YES].set;
             NVWriteUInt8 (NV_NAMES_ON, names_on);
         }
-    #endif
 
         // check for changed RSS -- N.B. do this last to utilize full_redraw
         if (mitems[MI_RSS_YES].set != rss_on) {
@@ -1417,9 +1328,6 @@ void initEarthMap()
     // draw map view button
     drawMapMenuButton();
 
-    // reset any pending great circle path
-    setDXPathInvalid();
-
     // update astro info
     updateCircumstances();
 
@@ -1440,11 +1348,9 @@ void initEarthMap()
     updateDXClusterSpotMapLocations();
     updateOnTheAirSpotMapLocations();
 
-    #if defined (_SUPPORT_ZONES)
-        // update zone screen boundaries
-        updateZoneSCoords(ZONE_CQ);
-        updateZoneSCoords(ZONE_ITU);
-    #endif
+    // update zone screen boundaries
+    updateZoneSCoords(ZONE_CQ);
+    updateZoneSCoords(ZONE_ITU);
 
     // init scan line in map_b
     moremap_s.x = 0;                    // avoid updateCircumstances() first call to drawMoreEarth()
@@ -1454,82 +1360,12 @@ void initEarthMap()
 }
 
 /* display another earth map row at mmoremap_s.
- * ESP draws map one line at a time, others draw all the map then all the symbols to overlay.
  */
 void drawMoreEarth()
 {
     resetWatchdog();
 
-    #if defined (_IS_ESP8266)
-    // handy health indicator and update timer
-    digitalWrite(LIFE_LED, !digitalRead(LIFE_LED));
-    #endif // _IS_ESP8266
-
-    // refresh circumstances at start of each map scan but not very first call after initEarthMap()
-    if (moremap_s.y == map_b.y && moremap_s.x != 0) {
-        updateCircumstances();
-        #if defined(DEBUG_ZONES_BB)
-            fillSBox (map_b, RA8875_BLACK);
-        #endif // DEBUG_ZONES_BB
-    }
-    
     uint16_t last_x = map_b.x + EARTH_W - 1;
-
-#if defined(_IS_ESP8266)
-
-    // freeze if showing a temporary DX-DE path
-    if (waiting4DXPath())
-        return;
-
-    // draw all symbols when hit first one after start of sweep, maid key right away
-    static bool drew_symbols;
-    if (moremap_s.y == map_b.y) {
-        drew_symbols = false;
-        drawMaidGridKey();
-    }
-
-    // draw next row, avoid symbols but note when hit
-    resetWatchdog();
-    bool hit_symbol = false;
-    for (moremap_s.x = map_b.x; moremap_s.x <= last_x; moremap_s.x++) {
-
-        // make symbols appear as overlaied by not drawing map over them.
-        if (overAnySymbol (moremap_s))
-            hit_symbol = true;
-        else
-            drawMapCoord (moremap_s);           // also draws grid
-    }
-
-    // draw symbols first time hit
-    if (!drew_symbols && hit_symbol) {
-        drawAllSymbols(true);
-        drew_symbols = true;
-    }
-
-    // overlay any sat lines on this row except map scale
-    // N.B. can't use !inBox(moremap_s, mapscale_b) because .x is off the map now
-    if (!mapScaleIsUp() || moremap_s.y < mapscale_b.y || moremap_s.y > mapscale_b.y + mapscale_b.h) {
-        drawSatPointsOnRow (moremap_s.y);
-        drawSatNameOnRow (moremap_s.y);
-    }
-
-    // advance row and wrap and reset at the end
-    if ((moremap_s.y += 1) >= map_b.y + EARTH_H)
-        moremap_s.y = map_b.y;
-
-    // check for map menus after each row
-    if (mapmenu_pending) {
-        drawMapMenu();
-        mapmenu_pending = false;
-    }
-    if (map_popup.pending) {
-        drawMapPopup();
-        map_popup.pending = false;
-    }
-
-#endif  // _IS_ESP8266
-
-#if defined(_IS_UNIX)
 
     // draw next row
     for (moremap_s.x = map_b.x; moremap_s.x <= last_x; moremap_s.x++)
@@ -1537,21 +1373,20 @@ void drawMoreEarth()
 
     // advance row, wrap and reset and finish up at the end
     if ((moremap_s.y += 1) >= map_b.y + EARTH_H) {
-        moremap_s.y = map_b.y;
 
         drawMapGrid();
         drawSatPathAndFoot();
         if (waiting4DXPath())
             drawDXPath();
         drawPSKPaths ();
-        drawAllSymbols(true);
+        drawAllSymbols();
         drawSatNameOnRow (0);
         drawMouseLoc();
 
         // draw now
         tft.drawPR();
 
-        // check for map menus after each full map
+        // check some things that look best with a clean map beneath
         if (mapmenu_pending) {
             drawMapMenu();
             mapmenu_pending = false;
@@ -1560,8 +1395,13 @@ void drawMoreEarth()
             drawMapPopup();
             map_popup.pending = false;
         }
+        checkBGMap();
 
-    // define TIME_MAP_DRAW
+        // prep for next
+        updateCircumstances();
+        moremap_s.y = map_b.y;
+
+    // #define TIME_MAP_DRAW                             // RBF
     #if defined(TIME_MAP_DRAW)
         static struct timeval tv0;
         struct timeval tv1;
@@ -1572,9 +1412,6 @@ void drawMoreEarth()
     #endif // TIME_MAP_DRAW
 
     }
-
-#endif // _IS_UNIX
-
 }
 
 /* convert lat and long in radians to scaled screen coords.
@@ -1805,7 +1642,6 @@ float lngDiff (float dlng)
 
 
 /* draw at the given screen location, if it's over the map.
- * ESP also draws the grid with this one point at a time.
  */
 void drawMapCoord (uint16_t x, uint16_t y)
 {
@@ -1817,210 +1653,52 @@ void drawMapCoord (uint16_t x, uint16_t y)
 }
 void drawMapCoord (const SCoord &s)
 {
+    // draw one map pixel at full screen resolution. requires lat/lng gradients.
 
-    #if defined(_IS_ESP8266)
+    // find lat/lng at this screen location, bale if not over map
+    LatLong lls;
+    if (!s2ll(s,lls))
+        return; 
 
-        // draw one pixel, which might be an annotation line if over map
+    /* even though we only draw one application point, s, plotEarth needs points r and d to
+     * interpolate to full map resolution.
+     *   s - - - r
+     *   |
+     *   d
+     */
+    SCoord sr, sd;
+    LatLong llr, lld;
+    sr.x = s.x + 1;
+    sr.y = s.y;
+    if (!s2ll(sr,llr))
+        llr = lls;
+    sd.x = s.x;
+    sd.y = s.y + 1;
+    if (!s2ll(sd,lld))
+        lld = lls;
 
+    // find angle between subsolar point and any visible near this location
+    // TODO: actually different at each subpixel, this causes striping
+    float clat = cosf(lls.lat);
+    float slat = sinf(lls.lat);
+    float cos_t = ssslat*slat + csslat*clat*cosf(sun_ss_ll.lng-lls.lng);
 
-        // find lat/lng at this screen location, done if not over map
-        LatLong lls;
-        if (!s2ll(s, lls))
-            return;
+    // decide day, night or twilight
+    float fract_day;
+    if (!night_on || cos_t > 0) {
+        // < 90 deg: sunlit
+        fract_day = 1;
+    } else if (cos_t > GRAYLINE_COS) {
+        // blend from day to night
+        fract_day = 1 - powf(cos_t/GRAYLINE_COS, GRAYLINE_POW);
+    } else {
+        // night side
+        fract_day = 0;
+    }
 
-        // a latitude cache really helps Mercator performance; anything help others?
-        static float slat_c, clat_c;
-        static SCoord s_c;
-        if (map_proj != MAPP_MERCATOR || s.y != s_c.y) {
-            s_c = s;
-            slat_c = sinf(lls.lat);
-            clat_c = cosf(lls.lat);
-        }
-
-        // location tolerance to be considered on a grid line
-        #define DLAT        1.0F
-        #define DLNG        (1.0F/clat_c)
-
-        switch ((MapGridStyle)mapgrid_choice) {
-
-        case MAPGRID_LATLNG:
-
-            if (map_proj != MAPP_MERCATOR) {
-
-                if (fmodf(lls.lat_d+90, LL_LAT_GRID) < DLAT || fmodf (lls.lng_d+180, LL_LNG_GRID) < DLNG) {
-                    uint32_t grid_c = (fabsf (lls.lat_d) < DLAT || fabsf (lls.lng_d) < DLNG) ? GRIDC00:GRIDC;
-                    tft.drawPixel (s.x, s.y, grid_c);
-                    return;                                         // done
-                }
-
-            } else {
-
-                // extra gymnastics are because pixels-per-division is not integral and undo getCenterLng
-                #define ALL_PPLG (EARTH_W/(360/LL_LNG_GRID))
-                #define ALL_PPLT (EARTH_H/(180/LL_LAT_GRID))
-                uint16_t x = map_b.x + ((s.x - map_b.x + map_b.w + map_b.w*getCenterLng()/360) % map_b.w);
-                if ( (((x - map_b.x) - (x - map_b.x)/(2*ALL_PPLG)) % ALL_PPLG) == 0
-                                    || (((s.y - map_b.y) - (s.y - map_b.y)/(2*ALL_PPLT)) % ALL_PPLT) == 0) {
-                    uint32_t grid_c = (fabsf (lls.lat_d) < DLAT || fabsf (lls.lng_d) < DLNG) ? GRIDC00:GRIDC;
-                    tft.drawPixel (s.x, s.y, grid_c);
-                    return;                                         // done
-                }
-            }
-
-            break;
-
-        case MAPGRID_TROPICS:
-
-            if (map_proj != MAPP_MERCATOR) {
-
-                if (fabsf (fabsf (lls.lat_d) - 23.5F) < 0.3F) {
-                    tft.drawPixel (s.x, s.y, GRIDC);
-                    return;                                         // done
-                }
-
-            } else {
-
-                // we already know exactly where the grid lines go.
-                if (abs(s.y - (map_b.y+EARTH_H/2)) == (uint16_t)((23.5F/180)*(EARTH_H))) {
-                    tft.drawPixel (s.x, s.y, GRIDC);
-                    return;                                         // done
-                }
-            }
-            break;
-
-        case MAPGRID_MAID:
-
-            if (map_proj != MAPP_MERCATOR) {
-
-                if (fmodf(lls.lat_d+90, 10) < DLAT || fmodf (lls.lng_d+180, 20) < DLNG) {
-                    uint32_t grid_c = (fabsf (lls.lat_d) < DLAT || fabsf (lls.lng_d) < DLNG) ? GRIDC00:GRIDC;
-                    tft.drawPixel (s.x, s.y, grid_c);
-                    return;                                         // done
-                }
-
-            } else {
-
-                // extra gymnastics are because pixels-per-division is not integral and undo getCenterLng
-                #define MAI_PPLG (EARTH_W/(360/20))
-                #define MAI_PPLT (EARTH_H/(180/10))
-                uint16_t x = map_b.x + ((s.x - map_b.x + map_b.w + map_b.w*getCenterLng()/360) % map_b.w);
-                if ( (((x - map_b.x) - 2*(x - map_b.x)/(3*MAI_PPLG)) % MAI_PPLG) == 0
-                                    || (((s.y - map_b.y) - (s.y - map_b.y)/(3*MAI_PPLT)) % MAI_PPLT) == 0) {
-                    tft.drawPixel (s.x, s.y, GRIDC);
-                    return;                                         // done
-                }
-            }
-
-            break;
-
-        case MAPGRID_AZIM: {
-
-            // find radial coords and see if this pixel falls on the pattern.
-            float ca, B;
-            solveSphere (lls.lng - de_ll.lng, M_PIF/2 - lls.lat, sdelat, cdelat, &ca, &B);
-            float radius = rad2deg(acosf(ca));                      // radius of ray from DE
-            float theta = rad2deg(B);                               // theta angle of ring around DE
-            float th_cutoff = 0;                                    // theta thickness
-
-            switch ((MapProjection)map_proj) {
-            case MAPP_MERCATOR:
-                th_cutoff = 2 * cosf(lls.lat);                      // pole sweeps subtend tiny angles
-                if (radius < RADIAL_GRID || radius > 180 - RADIAL_GRID)
-                    th_cutoff += 2;                                 // insure thicker at DE and antipode
-                break;
-            case MAPP_ROB:                                          // fallthru
-            case MAPP_AZIMUTHAL:
-                th_cutoff = 1+ca*ca;                                // fat @ 0 .. thin at 90 .. fat @ 180
-                break;
-            case MAPP_AZIM1:
-                th_cutoff = ca + 1.5F;                              // thinner all the way to 180
-                break;
-            default:
-                fatalError(_FX("drawMapCoord() bogus map_proj %d"), map_proj);
-            }
-
-            if (fmodf (radius+90, RADIAL_GRID) < 1 || fmodf (theta+180, THETA_GRID) < th_cutoff) {
-                tft.drawPixel (s.x, s.y, GRIDC);
-                return;                                             // done
-            }
-
-            }
-
-            break;
-
-        case MAPGRID_OFF:
-            break;
-
-        default:
-            fatalError (_FX("drawMapCoord() bad mapgrid_choice: %d"), mapgrid_choice);
-            break;
-
-        }
-
-        // if get here we did not draw a grid point
-
-        // find angle between subsolar point and this location
-        float cos_t = ssslat*slat_c + csslat*clat_c*cosf(sun_ss_ll.lng-lls.lng);
-
-        uint16_t pix_c = getEarthMapPix (lls, cos_t);
-        tft.drawPixel (s.x, s.y, pix_c);
-
-        // preserve for next call
-        s_c = s;
-
-
-    #else // !_IS_ESP8266
-
-
-        // draw one map pixel at full screen resolution. requires lat/lng gradients.
-
-        // find lat/lng at this screen location, bale if not over map
-        LatLong lls;
-        if (!s2ll(s,lls))
-            return; 
-
-        /* even though we only draw one application point, s, plotEarth needs points r and d to
-         * interpolate to full map resolution.
-         *   s - - - r
-         *   |
-         *   d
-         */
-        SCoord sr, sd;
-        LatLong llr, lld;
-        sr.x = s.x + 1;
-        sr.y = s.y;
-        if (!s2ll(sr,llr))
-            llr = lls;
-        sd.x = s.x;
-        sd.y = s.y + 1;
-        if (!s2ll(sd,lld))
-            lld = lls;
-
-        // find angle between subsolar point and any visible near this location
-        // TODO: actually different at each subpixel, this causes striping
-        float clat = cosf(lls.lat);
-        float slat = sinf(lls.lat);
-        float cos_t = ssslat*slat + csslat*clat*cosf(sun_ss_ll.lng-lls.lng);
-
-        // decide day, night or twilight
-        float fract_day;
-        if (!night_on || cos_t > 0) {
-            // < 90 deg: sunlit
-            fract_day = 1;
-        } else if (cos_t > GRAYLINE_COS) {
-            // blend from day to night
-            fract_day = 1 - powf(cos_t/GRAYLINE_COS, GRAYLINE_POW);
-        } else {
-            // night side
-            fract_day = 0;
-        }
-
-        // draw the full res map point
-        tft.plotEarth (s.x, s.y, lls.lat_d, lls.lng_d, llr.lat_d - lls.lat_d, llr.lng_d - lls.lng_d,
+    // draw the full res map point
+    tft.plotEarth (s.x, s.y, lls.lat_d, lls.lng_d, llr.lat_d - lls.lat_d, llr.lng_d - lls.lng_d,
                     lld.lat_d - lls.lat_d, lld.lng_d - lls.lng_d, fract_day);
-
-    #endif  // _IS_ESP8266
-
 }
 
 /* draw sun symbol.

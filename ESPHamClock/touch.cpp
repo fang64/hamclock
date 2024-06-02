@@ -6,47 +6,6 @@
 #include "HamClock.h"
 
 
-
-/* read the touch screen and return raw uncalibrated coordinates.
- */
-static TouchType readRawTouch (uint16_t &x, uint16_t &y)
-{
-    // fast return if none
-    if (!tft.touched())
-        return (TT_NONE);
-
-    // sums for means until released
-    uint32_t xsum = 0, ysum = 0;
-    uint16_t nsum = 0;
-
-    // collect and determine duration until released
-    while (tft.touched()) {
-        uint16_t tx, ty;
-        tft.touchRead (&tx, &ty);
-        xsum += tx;
-        ysum += ty;
-        nsum++;
-        wdDelay(10);
-    }
-
-    // set location from means
-    x = xsum/nsum;
-    y = ysum/nsum;
-    
-    // return tap
-    return (TT_TAP);
-}
-
-
-/* given values return from tft.touchRead(), return screen location.
- * N.B. assumes calibrateTouch() has already been called.
- */
-static void touch2Screen (uint16_t tx, uint16_t ty, SCoord &s)
-{
-    s.x = tx;
-    s.y = ty;
-}
-
 /* read keyboard char and check for warp cursor if hjkl or engage cr/lf/space
  * N.B. ignore multiple rapid engages
  */
@@ -123,16 +82,15 @@ TouchType readCalTouch (SCoord &s)
     if (!tft.touched())
         return (TT_NONE);
 
-    // read raw
-    uint16_t x = 0, y = 0;
-    TouchType tt = readRawTouch (x, y);
+    int mb;
+    while (tft.touched())
+        tft.touchRead (&s.x, &s.y, &mb);
 
-    // convert to screen coords via calibration matrix
-    touch2Screen (x, y, s);
+    TouchType tt = mb == 1 ? TT_TAP : TT_TAP_BX;
 
-    Serial.printf(_FX("Touch @ %u s: \t%4d %4d\ttype %d\n"), millis()/1000U, s.x, s.y, (int)tt);
+    Serial.printf("Touch: \t%4d %4d\ttype %d\n", s.x, s.y, (int)tt);
 
-    // return hold or tap
+    // return tap type
     return (tt);
 }
 
@@ -147,7 +105,7 @@ void drainTouch()
     while (millis() - t0 < 100 || touched) {
         if ((touched = tft.touched()) == true) {
             uint16_t tx, ty;
-            tft.touchRead (&tx, &ty);
+            tft.touchRead (&tx, &ty, NULL);
         }
     }
     // Serial.println (F("Drain complete"));

@@ -26,7 +26,7 @@
 
 
 // whether we have native IO
-#if defined(_NATIVE_GPIO_ESP) || defined(_NATIVE_GPIO_FREEBSD) || defined(_NATIVE_GPIO_LINUX)
+#if defined(_NATIVE_GPIO_FREEBSD) || defined(_NATIVE_GPIO_LINUX)
   #define _SUPPORT_NATIVE_GPIO
 #endif
 
@@ -38,34 +38,6 @@
 // phot only supported on ESP and then only if real phot is detected
 #if defined(_IS_ESP8266)
   #define _SUPPORT_PHOT
-#endif
-
-// spot path plotting of any kind not on ESP because paths can't be drawn in raster mode.
-// cluster spots on ESP can't be plotted because no location is available.
-#if !defined(_IS_ESP8266)
-    #define _SUPPORT_SPOTPATH
-    #define _SUPPORT_DXCPLOT
-#endif
-
-// no scrolling on ESP
-#if !defined(_IS_ESP8266)
-    #define _SUPPORT_SCROLLLEN
-#endif
-
-
-// roaming cities is not supported on ESP because it is touch only
-#if !defined(_IS_ESP8266)
-    #define _SUPPORT_CITIES
-#endif
-
-// zones not on ESP -- they fit in flash ok but can't be drawn in raster fashion
-#if !defined(_IS_ESP8266)
-    #define _SUPPORT_ZONES
-#endif
-
-// ESP does not support reading an ADIF file
-#if !defined(_IS_ESP8266)
-    #define _SUPPORT_ADIFILE
 #endif
 
 // whether to even look for DSI touchscreen
@@ -253,1388 +225,7 @@ extern AuxTimeFormat auxtime;
 extern const char *auxtime_names[AUXT_N];
 
 
-/* plot choices and pane locations
- */
-
-// N.B. take care that names will fit in menu built by askPaneChoice()
-// N.B. names should not include blanks, but _ are changed to blanks for prettier printing
-#define PLOTNAMES \
-    X(PLOT_CH_BC,           "VOACAP")           \
-    X(PLOT_CH_DEWX,         "DE_Wx")            \
-    X(PLOT_CH_DXCLUSTER,    "DX_Cluster")       \
-    X(PLOT_CH_DXWX,         "DX_Wx")            \
-    X(PLOT_CH_FLUX,         "Solar_Flux")       \
-    X(PLOT_CH_KP,           "Planetary_K")      \
-    X(PLOT_CH_MOON,         "Moon")             \
-    X(PLOT_CH_NOAASPW,      "NOAA_SpcWx")       \
-    X(PLOT_CH_SSN,          "Sunspot_N")        \
-    X(PLOT_CH_XRAY,         "X-Ray")            \
-    X(PLOT_CH_GIMBAL,       "Rotator")          \
-    X(PLOT_CH_TEMPERATURE,  "ENV_Temp")         \
-    X(PLOT_CH_PRESSURE,     "ENV_Press")        \
-    X(PLOT_CH_HUMIDITY,     "ENV_Humid")        \
-    X(PLOT_CH_DEWPOINT,     "ENV_DewPt")        \
-    X(PLOT_CH_SDO,          "SDO")              \
-    X(PLOT_CH_SOLWIND,      "Solar_Wind")       \
-    X(PLOT_CH_DRAP,         "DRAP")             \
-    X(PLOT_CH_COUNTDOWN,    "Countdown")        \
-    X(PLOT_CH_CONTESTS,     "Contests")         \
-    X(PLOT_CH_PSK,          "Live_Spots")       \
-    X(PLOT_CH_BZBT,         "Bz_Bt")            \
-    X(PLOT_CH_POTA,         "POTA")             \
-    X(PLOT_CH_SOTA,         "SOTA")             \
-    X(PLOT_CH_ADIF,         "ADIF")             \
-    X(PLOT_CH_AURORA,       "Aurora")
-
-#define X(a,b)  a,              // expands PLOTNAMES to each enum and comma
-typedef enum {
-    PLOTNAMES
-    PLOT_CH_N
-} PlotChoice;
-#undef X
-
-// reuse count also handy flag for not found
-#define PLOT_CH_NONE    PLOT_CH_N
-
-typedef enum {
-    PANE_0,                             // DE/DX overlay
-    PANE_1,                             // top three
-    PANE_2,
-    PANE_3,
-    PANE_N
-} PlotPane;
-
-// reuse count also handy flag for not found
-#define PANE_NONE       PANE_N
-
-
-
-#define N_NOAASW_C      3               // n categories : R, S and G
-#define N_NOAASW_V      4               // values per cat : current and 3 days predictions
-typedef struct {
-    bool ok;                            // whether all val are good
-    char cat[N_NOAASW_C];               // categories R S G
-    int val[N_NOAASW_C][N_NOAASW_V];    // serverity codes
-    time_t next_update;                 // when next to retrieve
-} NOAASpaceWx;
-
-
-// screen coords of box ul and size
-typedef struct {
-    uint16_t x, y, w, h;
-} SBox;
-
-// screen center, radius
-typedef struct {
-    SCoord s;
-    uint16_t r;
-} SCircle;
-
-// timezone info
-typedef struct {
-    SBox box;
-    uint16_t color;
-    int32_t tz_secs;
-} TZInfo;
-
-
-
-// callsign info
-typedef struct {
-    char *call;                         // malloced callsign
-    uint16_t fg_color;                  // fg color
-    uint16_t bg_color;                  // bg color unless ..
-    uint8_t bg_rainbow;                 // .. bg rainbow?
-    SBox box;                           // size and location
-} CallsignInfo;
-extern CallsignInfo cs_info;
-
-// map lat, lng, + radians N and E
-typedef struct {
-    float lat, lng;                     // radians north, east
-    float lat_d, lng_d;                 // degrees +N +E
-} LatLong;
-
-#define LIFE_LED        0
-
-#define DE_INFO_ROWS    3               // n text rows in DE pane -- not counting top row
-#define DX_INFO_ROWS    5               // n text rows in DX pane
-
-
-extern Adafruit_RA8875_R tft;           // compat layer
-extern Adafruit_MCP23X17 mcp;           // I2C digital IO device
-extern bool found_mcp;                  // whether found
-extern TZInfo de_tz, dx_tz;             // time zone info
-extern SBox NCDXF_b;                    // NCDXF box, and more
-
-#define PLOTBOX123_W    160             // top plot box width
-#define PLOTBOX123_H    148             // top plot box height, ends just above map border
-#define PLOTBOX0_W      139             // PANE_0 width - overlays DE/DX panels including borders
-#define PLOTBOX0_H      332             // PANE_0 height - overlays DE/DX panels including borders
-extern SBox sensor_b;
-
-extern SBox clock_b;                    // main time
-extern SBox auxtime_b;                  // extra time 
-extern SCircle satpass_c;               // satellite pass horizon
-
-extern SBox rss_bnr_b;                  // rss banner button
-extern uint8_t rss_on;                  // rss on/off
-extern uint8_t night_on;                // show night portion of map on/off
-extern uint8_t names_on;                // show place names when roving
-
-extern SBox desrss_b, dxsrss_b;         // sun rise/set display
-extern uint8_t desrss, dxsrss;          // sun rise/set chpice
-enum {
-    DXSRSS_INAGO,                       // display time from now
-    DXSRSS_ATAT,                        // display local time
-    DXSRSS_PREFIX,                      // must be last
-    DXSRSS_N,
-};
-
-// show NCDXF beacons or one of other controls
-// N.B. names must fit within NCDXF_b
-#define BRBMODES                  \
-    X(BRB_SHOW_BEACONS, "NCDXF")  \
-    X(BRB_SHOW_ONOFF,   "On/Off") \
-    X(BRB_SHOW_PHOT,    "PhotoR") \
-    X(BRB_SHOW_BR,      "Brite")  \
-    X(BRB_SHOW_SWSTATS, "Spc Wx") \
-    X(BRB_SHOW_BME76,   "BME@76") \
-    X(BRB_SHOW_BME77,   "BME@77") \
-    X(BRB_SHOW_DXWX,    "DX Wx")  \
-    X(BRB_SHOW_DEWX,    "DE Wx")
-
-#define X(a,b)  a,                      // expands BRBMODES to enum and comma
-typedef enum {
-    BRBMODES
-    BRB_N                               // count
-} BRB_MODE;
-#undef X
-
-extern uint8_t brb_mode;                // one of BRB_MODE
-extern time_t brb_updateT;              // time at which to update
-extern uint16_t brb_rotset;             // bitmask of all active BRB_MODE choices
-                                        // N.B. brb_rotset must always include brb_mode
-#define BRBIsRotating()                 ((brb_rotset & ~(1 << brb_mode)) != 0)  // any bits other than mode
-extern const char *brb_names[BRB_N];    // menu names -- must be in same order as BRB_MODE
-
-// map projection styles
-extern uint8_t map_proj;
-
-#define MAPPROJS \
-    X(MAPP_MERCATOR,  "Mercator")  \
-    X(MAPP_AZIMUTHAL, "Azimuthal") \
-    X(MAPP_AZIM1,     "Azim One")  \
-    X(MAPP_ROB,       "Robinson")
-
-#define X(a,b)  a,                      // expands MAPPROJS to enum plus comma
-typedef enum {
-    MAPPROJS
-    MAPP_N
-} MapProjection;
-#undef X
-
-extern const char *map_projnames[MAPP_N];   // projection names
-
-#define AZIM1_ZOOM       1.1F           // horizon will be 180/AZIM1_ZOOM degrees from DE
-#define AZIM1_FISHEYE    1.15F          // center zoom -- 1 is natural
-
-// map grid options
-typedef enum {
-    MAPGRID_OFF,
-    MAPGRID_TROPICS,
-    MAPGRID_LATLNG,
-    MAPGRID_MAID,
-    MAPGRID_AZIM,
-#if defined(_SUPPORT_ZONES)
-    MAPGRID_CQZONES,
-    MAPGRID_ITUZONES,
-#endif
-    MAPGRID_N
-} MapGridStyle;
-extern uint8_t mapgrid_choice;
-extern const char *grid_styles[MAPGRID_N];
-
-extern SBox dx_info_b;                  // dx info pane
-extern SBox satname_b;                  // satellite name pick
-extern SBox de_info_b;                  // de info pane
-extern SBox map_b;                      // main map 
-extern SBox view_btn_b;                 // map view menu button
-extern SBox dx_maid_b;                  // dx maidenhead pick
-extern SBox de_maid_b;                  // de maidenhead pick
-extern SBox lkscrn_b;                   // screen lock icon button
-
-extern SBox skip_b;                     // common "Skip" button
-
-
-// size and location of maidenhead labels
-#define MH_TR_H  9                      // top row background height
-#define MH_TR_DX 2                      // top row char cell x indent
-#define MH_TR_DY 1                      // top row char cell y down
-#define MH_RC_W  8                      // right columns background width
-#define MH_RC_DX 1                      // right column char cell x indent
-#define MH_RC_DY 5                      // right column char cell y down
-
-
-// ESP mechanism to save lots of RAM by storing what appear to be RAM strings in FLASH
-#if defined (_IS_ESP8266)
-#define _FX(x)  _FX_helper (PSTR(x))
-extern const char *_FX_helper(const char *flash_string);
-#else
-#define _FX(x)          x
-#define _FX_helper(x)   x
-#endif
-
-#define RSS_BG_COLOR    RGB565(0,40,80) // RSS banner background color
-#define RSS_FG_COLOR    RA8875_WHITE    // RSS banner text color
-#define RSS_DEF_INT     15              // RSS default interval, secs
-#define RSS_MIN_INT     5               // RSS minimum interval, secs
-
-extern char *stack_start;               // used to estimate stack usage
-
-#define MAX_PREF_LEN     4              // maximumm prefix length
-
-
-// touch screen actions
-typedef enum {
-    TT_NONE,                            // no touch event
-    TT_TAP,                             // brief touch event
-} TouchType;
-
-
-
-typedef struct {
-    char city[32];
-    float temperature_c;
-    float humidity_percent;
-    float pressure_hPa;                 // sea level
-    float wind_speed_mps;
-    char wind_dir_name[4];
-    char clouds[32];
-    char conditions[32];
-    char attribution[32];
-    int8_t pressure_chg;                // < = > 0
-} WXInfo;
-#define N_WXINFO_FIELDS 10
-
-
-// cursor distance to map point
-#define MAX_CSR_DIST    150             // miles
-
-
-// pane title height
-#define PANETITLE_H        27
-
-
-/*********************************************************************************************
- *
- * ESPHamClock.ino
- *
- */
-
-
-extern void drawDXTime(void);
-extern void drawAllSymbols(bool beacons_too);
-extern void drawTZ(const TZInfo &tzi);
-extern bool inBox (const SCoord &s, const SBox &b);
-extern bool inCircle (const SCoord &s, const SCircle &c);
-extern bool boxesOverlap (const SBox &b1, const SBox &b2);
-extern void doReboot(void);
-extern void printFreeHeap (const __FlashStringHelper *label);
-extern void getWorstMem (int *heap, int *stack);
-extern void resetWatchdog(void);
-extern void wdDelay(int ms);
-extern bool timesUp (uint32_t *prev, uint32_t dt);
-extern void setDXPathInvalid(void);
-extern const SCoord raw2appSCoord (const SCoord &s_raw);
-extern bool overMap (const SCoord &s);
-extern bool overMap (const SBox &b);
-extern bool overRSS (const SCoord &s);
-extern bool overRSS (const SBox &b);
-extern void setScreenLock (bool on);
-extern bool checkCallsignTouchFG (SCoord &b);
-extern bool checkCallsignTouchBG (SCoord &b);
-extern void newDE (LatLong &ll, const char grid[MAID_CHARLEN]);
-extern void newDX (LatLong &ll, const char grid[MAID_CHARLEN], const char *override_prefix);
-extern void drawDXPath(void);
-extern void getTextBounds (const char str[], uint16_t *wp, uint16_t *hp);
-extern uint16_t getTextWidth (const char str[]);
-extern void normalizeLL (LatLong &ll);
-extern bool screenIsLocked(void);
-extern time_t getUptime (uint16_t *days, uint8_t *hrs, uint8_t *mins, uint8_t *secs);
-extern void eraseScreen(void);
-extern void setMapTagBox (const char *tag, const SCoord &c, uint16_t r, SBox &box);
-extern void drawMapTag (const char *tag, const SBox &box, uint16_t txt_color = RA8875_WHITE,
-        uint16_t bg_color = RA8875_BLACK);
-extern void setDXPrefixOverride (char p[MAX_PREF_LEN]);
-extern bool getDXPrefix (char p[MAX_PREF_LEN+1]);
-extern void drawScreenLock(void);
-extern void setOnAir (bool on);
-extern void getDefaultCallsign(void);
-extern void drawCallsign (bool all);
-extern const char *hc_version;
-extern void fillSBox (const SBox &box, uint16_t color);
-extern void drawSBox (const SBox &box, uint16_t color);
-extern void shadowString (const char *str, bool shadow, uint16_t color, uint16_t x0, uint16_t y0);
-extern bool overMapScale (const SCoord &s);
-extern uint16_t getGoodTextColor (uint16_t bg_c);
-extern void drawDEFormatMenu(void);
-extern void openURL (const char *url);
-
-
-#if defined(__GNUC__)
-extern void tftMsg (bool verbose, uint32_t dwell_ms, const char *fmt, ...) __attribute__ ((format (__printf__, 3, 4)));
-#else
-extern void tftMsg (bool verbose, uint32_t dwell_ms, const char *fmt, ...);
-#endif
-
-#if defined(__GNUC__)
-extern void fatalError (const char *fmt, ...) __attribute__ ((format (__printf__, 1, 2)));
-#else
-extern void fatalError (const char *fmt, ...);
-#endif
-
-
-
-
-
-
-
-/*********************************************************************************************
- *
- * OTAupdate.cpp
- *
- */
-
-extern bool newVersionIsAvailable (char *nv, uint16_t nvl);
-extern bool askOTAupdate(char *ver);
-extern void doOTAupdate(const char *ver);
-
-
-
-
-
-/*********************************************************************************************
- *
- * adif.cpp
- *
- */
-
-
-// DXClusterSpot used in several places
-#define MAX_SPOTCALL_LEN                12      // including \0
-#define MAX_SPOTGRID_LEN                MAID_CHARLEN
-#define MAX_SPOTMODE_LEN                8
-typedef struct {
-    char de_call[MAX_SPOTCALL_LEN];     // DE call
-    char dx_call[MAX_SPOTCALL_LEN];     // DX call
-    char de_grid[MAX_SPOTGRID_LEN];     // DE grid
-    char dx_grid[MAX_SPOTGRID_LEN];     // DX grid
-    float dx_lat, dx_lng;               // dx location, rads +N +E
-    float de_lat, de_lng;               // de location, rads +N +E
-    char mode[MAX_SPOTMODE_LEN];        // operating mode
-    float kHz;                          // freq
-    union {
-        SBox map_b;                     // DX map text label location, canonical coords like text
-        SCircle map_c;                  // DX map dot location, RAW coords
-    } dx_map;                           // use map_b iff labelSpot() else map_c
-    time_t spotted;                     // UTC when spotted
-} DXClusterSpot;
-
-
-extern bool from_set_adif;
-extern void updateADIF (const SBox &box);
-extern bool checkADIFTouch (const SCoord &s, const SBox &box);
-extern void drawADIFSpotsOnMap (void);
-extern int readADIFWiFiClient (WiFiClient &client, long content_length, char ynot[], int n_ynot);
-extern bool getClosestADIFSpot (const LatLong &ll, DXClusterSpot *sp, LatLong *llp);
-extern void checkADIF(void);
-
-
-
-/*********************************************************************************************
- *
- * asknewpos.cpp
- *
- */
-
-extern bool askNewPos (const SBox &b, LatLong &ll, char grid[MAID_CHARLEN]);
-
-
-
-
-/*********************************************************************************************
- *
- * askpasswd.cpp
- *
- */
-
-extern bool askPasswd (const char *category, bool restore);
-
-
-
-
-/*********************************************************************************************
- *
- * astro.cpp
- *
- */
-
-typedef struct {
-    float az, el;               // topocentric, rads
-    float ra, dec;              // geocentric EOD, rads
-    float gha;                  // geocentric rads
-    float dist;                 // geocentric km
-    float vel;                  // topocentric m/s
-    float phase;                // rad angle from new
-} AstroCir;
-
-extern AstroCir lunar_cir, solar_cir;
-
-extern void now_lst (double mjd, double lng, double *lst);
-extern void getLunarCir (time_t t0, const LatLong &ll, AstroCir &cir);
-extern void getSolarCir (time_t t0, const LatLong &ll, AstroCir &cir);
-extern void getSolarRS (const time_t t0, const LatLong &ll, time_t *riset, time_t *sett);
-extern void getLunarRS (const time_t t0, const LatLong &ll, time_t *riset, time_t *sett);
-
-#define SECSPERDAY              (3600*24L)      // seconds per day
-#define MINSPERDAY              (24*60)         // minutes per day
-#define DAYSPERWEEK             7               // days per week
-
-
-
-/*********************************************************************************************
- *
- * blinker.cpp
- *
- */
-
-#define BLINKER_OFF_HZ  (-1)    // special hz to mean constant off
-#define BLINKER_ON_HZ   0       // speacial hz to mean constant on
-
-typedef struct {
-    int pin;                    // pin number
-    int hz;                     // blink rate or one of BLINKER_*
-    bool on_is_low;             // whether "on" means drive LOW
-    bool started;               // set when an attempt was made to start the service
-    bool disable;               // set to stop the thread
-} ThreadBlinker;
-
-extern void startBinkerThread (volatile ThreadBlinker &tb, int pin, bool on_is_low);
-extern void setBlinkerRate (volatile ThreadBlinker &tb, int hz);
-extern void disableBlinker (volatile ThreadBlinker &tb);
-
-typedef struct {
-    int pin;                    // pin number
-    int hz;                     // blink rate or one of BLINKER_*
-    bool started;               // set when an attempt was made to start the service
-    bool disable;               // set to stop the thread
-    bool value;                 // latest value
-} MCPPoller;
-
-extern void startMCPPoller (volatile MCPPoller &mp, int pin, int hz);
-extern void disableMCPPoller (volatile MCPPoller &mp);
-extern bool readMCPPoller (volatile const MCPPoller &mp);
-
-
-
-/*********************************************************************************************
- *
- * brightness.cpp
- *
- */
-
-
-extern void drawBrightness (void);
-extern void initBrightness (void);
-extern void setupBrightness (void);
-extern void followBrightness (void);
-extern bool brightnessOn(void);
-extern void brightnessOff(void);
-extern bool setDisplayOnOffTimes (int dow, uint16_t on, uint16_t off, int &idle);
-extern bool getDisplayOnOffTimes (int dow, uint16_t &on, uint16_t &off);
-extern bool getDisplayInfo (uint16_t &percent, uint16_t &idle_min, uint16_t &idle_left_sec);
-extern bool brDimmableOk(void);
-extern bool brOnOffOk(void);
-extern bool found_phot, found_ltr;
-
-
-
-
-
-/*********************************************************************************************
- *
- * cities.cpp
- *
- */
-extern void readCities(void);
-extern const char *getNearestCity (const LatLong &ll, LatLong &city_ll, int &max_l);
-
-
-
-
-/*********************************************************************************************
- *
- * clocks.cpp
- *
- */
-
-
-// DETIME options
-#define DETIMES                                   \
-    X(DETIME_INFO,         "All info")            \
-    X(DETIME_ANALOG,       "Simple analog")       \
-    X(DETIME_CAL,          "Calendar")            \
-    X(DETIME_ANALOG_DTTM,  "Annotated analog")    \
-    X(DETIME_DIGITAL_12,   "Digital 12 hour")     \
-    X(DETIME_DIGITAL_24,   "Digital 24 hour")
-
-#define X(a,b)  a,                      // expands DETIMES to each enum followed by comma
-enum {
-    DETIMES
-    DETIME_N
-};
-#undef X
-
-extern const char *detime_names[DETIME_N];
-
-extern uint8_t de_time_fmt;     // one of DETIME_*
-extern void initTime(void);
-extern time_t nowWO(void);
-extern time_t myNow(void);
-extern void updateClocks(bool all);
-extern bool clockTimeOk(void);
-extern void changeTime (time_t t);
-extern bool checkClockTouch (SCoord &s);
-extern bool TZMenu (TZInfo &tzi, const LatLong &ll);
-extern void drawDESunRiseSetInfo(void);
-extern void drawCalendar(bool force);
-extern void hideClocks(void);
-extern void showClocks(void);
-extern void drawDXSunRiseSetInfo(void);
-extern int DEWeekday(void);
-extern int32_t utcOffset(void);
-extern const char *gpsd_server, *ntp_server;
-extern void formatSexa (float dt_hrs, int &a, char &sep, int &b);
-extern char *formatAge (time_t age, char *line, int line_l, int cols);
-extern bool crackMonth (const char *name, int *monp);
-
-
-
-
-
-/*********************************************************************************************
- *
- * color.cpp
- *
- */
-
-// convert 8-bit each (R,G,B) to 5R : 6G : 5G
-// would expect this to be in graphics lib but can't find it...
-#define RGB565(R,G,B)   ((((uint16_t)(R) & 0xF8) << 8) | (((uint16_t)(G) & 0xFC) << 3) | ((uint16_t)(B) >> 3))
-
-// extract 8-bit colors from uint16_t RGB565 color in range 0-255
-#define RGB565_R(c)     (255*(((c) & 0xF800) >> 11)/((1<<5)-1))
-#define RGB565_G(c)     (255*(((c) & 0x07E0) >> 5)/((1<<6)-1))
-#define RGB565_B(c)     (255*((c) & 0x001F)/((1<<5)-1))
-
-#define GRAY    RGB565(140,140,140)
-#define BRGRAY  RGB565(200,200,200)
-#define DKGRAY  RGB565(50,50,50)
-#define DYELLOW RGB565(255,212,112)
-
-extern void hsvtorgb (uint8_t *r, uint8_t *g, uint8_t *b, uint8_t h, uint8_t s, uint8_t v);
-extern void rgbtohsv (uint8_t *h, uint8_t *s, uint8_t *v, uint8_t r, uint8_t g, uint8_t b);
-extern void RGB565_2_HSV (uint16_t rgb565, uint8_t *hp, uint8_t *sp, uint8_t *vp);
-extern uint16_t HSV_2_RGB565 (uint8_t h, uint8_t s, uint8_t v);
-
-
-
-
-
-
-
-/*********************************************************************************************
- *
- * contests.cpp
- *
- */
-
-typedef struct {
-    time_t start_t;                             // start time for alarm, always UTC
-    char *date_str;                             // malloced date string as user wants to see it
-    char *title;                                // malloced title
-    char *url;                                  // malloced web page URL
-} ContestEntry;
-
-extern bool updateContests (const SBox &box);
-extern bool checkContestsTouch (const SCoord &s, const SBox &box);
-extern int getContests (const char **credp, const ContestEntry **cepp);
-extern void scrubContestTitleLine (char *line, const SBox &box);
-extern const char* getAlarmedContestTitle (time_t t);
-
-
-
-
-
-/*********************************************************************************************
- *
- * dxcluster.cpp
- *
- */
-
-extern bool updateDXCluster(const SBox &box);
-extern void closeDXCluster(void);
-extern bool checkDXClusterTouch (const SCoord &s, const SBox &box);
-extern bool getDXClusterSpots (DXClusterSpot **spp, uint8_t *nspotsp);
-extern void drawDXClusterSpotsOnMap (void);
-extern void updateDXClusterSpotMapLocations(void);
-extern bool isDXClusterConnected(void);
-extern bool sendDXClusterDELLGrid(void);
-extern bool getClosestDXCluster (const LatLong &ll, DXClusterSpot *sp, LatLong *llp);
-
-extern void drawDXCLabelOnMap (const DXClusterSpot &spot);
-extern bool getClosestDXC (const DXClusterSpot *list, int n_list, const LatLong &ll,
-    DXClusterSpot *sp, LatLong *llp);
-extern void setDXCSpotPosition (DXClusterSpot &s);
-extern void getRawSpotSizes (uint16_t &lwRaw, uint16_t &mkRaw);
-extern void drawSpotOnList (const SBox &box, const DXClusterSpot &spot, int row, uint16_t bg_color);
-extern void drawDXPathOnMap (const DXClusterSpot &spot);
-
-
-
-
-
-
-
-
-
-
-
-/*********************************************************************************************
- *
- * earthmap.cpp
- *
- */
-
-
-
-#define DX_R    6                       // dx marker radius (erases better if even)
-#define DX_COLOR RA8875_GREEN
-
-typedef struct {
-    uint8_t zoom;                       // integral value only 1 2 or 3
-    int16_t pan_x, pan_y;               // offset from original position, unzoomed pixels, + right/up
-} PanZoom;
-extern PanZoom pan_zoom;
-#define MIN_ZOOM     1                  // minimum zoom factor
-#define MAX_ZOOM     (BUILD_W == 800 ? 4 : 3)                // max zoom factor
-#define MAX_PANY     (EARTH_H/2 - EARTH_H/2/pan_zoom.zoom)   // largest allowed pan_y
-#define MIN_PANY     (-EARTH_H/2 + EARTH_H/2/pan_zoom.zoom)  // smallest allowed pan_y
-
-typedef struct {
-    LatLong ll;                         // proposed location
-    SCoord s;                           // tap location
-    bool pending;                       // whether to engage at proper map drawing time
-} MapPopup;
-extern MapPopup map_popup;
-
-extern SCircle dx_c;
-extern LatLong dx_ll;
-
-extern uint16_t map_x0, map_y0;
-extern uint16_t map_w, map_h;
-
-extern bool mapmenu_pending;            // draw map menu at next opportunity
-extern uint8_t show_lp;                 // show prop long path, else short path
-#define ERAD_M          3959.0F         // earth radius, miles
-#define MI_PER_KM       0.621371F
-#define KM_PER_MI       1.609344F
-
-#define DE_R 6                          // radius of DE marker   (erases better if even)
-#define DEAP_R 6                        // radius of DE antipodal marker (erases better if even)
-#define DE_COLOR  RGB565(255,125,0)     // orange
-
-extern SCircle de_c;
-extern LatLong de_ll;
-extern float sdelat, cdelat;
-extern SCircle deap_c;
-extern LatLong deap_ll;
-extern LatLong sun_ss_ll;
-extern LatLong moon_ss_ll;
-
-#define SUN_R 6                         // radius of sun marker
-extern float sslng, sslat, csslat, ssslat;
-extern SCircle sun_c;
-
-#define MOON_R 6                        // radius of moon marker
-#define MOON_COLOR  RGB565(150,150,150)
-extern SCircle moon_c;
-
-extern uint32_t max_wd_dt;
-extern uint8_t flash_crc_ok;
-
-extern void drawMoreEarth (void);
-extern void eraseDEMarker (void);
-extern void eraseDEAPMarker (void);
-extern void drawDEMarker (bool force);
-extern bool showDXMarker(void);
-extern bool showDEMarker(void);
-extern void drawDEAPMarker (void);
-extern void drawDEInfo (void);
-extern void drawDECalTime (bool center);
-extern void drawDXTime (void);
-extern void initEarthMap (void);
-extern void antipode (LatLong &to, const LatLong &from);
-extern void drawMapCoord (const SCoord &s);
-extern void drawMapCoord (uint16_t x, uint16_t y);
-extern void drawSun (void);
-extern void drawMoon (void);
-extern void drawDXInfo (void);
-extern void ll2s (const LatLong &ll, SCoord &s, uint8_t edge);
-extern void ll2s (float lat, float lng, SCoord &s, uint8_t edge);
-extern void ll2sRaw (const LatLong &ll, SCoord &s, uint8_t edge);
-extern void ll2sRaw (float lat, float lng, SCoord &s, uint8_t edge);
-extern bool s2ll (uint16_t x, uint16_t y, LatLong &ll);
-extern bool s2ll (const SCoord &s, LatLong &ll);
-extern void solveSphere (float A, float b, float cc, float sc, float *cap, float *Bp);
-extern bool checkPathDirTouch (const SCoord &s);
-extern void propDEPath (bool long_path, const LatLong &to_ll, float *distp, float *bearp);
-extern void propPath (bool long_path, const LatLong &from_ll, float sflat, float cflat, const LatLong &to_ll,
-        float *distp, float *bearp);
-extern bool waiting4DXPath(void);
-extern void eraseSCircle (const SCircle &c);
-extern void drawRSSBox (void);
-extern void eraseRSSBox (void);
-extern void roundLatLong (LatLong &ll);
-extern void initScreen(void);
-extern bool checkOnAir(void);
-extern float lngDiff (float dlng);
-extern bool overViewBtn (const SCoord &s, uint16_t border);
-extern bool segmentSpanOk (const SCoord &s0, const SCoord &s1, uint16_t border);
-extern bool segmentSpanOkRaw (const SCoord &s0, const SCoord &s1, uint16_t border);
-extern bool desiredBearing (const LatLong &ll, float &bear);
-
-
-
-
-
-
-/*********************************************************************************************
- *
- * BME280.cpp
- *
- */
-
-// pack into int16_t to save almost 2 kB on ESP
-
-#define BMEPACK_T(t)            (round((t)*50))
-#define BMEPACK_P(p)            (useMetricUnits() ? round((p)*10) : round((p)*100))
-#define BMEPACK_H(h)            (round((h)*100))
-
-#define BMEUNPACK_T(t)          ((t)/50.0F)
-#define BMEUNPACK_P(p)          (useMetricUnits() ? ((p)*0.1F) : ((p)*0.01F))
-#define BMEUNPACK_H(h)          ((h)/100.0F)
-
-// measurement queues
-#if defined(_IS_ESP)
-#define N_BME_READINGS          100     // n measurements stored for each sensor
-#else
-#define N_BME_READINGS          250     // n measurements stored for each sensor
-#endif
-typedef struct {
-    time_t u[N_BME_READINGS];           // circular queue of UNIX sensor read times, 0 if no data
-    int16_t t[N_BME_READINGS];          // circular queue of temperature values as per useMetricUnits()
-    int16_t p[N_BME_READINGS];          // circular queue of pressure values as per useMetricUnits()
-    int16_t h[N_BME_READINGS];          // circular queue of humidity values
-    uint8_t q_head;                     // index of next q entries to use
-    uint8_t i2c;                        // i2c addr
-} BMEData;
-
-typedef enum {
-    BME_76,                             // index for sensor at 0x76
-    BME_77,                             // index for sensor at 0x77
-    MAX_N_BME                           // max sensors connected
-} BMEIndex; 
-
-extern void initBME280 (void);
-extern void readBME280 (void);
-extern void drawBMEStats (void);
-extern void drawBME280Panes(void);
-extern void drawOneBME280Pane (const SBox &box, PlotChoice ch);
-extern bool newBME280data (void);
-extern const BMEData *getBMEData (BMEIndex i, bool fresh_read);
-extern int getNBMEConnected (void);
-extern float dewPoint (float T, float RH);
-extern void doBMETouch (const SCoord &s);
-extern bool recalBMETemp (BMEIndex device, float new_corr);
-extern bool recalBMEPres (BMEIndex device, float new_corr);
-
-
-
-
-/*********************************************************************************************
- *
- * earthsat.cpp
- *
- */
-
-#define NV_SATNAME_LEN          9
-
-typedef struct _sat_now {
-    char name[NV_SATNAME_LEN];          // name
-    float az, el;                       // az, el degs
-    float range, rate;                  // km, m/s + receding
-    float raz, saz;                     // rise and set az, degs; either may be SAT_NOAZ
-    float rdt, sdt;                     // next rise and set, hrs from now; rdt < 0 if up now
-    _sat_now() { name[0] = '\0'; }      // constructor to insure name properly empty
-} SatNow;
-#define SAT_NOAZ        (-999)          // error flag for raz or saz
-#define SAT_MIN_EL      0.0F            // min elevation
-#define TLE_LINEL       70              // TLE line length, including EOS
-
-extern void updateSatPath(void);
-extern void drawSatPathAndFoot(void);
-extern void updateSatPass(void);
-extern bool querySatSelection(void);
-extern void strncpySubChar (char to_str[], const char from_str[], char to_char, char from_char, int maxlen);
-extern bool checkSatMapTouch (const SCoord &s);
-extern bool checkSatNameTouch (const SCoord &s);
-extern void drawSatPass(void);
-extern bool setNewSatCircumstance (void);
-extern void drawSatPointsOnRow (uint16_t r);
-extern void drawSatNameOnRow(uint16_t y);
-extern void drawOneTimeDX(void);
-extern void drawOneTimeDE(void);
-extern bool setSatFromName (const char *new_name);
-extern bool setSatFromTLE (const char *name, const char *t1, const char *t2);
-extern bool initSatSelection(void);
-extern bool getSatNow (SatNow &satnow);
-extern bool isNewPass(void);
-extern bool isSatMoon(void);
-extern const char **getAllSatNames(void);
-extern int nextSatRSEvents (time_t **rises, float **raz, time_t **sets, float **saz);
-extern bool isSatDefined(void);
-extern void drawDXSatMenu(const SCoord &s);
-extern bool dx_info_for_sat;
-extern void satResetIO(void);
-
-
-
-
-
-/*********************************************************************************************
- *
- * favicon.cpp
- *
- */
-
-#if defined(_IS_UNIX)
-
-extern void writeFavicon (FILE *fp);
-
-#endif // _IS_UNIX
-
-
-
-
-
-/*********************************************************************************************
- *
- * gimbal.cpp
- *
- */
-
-extern bool haveGimbal(void);
-extern void updateGimbal (const SBox &box);
-extern bool checkGimbalTouch (const SCoord &s, const SBox &box);
-extern void stopGimbalNow(void);
-extern void closeGimbal(void);
-extern bool getGimbalState (bool &connected, bool &vis_now, bool &has_el, bool &is_stop, bool &is_auto,
-    float &az, float &el);
-extern bool commandRotator (const char *new_state, const char *new_az, const char *new_el, char ynot[]);
-
-
-
-
-
-
-
-/*********************************************************************************************
- *
- * gpsd.cpp
- *
- */
-
-extern bool getGPSDLatLong(LatLong *llp);
-extern time_t getGPSDUTC(const char **server);
-extern void updateGPSDLoc(void);
-extern time_t crackISO8601 (const char *iso);
-
-
-
-
-
-/*********************************************************************************************
- *
- * kd3tree.cpp
- *
- */
-
-struct kd_node_t {
-    float s[3];                         // xyz coords on unit sphere
-    struct kd_node_t *left, *right;     // branches
-    void *data;                         // user data
-};
-
-typedef struct kd_node_t KD3Node;
-
-extern KD3Node* mkKD3NodeTree (KD3Node *t, int len, int idx);
-extern void nearestKD3Node (KD3Node *root, KD3Node *nd, int idx, KD3Node **best, float *best_dist,
-    int *n_visited);
-extern void ll2KD3Node (const LatLong &ll, KD3Node *kp);
-extern void KD3Node2ll (const KD3Node &n, LatLong *llp);
-extern float nearestKD3Dist2Miles(float d);
-
-
-
-
-
-/*********************************************************************************************
- *
- * liveweb-html.cpp
- *
- */
-
-extern char live_html[];
-
-
-
-/*********************************************************************************************
- *
- * liveweb.cpp
- *
- */
-
-
-extern void initLiveWeb(bool verbose);
-extern bool liveweb_fs_ready;
-extern time_t last_live;
-extern char *liveweb_openurl;
-
-
-
-/*********************************************************************************************
- *
- * robinson.cpp
- *
- */
-
-extern void ll2sRobinson (const LatLong &ll, SCoord &s, int edge, int scalesz);
-extern bool s2llRobinson (const SCoord &s, LatLong &ll);
-extern float RobLat2G (const float lat_d);
-
-
-
-
-
-
-
-/*********************************************************************************************
- *
- * scroll.cpp
- *
- */
-
-/* info and methods to control scrolling
- */
-class ScrollState {
-
-    public:
-
-        void init (int mv, int tv, int nd) {
-            max_vis = mv;
-            top_vis = tv;
-            n_data = nd;
-        };
-
-        void drawScrollUpControl (const SBox &box, uint16_t color) const;
-        void drawScrollDownControl (const SBox &box, uint16_t color) const;
-
-        bool checkScrollUpTouch (const SCoord &s, const SBox &b) const;
-        bool checkScrollDownTouch (const SCoord &s, const SBox &b) const;
-
-        virtual void scrollDown (void);
-        virtual void scrollUp (void);
-        bool okToScrollDown (void) const;
-        bool okToScrollUp (void) const;
-
-        virtual int nMoreAbove (void) const;
-        virtual int nMoreBeneath (void) const;
-        void scrollToNewest (void);
-        bool findDataIndex (int display_row, int &array_index) const;
-        int getVisIndices (int &min_i, int &max_i) const;
-        int getDisplayRow (int array_index) const;
-
-        int max_vis;        // maximum rows in the displayed list
-        int top_vis;        // index into the data array being dislayed at the front of the list
-        int n_data;         // the number of entries in the data array
-
-    private:
-
-        void moveTowardsOlder();
-        void moveTowardsNewer();
-};
-
-
-
-/*********************************************************************************************
- *
- * setup.cpp
- *
- */
-
-
-typedef enum {
-    DF_MDY,
-    DF_DMY,
-    DF_YMD,
-    DF_N
-} DateFormat;
-
-#define N_DXCLCMDS      12                      // n dx cluster user commands
-#define THINPATHSZ      ((tft.SCALESZ+1)/2)     // NV_MAPSPOTS thin raw path size
-#define WIDEPATHSZ      (tft.SCALESZ+1)         // NV_MAPSPOTS wide raw path size
-
-
-// N.B. must match csel_pr[] order
-typedef enum {
-    SHORTPATH_CSPR,
-    LONGPATH_CSPR,
-    SATPATH_CSPR,
-    SATFOOT_CSPR,
-    GRID_CSPR,
-    ROTATOR_CSPR,
-    // N.B. see loadPSKColorTable()
-    BAND160_CSPR,
-    BAND80_CSPR,
-    BAND60_CSPR,
-    BAND40_CSPR,
-    BAND30_CSPR,
-    BAND20_CSPR,
-    BAND17_CSPR,
-    BAND15_CSPR,
-    BAND12_CSPR,
-    BAND10_CSPR,
-    BAND6_CSPR,
-    BAND2_CSPR,
-    N_CSPR
-} ColorSelection;
-
-#define NV_ROTHOST_LEN          18
-#define NV_RIGHOST_LEN          18
-#define NV_FLRIGHOST_LEN        18
-
-extern void clockSetup(void);
-extern const char *getWiFiSSID(void);
-extern const char *getWiFiPW(void);
-extern const char *getCallsign(void);
-extern bool setCallsign (const char *cs);
-extern const char *getDXClusterHost(void);
-extern int getDXClusterPort(void);
-extern bool setDXCluster (char *host, char *port_str, char ynot[]);
-extern int getDXClusterPort(void);
-extern bool useMetricUnits(void);
-extern bool useGeoIP(void);
-extern bool useGPSDTime(void);
-extern bool useGPSDLoc(void);
-extern bool labelSpots(void);
-extern bool dotSpots(void);
-extern bool plotSpotCallsigns(void);
-extern float getBMETempCorr(int i);
-extern float getBMEPresCorr(int i);
-extern bool setBMETempCorr(BMEIndex i, float delta);
-extern bool setBMEPresCorr(BMEIndex i, float delta);
-extern const char *getGPSDHost(void);
-extern bool useLocalNTPHost(void);
-extern const char *getLocalNTPHost(void);
-extern bool useDXCluster(void);
-extern uint32_t getKX3Baud(void);
-extern void drawStringInBox (const char str[], const SBox &b, bool inverted, uint16_t color);
-extern bool logUsageOk(void);
-extern uint16_t getMapColor (ColorSelection cid);
-extern const char* getMapColorName (ColorSelection cid);
-extern uint8_t getBrMax(void);
-extern uint8_t getBrMin(void);
-extern bool getX11FullScreen(void);
-extern bool getWebFullScreen(void);
-extern bool latSpecIsValid (const char *lng_spec, float &lng);
-extern bool lngSpecIsValid (const char *lng_spec, float &lng);
-extern bool getDemoMode(void);
-extern int16_t getCenterLng(void);
-extern DateFormat getDateFormat(void);
-extern bool getRigctld (char host[NV_RIGHOST_LEN], int *portp);
-extern bool getRotctld (char host[NV_ROTHOST_LEN], int *portp);
-extern bool getFlrig (char host[NV_FLRIGHOST_LEN], int *portp);
-extern const char *getDXClusterLogin(void);
-extern int getSpotPathSize(void);
-extern bool setMapColor (const char *name, uint16_t rgb565);
-extern void getDXClCommands(const char *cmds[N_DXCLCMDS], bool on[N_DXCLCMDS]);
-extern bool getColorDashed(ColorSelection id);
-extern bool useMagBearing(void);
-extern bool useWSJTX(void);
-extern bool weekStartsOnMonday(void);
-extern void formatLat (float lat_d, char s[], int s_len);
-extern void formatLng (float lng_d, char s[], int s_len);
-extern const char *getADIFilename(void);
-extern bool scrollTopToBottom(void);
-extern int nMoreScrollRows(void);
-extern bool useOSTime (void);
-extern bool onDXWatchList (const char *call);
-extern bool showOnlyOnDXWatchList(void);
-extern bool onSPOTAWatchList (const char *call);
-extern bool showOnlyOnSPOTAWatchList();
-extern bool rankSpaceWx(void);
-extern bool showNewDXDEWx(void);
-
-
-
-
-
-
-
-/*********************************************************************************************
- *
- * string.cpp
- *
- */
-
-extern uint32_t stringHash (const char *str);
-extern void strtolower (char *str);
-extern void strtoupper (char *str);
-
-
-
-
-
-
-
-
-/*********************************************************************************************
- *
- * magdecl.cpp
- *
- */
-
-extern bool magdecl (float l, float L, float e, float y, float *mdp);
-
-
-
-
-/*********************************************************************************************
- *
- * mapmanage.cpp
- *
- */
-
-// unique enum for each band in BandCdtnMatrix
-typedef enum {
-    PROPBAND_80M,
-    PROPBAND_40M,
-    PROPBAND_30M,
-    PROPBAND_20M,
-    PROPBAND_17M,
-    PROPBAND_15M,
-    PROPBAND_12M,
-    PROPBAND_10M,
-    PROPBAND_N,
-} PropMapBand;
-
-typedef enum {
-    PROPTYPE_REL,                       // reliability
-    PROPTYPE_TOA,                       // take off angle
-} PropMapType;
-
-typedef struct {
-    bool active;                        // whether currently in play
-    PropMapBand band;                   // one of above if in play
-    PropMapType type;                   // one of above if in play
-} PropMapSetting;
-extern PropMapSetting prop_map;
-
-
-// CoreMaps and coremap_names
-#define COREMAPS                 \
-    X(CM_COUNTRIES, "Countries") \
-    X(CM_TERRAIN,   "Terrain")   \
-    X(CM_DRAP,      "DRAP")      \
-    X(CM_MUF,       "MUF")       \
-    X(CM_AURORA,    "Aurora")    \
-    X(CM_WX,        "Weather")
-
-#define X(a,b)  a,                      // expands COREMAPS to each enum followed by comma
-typedef enum {
-    COREMAPS
-    CM_N
-} CoreMaps;
-#undef X
-
-#define CM_NONE CM_N                    // handy alias meaning none active
-
-extern CoreMaps core_map;               // current map, if any
-extern const char *coremap_names[CM_N]; // core map style names
-
-extern SBox mapscale_b;                 // map scale box
-
-extern void initCoreMaps(void);
-extern bool installFreshMaps(void);
-extern float propMap2MHz (PropMapBand band);
-extern int propMap2Band (PropMapBand band);
-extern bool getMapDayPixel (uint16_t row, uint16_t col, uint16_t *dayp);
-extern bool getMapNightPixel (uint16_t row, uint16_t col, uint16_t *nightp);
-extern const char *getMapStyle (char s[]);
-extern void drawMapScale(void);
-extern void eraseMapScale(void);
-extern bool mapScaleIsUp(void);
-
-#if defined(__GNUC__)
-extern void mapMsg (bool force, uint32_t dwell_ms, const char *fmt, ...) __attribute__ ((format (__printf__, 3, 4)));
-#else
-extern void mapMsg (bool force, uint32_t dwell_ms, const char *fmt, ...);
-#endif
-
-
-
-typedef struct {
-    char name[33];      // name with EOS
-    char date[21];      // ISO 8601 date with EOS
-    time_t t0;          // unix time
-    uint32_t len;       // n bytes
-} FS_Info;
-extern FS_Info *getConfigDirInfo (int *n_info, char **fs_name, uint64_t *fs_size, uint64_t *fs_used);
-
-
-
-
-/*********************************************************************************************
- *
- * menu.cpp
- *
- */
-
-
-typedef enum {
-    MENU_LABEL,                 // insensitive string
-    MENU_1OFN,                  // exactly 1 of this set, round selector
-    MENU_01OFN,                 // exactly 0 or 1 of this set, round selector
-    MENU_AL1OFN,                // at least 1 of this set, square selector
-    MENU_TOGGLE,                // simple on/off with no grouping, square selector
-    MENU_IGNORE,                // ignore this entry entirely
-    MENU_BLANK,                 // empty space
-} MenuFieldType;
-
-// return whether the given MenuFieldType involves active user interaction
-#define MENU_ACTIVE(i)          ((i)==MENU_1OFN || (i)==MENU_01OFN || (i)==MENU_AL1OFN || (i)==MENU_TOGGLE)
-
-typedef enum {
-    MENU_OK_OK,                 // normal ok button appearance
-    MENU_OK_BUSY,               // busy ok button appearance
-    MENU_OK_ERR,                // error ok button appearance
-} MenuOkState;
-
-typedef struct {
-    MenuFieldType type;         // appearance and behavior
-    bool set;                   // whether selected
-    uint8_t group;              // association
-    uint8_t indent;             // pixels to indent
-    const char *label;          // string -- user must manage memory
-} MenuItem;
-
-typedef struct {
-    SBox &menu_b;               // initial menu box -- sized automatically and may be moved
-    SBox &ok_b;                 // box for Ok button -- user may use later with menuRedrawOk()
-    bool update_clocks;         // whether to update clocks while waiting
-    bool no_cancel;             // whether to just have Ok button
-    int n_cols;                 // number of columns in which to display items
-    int n_items;                // number of items[]
-    MenuItem *items;            // list -- user must manage memory
-} MenuInfo;
-
-extern bool runMenu (MenuInfo &menu);
-extern void menuMsg (const SBox &box, uint16_t color, const char *msg);
-extern void menuRedrawOk (SBox &ok_b, MenuOkState oks);
-
-
-typedef struct {
-    const SBox &inbox;                          // overall input box bounds
-    bool (*fp)(void);                           // user check function, else NULL
-    bool fp_true;                               // true if fp returned true
-    uint32_t to_ms;                             // timeout, msec, or 0 forever
-    bool update_clocks;                         // whether to update clocks while waiting
-    SCoord &tap;                                // tap location or ...
-    char &kbchar;                               // keyboard char code
-    bool ctrl, shift;                           // set if kbchar was accommpanied by modifier keys
-} UserInput;
-
-extern bool waitForUser (UserInput &ui);
-
-
-/*******************************************************************************************n
- *
- * moonpane.cpp and moon_imgs.cpp
- *
- */
-
-extern void updateMoonPane (const SBox &box, bool image_too);
-extern void drawMoonElPlot (void);
-extern const uint16_t moon_image[HC_MOON_W*HC_MOON_H] PROGMEM;
-
-
-
-
-
-
-
-
-
-
-/*********************************************************************************************
- *
- * ncdxf.cpp
- *
- */
-
-#define NCDXF_B_NFIELDS         4       // n fields in NCDXF_b
-#define NCDXF_B_MAXLEN          10      // max field length
-
-extern void updateBeacons (bool immediate, bool erase_too);
-extern void updateBeaconMapLocations(void);
-extern void doNCDXFStatsTouch (const SCoord &s, PlotChoice pcs[NCDXF_B_NFIELDS]);
-extern void doNCDXFBoxTouch (const SCoord &s);
-extern bool drawNCDXFBox(void);
-extern void initBRBRotset(void);
-extern void checkBRBRotset(void);
-extern void drawNCDXFStats (uint16_t color,
-                            const char titles[NCDXF_B_NFIELDS][NCDXF_B_MAXLEN],
-                            const char values[NCDXF_B_NFIELDS][NCDXF_B_MAXLEN],
-                            const uint16_t colors[NCDXF_B_NFIELDS]);
-
-#if defined (_IS_ESP8266)
-extern bool overAnyBeacon (const SCoord &s);
-#endif
-
-
-
-
-
-/*********************************************************************************************
- *
- * nvram.cpp
- *
- */
-
-
-/* names of each entry
+/* names of each non-volatil entry.
  * N.B. the entries here must match those in nv_sizes[]
  */
 typedef enum {
@@ -1833,10 +424,1245 @@ typedef enum {
     NV_SPOTAWLIST,              // S/POTA watch list
     NV_ONCEALARM,               // one-time alarm time(). always in UTC
     NV_ONCEALARMMASK,           // bit 1 = armed, 2 = user wants UTC (else DE TZ)
+    NV_PANEROTP,                // pane rotation period, seconds
+    NV_SHOWPIP,                 // whether to show public IP
 
     NV_N
 
 } NV_Name;
+
+
+// N.B. must match setup.cpp::csel_pr[] order 
+typedef enum {
+    SHORTPATH_CSPR,
+    LONGPATH_CSPR,
+    SATPATH_CSPR,
+    SATFOOT_CSPR,
+    GRID_CSPR,
+    ROTATOR_CSPR,
+    // N.B. see loadPSKColorTable()
+    BAND160_CSPR,
+    BAND80_CSPR,
+    BAND60_CSPR,
+    BAND40_CSPR,
+    BAND30_CSPR,
+    BAND20_CSPR,
+    BAND17_CSPR,
+    BAND15_CSPR,
+    BAND12_CSPR,
+    BAND10_CSPR,
+    BAND6_CSPR,
+    BAND2_CSPR,
+    N_CSPR
+} ColorSelection;
+
+
+/* plot choices and pane locations
+ */
+
+// N.B. take care that names will fit in menu built by askPaneChoice()
+// N.B. names should not include blanks, but _ are changed to blanks for prettier printing
+#define PLOTNAMES \
+    X(PLOT_CH_BC,           "VOACAP")           \
+    X(PLOT_CH_DEWX,         "DE_Wx")            \
+    X(PLOT_CH_DXCLUSTER,    "DX_Cluster")       \
+    X(PLOT_CH_DXWX,         "DX_Wx")            \
+    X(PLOT_CH_FLUX,         "Solar_Flux")       \
+    X(PLOT_CH_KP,           "Planetary_K")      \
+    X(PLOT_CH_MOON,         "Moon")             \
+    X(PLOT_CH_NOAASPW,      "NOAA_SpcWx")       \
+    X(PLOT_CH_SSN,          "Sunspot_N")        \
+    X(PLOT_CH_XRAY,         "X-Ray")            \
+    X(PLOT_CH_GIMBAL,       "Rotator")          \
+    X(PLOT_CH_TEMPERATURE,  "ENV_Temp")         \
+    X(PLOT_CH_PRESSURE,     "ENV_Press")        \
+    X(PLOT_CH_HUMIDITY,     "ENV_Humid")        \
+    X(PLOT_CH_DEWPOINT,     "ENV_DewPt")        \
+    X(PLOT_CH_SDO,          "SDO")              \
+    X(PLOT_CH_SOLWIND,      "Solar_Wind")       \
+    X(PLOT_CH_DRAP,         "DRAP")             \
+    X(PLOT_CH_COUNTDOWN,    "Countdown")        \
+    X(PLOT_CH_CONTESTS,     "Contests")         \
+    X(PLOT_CH_PSK,          "Live_Spots")       \
+    X(PLOT_CH_BZBT,         "Bz_Bt")            \
+    X(PLOT_CH_POTA,         "POTA")             \
+    X(PLOT_CH_SOTA,         "SOTA")             \
+    X(PLOT_CH_ADIF,         "ADIF")             \
+    X(PLOT_CH_AURORA,       "Aurora")
+
+#define X(a,b)  a,              // expands PLOTNAMES to each enum and comma
+typedef enum {
+    PLOTNAMES
+    PLOT_CH_N
+} PlotChoice;
+#undef X
+
+// reuse count also handy flag for not found
+#define PLOT_CH_NONE    PLOT_CH_N
+
+typedef enum {
+    PANE_0,                             // DE/DX overlay
+    PANE_1,                             // top three
+    PANE_2,
+    PANE_3,
+    PANE_N
+} PlotPane;
+
+// reuse count also handy flag for not found
+#define PANE_NONE       PANE_N
+
+
+
+
+// screen coords of box ul and size
+typedef struct {
+    uint16_t x, y, w, h;
+} SBox;
+
+// screen center, radius
+typedef struct {
+    SCoord s;
+    uint16_t r;
+} SCircle;
+
+// timezone info
+typedef struct {
+    SBox box;
+    uint16_t color;
+    int32_t tz_secs;
+} TZInfo;
+
+
+
+// callsign info
+typedef struct {
+    char *call;                         // malloced callsign
+    uint16_t fg_color;                  // fg color
+    uint16_t bg_color;                  // bg color unless ..
+    uint8_t bg_rainbow;                 // .. bg rainbow?
+    SBox box;                           // size and location
+} CallsignInfo;
+extern CallsignInfo cs_info;
+
+// map lat, lng, + radians N and E
+typedef struct {
+    float lat, lng;                     // radians north, east
+    float lat_d, lng_d;                 // degrees +N +E
+} LatLong;
+
+#define LIFE_LED        0
+
+#define DE_INFO_ROWS    3               // n text rows in DE pane -- not counting top row
+#define DX_INFO_ROWS    5               // n text rows in DX pane
+
+
+extern Adafruit_RA8875_R tft;           // compat layer
+extern Adafruit_MCP23X17 mcp;           // I2C digital IO device
+extern bool found_mcp;                  // whether found
+extern TZInfo de_tz, dx_tz;             // time zone info
+extern SBox NCDXF_b;                    // NCDXF box, and more
+
+#define PLOTBOX123_W    160             // top plot box width
+#define PLOTBOX123_H    148             // top plot box height, ends just above map border
+#define PLOTBOX0_W      139             // PANE_0 width - overlays DE/DX panels including borders
+#define PLOTBOX0_H      332             // PANE_0 height - overlays DE/DX panels including borders
+extern SBox sensor_b;
+
+extern SBox clock_b;                    // main time
+extern SBox auxtime_b;                  // extra time 
+extern SCircle satpass_c;               // satellite pass horizon
+
+extern uint8_t night_on;                // show night portion of map on/off
+extern uint8_t names_on;                // show place names when roving
+
+extern SBox desrss_b, dxsrss_b;         // sun rise/set display
+extern uint8_t desrss, dxsrss;          // sun rise/set chpice
+enum {
+    DXSRSS_INAGO,                       // display time from now
+    DXSRSS_ATAT,                        // display local time
+    DXSRSS_PREFIX,                      // must be last
+    DXSRSS_N,
+};
+
+// show NCDXF beacons or one of other controls
+// N.B. names must fit within NCDXF_b
+#define BRBMODES                  \
+    X(BRB_SHOW_BEACONS, "NCDXF")  \
+    X(BRB_SHOW_ONOFF,   "On/Off") \
+    X(BRB_SHOW_PHOT,    "PhotoR") \
+    X(BRB_SHOW_BR,      "Brite")  \
+    X(BRB_SHOW_SWSTATS, "Spc Wx") \
+    X(BRB_SHOW_BME76,   "BME@76") \
+    X(BRB_SHOW_BME77,   "BME@77") \
+    X(BRB_SHOW_DXWX,    "DX Wx")  \
+    X(BRB_SHOW_DEWX,    "DE Wx")
+
+#define X(a,b)  a,                      // expands BRBMODES to enum and comma
+typedef enum {
+    BRBMODES
+    BRB_N                               // count
+} BRB_MODE;
+#undef X
+
+extern uint8_t brb_mode;                // one of BRB_MODE
+extern time_t brb_updateT;              // time at which to update
+extern uint16_t brb_rotset;             // bitmask of all active BRB_MODE choices
+                                        // N.B. brb_rotset must always include brb_mode
+#define BRBIsRotating()                 ((brb_rotset & ~(1 << brb_mode)) != 0)  // any bits other than mode
+extern const char *brb_names[BRB_N];    // menu names -- must be in same order as BRB_MODE
+
+// map projection styles
+extern uint8_t map_proj;
+
+#define MAPPROJS \
+    X(MAPP_MERCATOR,  "Mercator")  \
+    X(MAPP_AZIMUTHAL, "Azimuthal") \
+    X(MAPP_AZIM1,     "Azim One")  \
+    X(MAPP_ROB,       "Robinson")
+
+#define X(a,b)  a,                      // expands MAPPROJS to enum plus comma
+typedef enum {
+    MAPPROJS
+    MAPP_N
+} MapProjection;
+#undef X
+
+extern const char *map_projnames[MAPP_N];   // projection names
+
+#define AZIM1_ZOOM       1.1F           // horizon will be 180/AZIM1_ZOOM degrees from DE
+#define AZIM1_FISHEYE    1.15F          // center zoom -- 1 is natural
+
+// map grid options
+typedef enum {
+    MAPGRID_OFF,
+    MAPGRID_TROPICS,
+    MAPGRID_LATLNG,
+    MAPGRID_MAID,
+    MAPGRID_AZIM,
+    MAPGRID_CQZONES,
+    MAPGRID_ITUZONES,
+    MAPGRID_N
+} MapGridStyle;
+extern uint8_t mapgrid_choice;
+extern const char *grid_styles[MAPGRID_N];
+
+extern SBox dx_info_b;                  // dx info pane
+extern SBox satname_b;                  // satellite name pick
+extern SBox de_info_b;                  // de info pane
+extern SBox map_b;                      // main map 
+extern SBox view_btn_b;                 // map view menu button
+extern SBox dx_maid_b;                  // dx maidenhead pick
+extern SBox de_maid_b;                  // de maidenhead pick
+extern SBox lkscrn_b;                   // screen lock icon button
+
+extern SBox skip_b;                     // common "Skip" button
+
+
+// size and location of maidenhead labels
+#define MH_TR_H  9                      // top row background height
+#define MH_TR_DX 2                      // top row char cell x indent
+#define MH_TR_DY 1                      // top row char cell y down
+#define MH_RC_W  8                      // right columns background width
+#define MH_RC_DX 1                      // right column char cell x indent
+#define MH_RC_DY 5                      // right column char cell y down
+
+
+// ESP mechanism to save lots of RAM by storing what appear to be RAM strings in FLASH
+#if defined (_IS_ESP8266)
+#define _FX(x)  _FX_helper (PSTR(x))
+extern const char *_FX_helper(const char *flash_string);
+#else
+#define _FX(x)          x
+#define _FX_helper(x)   x
+#endif
+
+#define RSS_BG_COLOR    RGB565(0,40,80) // RSS banner background color
+#define RSS_FG_COLOR    RA8875_WHITE    // RSS banner text color
+#define RSS_DEF_INT     15              // RSS default interval, secs
+#define RSS_MIN_INT     5               // RSS minimum interval, secs
+
+extern char *stack_start;               // used to estimate stack usage
+
+#define MAX_PREF_LEN     4              // maximumm prefix length
+
+
+// touch screen actions
+typedef enum {
+    TT_NONE,                            // no touch event
+    TT_TAP,                             // brief touch event
+    TT_TAP_BX,                          // tap with any button other than 1
+} TouchType;
+
+
+
+typedef struct {
+    char city[32];
+    float temperature_c;
+    float humidity_percent;
+    float pressure_hPa;                 // sea level
+    float wind_speed_mps;
+    char wind_dir_name[4];
+    char clouds[32];
+    char conditions[32];
+    char attribution[32];
+    int8_t pressure_chg;                // < = > 0
+} WXInfo;
+#define N_WXINFO_FIELDS 10
+
+
+// cursor distance to map point
+#define MAX_CSR_DIST    150             // miles
+
+
+// pane title height
+#define PANETITLE_H        27
+
+
+/*********************************************************************************************
+ *
+ * ESPHamClock.ino
+ *
+ */
+
+
+extern void drawDXTime(void);
+extern void drawAllSymbols(void);
+extern void drawTZ(const TZInfo &tzi);
+extern bool inBox (const SCoord &s, const SBox &b);
+extern bool inCircle (const SCoord &s, const SCircle &c);
+extern bool boxesOverlap (const SBox &b1, const SBox &b2);
+extern void doReboot(void);
+extern void printFreeHeap (const __FlashStringHelper *label);
+extern void getWorstMem (int *heap, int *stack);
+extern void resetWatchdog(void);
+extern void wdDelay(int ms);
+extern bool timesUp (uint32_t *prev, uint32_t dt);
+extern void setDXPathInvalid(void);
+extern const SCoord raw2appSCoord (const SCoord &s_raw);
+extern bool overMap (const SCoord &s);
+extern bool overMap (const SBox &b);
+extern bool overRSS (const SCoord &s);
+extern bool overRSS (const SBox &b);
+extern void setScreenLock (bool on);
+extern bool checkCallsignTouchFG (SCoord &b);
+extern bool checkCallsignTouchBG (SCoord &b);
+extern void newDE (LatLong &ll, const char grid[MAID_CHARLEN]);
+extern void newDX (LatLong &ll, const char grid[MAID_CHARLEN], const char *override_prefix);
+extern void drawDXPath(void);
+extern void normalizeLL (LatLong &ll);
+extern bool screenIsLocked(void);
+extern time_t getUptime (uint16_t *days, uint8_t *hrs, uint8_t *mins, uint8_t *secs);
+extern void eraseScreen(void);
+extern void setMapTagBox (const char *tag, const SCoord &c, uint16_t r, SBox &box);
+extern void drawMapTag (const char *tag, const SBox &box, uint16_t txt_color = RA8875_WHITE,
+        uint16_t bg_color = RA8875_BLACK);
+extern void setDXPrefixOverride (char p[MAX_PREF_LEN]);
+extern bool getDXPrefix (char p[MAX_PREF_LEN+1]);
+extern void drawScreenLock(void);
+extern void setOnAir (bool on);
+extern void getDefaultCallsign(void);
+extern void drawCallsign (bool all);
+extern const char *hc_version;
+extern void fillSBox (const SBox &box, uint16_t color);
+extern void drawSBox (const SBox &box, uint16_t color);
+extern void shadowString (const char *str, bool shadow, uint16_t color, uint16_t x0, uint16_t y0);
+extern bool overMapScale (const SCoord &s);
+extern uint16_t getGoodTextColor (uint16_t bg_c);
+extern void drawDEFormatMenu(void);
+extern void openURL (const char *url);
+
+
+#if defined(__GNUC__)
+extern void tftMsg (bool verbose, uint32_t dwell_ms, const char *fmt, ...) __attribute__ ((format (__printf__, 3, 4)));
+#else
+extern void tftMsg (bool verbose, uint32_t dwell_ms, const char *fmt, ...);
+#endif
+
+#if defined(__GNUC__)
+extern void fatalError (const char *fmt, ...) __attribute__ ((format (__printf__, 1, 2)));
+#else
+extern void fatalError (const char *fmt, ...);
+#endif
+
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * BME280.cpp
+ *
+ */
+
+// pack into int16_t to save almost 2 kB on ESP
+
+#define BMEPACK_T(t)            (round((t)*50))
+#define BMEPACK_P(p)            (useMetricUnits() ? round((p)*10) : round((p)*100))
+#define BMEPACK_H(h)            (round((h)*100))
+
+#define BMEUNPACK_T(t)          ((t)/50.0F)
+#define BMEUNPACK_P(p)          (useMetricUnits() ? ((p)*0.1F) : ((p)*0.01F))
+#define BMEUNPACK_H(h)          ((h)/100.0F)
+
+// measurement queues
+#if defined(_IS_ESP)
+#define N_BME_READINGS          100     // n measurements stored for each sensor
+#else
+#define N_BME_READINGS          250     // n measurements stored for each sensor
+#endif
+typedef struct {
+    time_t u[N_BME_READINGS];           // circular queue of UNIX sensor read times, 0 if no data
+    int16_t t[N_BME_READINGS];          // circular queue of temperature values as per useMetricUnits()
+    int16_t p[N_BME_READINGS];          // circular queue of pressure values as per useMetricUnits()
+    int16_t h[N_BME_READINGS];          // circular queue of humidity values
+    uint8_t q_head;                     // index of next q entries to use
+    uint8_t i2c;                        // i2c addr
+} BMEData;
+
+typedef enum {
+    BME_76,                             // index for sensor at 0x76
+    BME_77,                             // index for sensor at 0x77
+    MAX_N_BME                           // max sensors connected
+} BMEIndex; 
+
+extern void initBME280 (void);
+extern void readBME280 (void);
+extern void drawBMEStats (void);
+extern void drawBME280Panes(void);
+extern void drawOneBME280Pane (const SBox &box, PlotChoice ch);
+extern bool newBME280data (void);
+extern const BMEData *getBMEData (BMEIndex i, bool fresh_read);
+extern int getNBMEConnected (void);
+extern float dewPoint (float T, float RH);
+extern void doBMETouch (const SCoord &s);
+extern bool recalBMETemp (BMEIndex device, float new_corr);
+extern bool recalBMEPres (BMEIndex device, float new_corr);
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * OTAupdate.cpp
+ *
+ */
+
+extern bool newVersionIsAvailable (char *nv, uint16_t nvl);
+extern bool askOTAupdate(char *ver);
+extern void doOTAupdate(const char *ver);
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * adif.cpp
+ *
+ */
+
+
+// DXClusterSpot used in several places
+#define MAX_SPOTCALL_LEN                12      // including \0
+#define MAX_SPOTGRID_LEN                MAID_CHARLEN
+#define MAX_SPOTMODE_LEN                8
+typedef struct {
+    char de_call[MAX_SPOTCALL_LEN];     // DE call
+    char dx_call[MAX_SPOTCALL_LEN];     // DX call
+    char de_grid[MAX_SPOTGRID_LEN];     // DE grid
+    char dx_grid[MAX_SPOTGRID_LEN];     // DX grid
+    float dx_lat, dx_lng;               // dx location, rads +N +E
+    float de_lat, de_lng;               // de location, rads +N +E
+    char mode[MAX_SPOTMODE_LEN];        // operating mode
+    float kHz;                          // freq
+    union {
+        SBox map_b;                     // DX map text label location, canonical coords like text
+        SCircle map_c;                  // DX map dot location, RAW coords
+    } dx_map;                           // use map_b iff labelSpot() else map_c
+    time_t spotted;                     // UTC when spotted
+} DXClusterSpot;
+
+
+extern bool from_set_adif;
+extern void updateADIF (const SBox &box);
+extern bool checkADIFTouch (const SCoord &s, const SBox &box);
+extern void drawADIFSpotsOnMap (void);
+extern int readADIFWiFiClient (WiFiClient &client, long content_length, char ynot[], int n_ynot);
+extern bool getClosestADIFSpot (const LatLong &ll, DXClusterSpot *sp, LatLong *llp);
+extern void checkADIF(void);
+
+
+
+/*********************************************************************************************
+ *
+ * asknewpos.cpp
+ *
+ */
+
+extern bool askNewPos (const SBox &b, LatLong &ll, char grid[MAID_CHARLEN]);
+
+
+
+
+/*********************************************************************************************
+ *
+ * askpasswd.cpp
+ *
+ */
+
+extern bool askPasswd (const char *category, bool restore);
+
+
+
+
+/*********************************************************************************************
+ *
+ * astro.cpp
+ *
+ */
+
+typedef struct {
+    float az, el;               // topocentric, rads
+    float ra, dec;              // geocentric EOD, rads
+    float gha;                  // geocentric rads
+    float dist;                 // geocentric km
+    float vel;                  // topocentric m/s
+    float phase;                // rad angle from new
+} AstroCir;
+
+extern AstroCir lunar_cir, solar_cir;
+
+extern void now_lst (double mjd, double lng, double *lst);
+extern void getLunarCir (time_t t0, const LatLong &ll, AstroCir &cir);
+extern void getSolarCir (time_t t0, const LatLong &ll, AstroCir &cir);
+extern void getSolarRS (const time_t t0, const LatLong &ll, time_t *riset, time_t *sett);
+extern void getLunarRS (const time_t t0, const LatLong &ll, time_t *riset, time_t *sett);
+
+#define SECSPERDAY              (3600*24L)      // seconds per day
+#define MINSPERDAY              (24*60)         // minutes per day
+#define DAYSPERWEEK             7               // days per week
+
+
+
+/*********************************************************************************************
+ *
+ * blinker.cpp
+ *
+ */
+
+#define BLINKER_OFF_HZ  (-1)    // special hz to mean constant off
+#define BLINKER_ON_HZ   0       // speacial hz to mean constant on
+
+typedef struct {
+    int pin;                    // pin number
+    int hz;                     // blink rate or one of BLINKER_*
+    bool on_is_low;             // whether "on" means drive LOW
+    bool started;               // set when an attempt was made to start the service
+    bool disable;               // set to stop the thread
+} ThreadBlinker;
+
+extern void startBinkerThread (volatile ThreadBlinker &tb, int pin, bool on_is_low);
+extern void setBlinkerRate (volatile ThreadBlinker &tb, int hz);
+extern void disableBlinker (volatile ThreadBlinker &tb);
+
+typedef struct {
+    int pin;                    // pin number
+    int hz;                     // blink rate or one of BLINKER_*
+    bool started;               // set when an attempt was made to start the service
+    bool disable;               // set to stop the thread
+    bool value;                 // latest value
+} MCPPoller;
+
+extern void startMCPPoller (volatile MCPPoller &mp, int pin, int hz);
+extern void disableMCPPoller (volatile MCPPoller &mp);
+extern bool readMCPPoller (volatile const MCPPoller &mp);
+
+
+
+/*********************************************************************************************
+ *
+ * brightness.cpp
+ *
+ */
+
+
+extern void drawBrightness (void);
+extern void initBrightness (void);
+extern void setupBrightness (void);
+extern void followBrightness (void);
+extern bool brightnessOn(void);
+extern void brightnessOff(void);
+extern bool setDisplayOnOffTimes (int dow, uint16_t on, uint16_t off, int &idle);
+extern bool getDisplayOnOffTimes (int dow, uint16_t &on, uint16_t &off);
+extern bool getDisplayInfo (uint16_t &percent, uint16_t &idle_min, uint16_t &idle_left_sec);
+extern bool brDimmableOk(void);
+extern bool brOnOffOk(void);
+extern bool found_phot, found_ltr;
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * cities.cpp
+ *
+ */
+extern void readCities(void);
+extern const char *getNearestCity (const LatLong &ll, LatLong &city_ll, int *max_l);
+
+
+
+
+/*********************************************************************************************
+ *
+ * clocks.cpp
+ *
+ */
+
+
+// DETIME options
+#define DETIMES                                   \
+    X(DETIME_INFO,         "All info")            \
+    X(DETIME_ANALOG,       "Simple analog")       \
+    X(DETIME_CAL,          "Calendar")            \
+    X(DETIME_ANALOG_DTTM,  "Annotated analog")    \
+    X(DETIME_DIGITAL_12,   "Digital 12 hour")     \
+    X(DETIME_DIGITAL_24,   "Digital 24 hour")
+
+#define X(a,b)  a,                      // expands DETIMES to each enum followed by comma
+enum {
+    DETIMES
+    DETIME_N
+};
+#undef X
+
+extern const char *detime_names[DETIME_N];
+
+extern uint8_t de_time_fmt;     // one of DETIME_*
+extern void initTime(void);
+extern time_t nowWO(void);
+extern time_t myNow(void);
+extern void updateClocks(bool all);
+extern bool clockTimeOk(void);
+extern void changeTime (time_t t);
+extern bool checkClockTouch (SCoord &s);
+extern bool TZMenu (TZInfo &tzi, const LatLong &ll);
+extern void drawDESunRiseSetInfo(void);
+extern void drawCalendar(bool force);
+extern void hideClocks(void);
+extern void showClocks(void);
+extern void drawDXSunRiseSetInfo(void);
+extern int DEWeekday(void);
+extern int32_t utcOffset(void);
+extern const char *gpsd_server, *ntp_server;
+extern void formatSexa (float dt_hrs, int &a, char &sep, int &b);
+extern char *formatAge (time_t age, char *line, int line_l, int cols);
+extern bool crackMonth (const char *name, int *monp);
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * color.cpp
+ *
+ */
+
+// convert 8-bit each (R,G,B) to 5R : 6G : 5G
+// would expect this to be in graphics lib but can't find it...
+#define RGB565(R,G,B)   ((((uint16_t)(R) & 0xF8) << 8) | (((uint16_t)(G) & 0xFC) << 3) | ((uint16_t)(B) >> 3))
+
+// extract 8-bit colors from uint16_t RGB565 color in range 0-255
+#define RGB565_R(c)     (255*(((c) & 0xF800) >> 11)/((1<<5)-1))
+#define RGB565_G(c)     (255*(((c) & 0x07E0) >> 5)/((1<<6)-1))
+#define RGB565_B(c)     (255*((c) & 0x001F)/((1<<5)-1))
+
+#define GRAY    RGB565(140,140,140)
+#define BRGRAY  RGB565(200,200,200)
+#define DKGRAY  RGB565(50,50,50)
+#define DYELLOW RGB565(255,212,112)
+
+extern void hsvtorgb (uint8_t *r, uint8_t *g, uint8_t *b, uint8_t h, uint8_t s, uint8_t v);
+extern void rgbtohsv (uint8_t *h, uint8_t *s, uint8_t *v, uint8_t r, uint8_t g, uint8_t b);
+extern void RGB565_2_HSV (uint16_t rgb565, uint8_t *hp, uint8_t *sp, uint8_t *vp);
+extern uint16_t HSV_2_RGB565 (uint8_t h, uint8_t s, uint8_t v);
+
+
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * contests.cpp
+ *
+ */
+
+#define CONTESTS_INTERVAL (3600)                // polling interval, secs; updates every Monday
+
+typedef struct {
+    time_t start_t;                             // start time for alarm, always UTC
+    char *date_str;                             // malloced date string as user wants to see it
+    char *title;                                // malloced title
+    char *url;                                  // malloced web page URL
+} ContestEntry;
+
+extern bool updateContests (const SBox &box);
+extern bool checkContestsTouch (const SCoord &s, const SBox &box);
+extern int getContests (const char **credp, const ContestEntry **cepp);
+extern void scrubContestTitleLine (char *line, const SBox &box);
+extern const char* getAlarmedContestTitle (time_t t);
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * dxcluster.cpp
+ *
+ */
+
+extern bool updateDXCluster(const SBox &box);
+extern void closeDXCluster(void);
+extern bool checkDXClusterTouch (const SCoord &s, const SBox &box);
+extern bool getDXClusterSpots (DXClusterSpot **spp, uint8_t *nspotsp);
+extern void drawDXClusterSpotsOnMap (void);
+extern void updateDXClusterSpotMapLocations(void);
+extern bool isDXClusterConnected(void);
+extern bool sendDXClusterDELLGrid(void);
+extern bool getClosestDXCluster (const LatLong &ll, DXClusterSpot *sp, LatLong *llp);
+
+extern void drawDXCLabelOnMap (const DXClusterSpot &spot);
+extern bool getClosestDXC (const DXClusterSpot *list, int n_list, const LatLong &ll,
+    DXClusterSpot *sp, LatLong *llp);
+extern void setDXCSpotPosition (DXClusterSpot &s);
+extern void getRawSpotSizes (uint16_t &lwRaw, uint16_t &mkRaw);
+extern void drawSpotOnList (const SBox &box, const DXClusterSpot &spot, int row, uint16_t bg_color);
+extern void drawDXPathOnMap (const DXClusterSpot &spot);
+
+
+
+
+
+
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * earthmap.cpp
+ *
+ */
+
+
+
+#define DX_R    6                       // dx marker radius (erases better if even)
+#define DX_COLOR RA8875_GREEN
+
+typedef struct {
+    uint8_t zoom;                       // integral value only [MIN_ZOOM,MAX_ZOOM]
+    int16_t pan_x, pan_y;               // offset from original position, unzoomed pixels, + right/up
+} PanZoom;
+extern PanZoom pan_zoom;
+#define MIN_ZOOM     1                                  // minimum zoom factor
+#define MAX_ZOOM     (BUILD_W == 800 ? 4 : 3)           // max zoom factor
+#define MIN_PANX     (-EARTH_W/2)                       // smallest allowed pan_x
+#define MAX_PANX     (EARTH_W/2)                        // largest allowed pan_x
+#define MIN_PANY(z)  (-(EARTH_H/2) + (EARTH_H/2)/(z))   // smallest allowed pan_y, depends on zoom
+#define MAX_PANY(z)  ((EARTH_H/2) - (EARTH_H/2)/(z))    // largest allowed pan_y, depends on zoom
+
+typedef struct {
+    LatLong ll;                         // proposed location
+    SCoord s;                           // tap location
+    bool pending;                       // whether to engage at proper map drawing time
+} MapPopup;
+extern MapPopup map_popup;
+
+extern SCircle dx_c;
+extern LatLong dx_ll;
+
+extern uint16_t map_x0, map_y0;
+extern uint16_t map_w, map_h;
+
+extern bool mapmenu_pending;            // draw map menu at next opportunity
+extern uint8_t show_lp;                 // show prop long path, else short path
+#define ERAD_M          3959.0F         // earth radius, miles
+#define MI_PER_KM       0.621371F
+#define KM_PER_MI       1.609344F
+
+#define DE_R 6                          // radius of DE marker   (erases better if even)
+#define DEAP_R 6                        // radius of DE antipodal marker (erases better if even)
+#define DE_COLOR  RGB565(255,125,0)     // orange
+
+extern SCircle de_c;
+extern LatLong de_ll;
+extern float sdelat, cdelat;
+extern SCircle deap_c;
+extern LatLong deap_ll;
+extern LatLong sun_ss_ll;
+extern LatLong moon_ss_ll;
+
+#define SUN_R 6                         // radius of sun marker
+extern float sslng, sslat, csslat, ssslat;
+extern SCircle sun_c;
+
+#define MOON_R 6                        // radius of moon marker
+#define MOON_COLOR  RGB565(150,150,150)
+extern SCircle moon_c;
+
+extern uint8_t flash_crc_ok;
+
+extern void drawMoreEarth (void);
+extern void eraseDEMarker (void);
+extern void eraseDEAPMarker (void);
+extern void drawDEMarker (bool force);
+extern bool showDXMarker(void);
+extern bool showDEMarker(void);
+extern void drawDEAPMarker (void);
+extern void drawDEInfo (void);
+extern void drawDECalTime (bool center);
+extern void drawDXTime (void);
+extern void initEarthMap (void);
+extern void antipode (LatLong &to, const LatLong &from);
+extern void drawMapCoord (const SCoord &s);
+extern void drawMapCoord (uint16_t x, uint16_t y);
+extern void drawSun (void);
+extern void drawMoon (void);
+extern void drawDXInfo (void);
+extern void ll2s (const LatLong &ll, SCoord &s, uint8_t edge);
+extern void ll2s (float lat, float lng, SCoord &s, uint8_t edge);
+extern void ll2sRaw (const LatLong &ll, SCoord &s, uint8_t edge);
+extern void ll2sRaw (float lat, float lng, SCoord &s, uint8_t edge);
+extern bool s2ll (uint16_t x, uint16_t y, LatLong &ll);
+extern bool s2ll (const SCoord &s, LatLong &ll);
+extern void solveSphere (float A, float b, float cc, float sc, float *cap, float *Bp);
+extern bool checkPathDirTouch (const SCoord &s);
+extern void propDEPath (bool long_path, const LatLong &to_ll, float *distp, float *bearp);
+extern void propPath (bool long_path, const LatLong &from_ll, float sflat, float cflat, const LatLong &to_ll,
+        float *distp, float *bearp);
+extern bool waiting4DXPath(void);
+extern void eraseSCircle (const SCircle &c);
+extern void drawRSSBox (void);
+extern void eraseRSSBox (void);
+extern void roundLatLong (LatLong &ll);
+extern void initScreen(void);
+extern bool checkOnAir(void);
+extern float lngDiff (float dlng);
+extern bool overViewBtn (const SCoord &s, uint16_t border);
+extern bool segmentSpanOk (const SCoord &s0, const SCoord &s1, uint16_t border);
+extern bool segmentSpanOkRaw (const SCoord &s0, const SCoord &s1, uint16_t border);
+extern bool desiredBearing (const LatLong &ll, float &bear);
+extern void checkBGMap(void);
+extern void normalizePanZoom (PanZoom &pz);
+
+
+
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * earthsat.cpp
+ *
+ */
+
+#define NV_SATNAME_LEN          9
+
+typedef struct _sat_now {
+    char name[NV_SATNAME_LEN];          // name
+    float az, el;                       // az, el degs
+    float range, rate;                  // km, m/s + receding
+    float raz, saz;                     // rise and set az, degs; either may be SAT_NOAZ
+    float rdt, sdt;                     // next rise and set, hrs from now; rdt < 0 if up now
+    _sat_now() { name[0] = '\0'; }      // constructor to insure name properly empty
+} SatNow;
+#define SAT_NOAZ        (-999)          // error flag for raz or saz
+#define SAT_MIN_EL      0.0F            // min elevation
+#define TLE_LINEL       70              // TLE line length, including EOS
+
+extern void updateSatPath(void);
+extern void drawSatPathAndFoot(void);
+extern void updateSatPass(void);
+extern bool querySatSelection(void);
+extern void strncpySubChar (char to_str[], const char from_str[], char to_char, char from_char, int maxlen);
+extern bool checkSatMapTouch (const SCoord &s);
+extern bool checkSatNameTouch (const SCoord &s);
+extern void drawSatPass(void);
+extern bool setNewSatCircumstance (void);
+extern void drawSatPointsOnRow (uint16_t r);
+extern void drawSatNameOnRow(uint16_t y);
+extern void drawOneTimeDX(void);
+extern void drawOneTimeDE(void);
+extern bool setSatFromName (const char *new_name);
+extern bool setSatFromTLE (const char *name, const char *t1, const char *t2);
+extern bool initSatSelection(void);
+extern bool getSatNow (SatNow &satnow);
+extern bool isNewPass(void);
+extern bool isSatMoon(void);
+extern const char **getAllSatNames(void);
+extern int nextSatRSEvents (time_t **rises, float **raz, time_t **sets, float **saz);
+extern bool isSatDefined(void);
+extern void drawDXSatMenu(const SCoord &s);
+extern bool dx_info_for_sat;
+extern void satResetIO(void);
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * favicon.cpp
+ *
+ */
+
+#if defined(_IS_UNIX)
+
+extern void writeFavicon (FILE *fp);
+
+#endif // _IS_UNIX
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * gimbal.cpp
+ *
+ */
+
+extern bool haveGimbal(void);
+extern void updateGimbal (const SBox &box);
+extern bool checkGimbalTouch (const SCoord &s, const SBox &box);
+extern void stopGimbalNow(void);
+extern void closeGimbal(void);
+extern bool getGimbalState (bool &connected, bool &vis_now, bool &has_el, bool &is_stop, bool &is_auto,
+    float &az, float &el);
+extern bool commandRotator (const char *new_state, const char *new_az, const char *new_el, char ynot[]);
+
+
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * gpsd.cpp
+ *
+ */
+
+extern bool getGPSDLatLong(LatLong *llp);
+extern time_t getGPSDUTC(const char **server);
+extern void updateGPSDLoc(void);
+extern time_t crackISO8601 (const char *iso);
+
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * grayline.cpp
+ *
+ */
+
+extern void plotGrayline(void);
+
+
+
+
+/*********************************************************************************************
+ *
+ * kd3tree.cpp
+ *
+ */
+
+struct kd_node_t {
+    float s[3];                         // xyz coords on unit sphere
+    struct kd_node_t *left, *right;     // branches
+    void *data;                         // user data
+};
+
+typedef struct kd_node_t KD3Node;
+
+extern KD3Node* mkKD3NodeTree (KD3Node *t, int len, int idx);
+extern void nearestKD3Node (KD3Node *root, KD3Node *nd, int idx, KD3Node **best, float *best_dist,
+    int *n_visited);
+extern void ll2KD3Node (const LatLong &ll, KD3Node *kp);
+extern void KD3Node2ll (const KD3Node &n, LatLong *llp);
+extern float nearestKD3Dist2Miles(float d);
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * liveweb-html.cpp
+ *
+ */
+
+extern char live_html[];
+
+
+
+/*********************************************************************************************
+ *
+ * liveweb.cpp
+ *
+ */
+
+
+extern void initLiveWeb(bool verbose);
+extern bool liveweb_fs_ready;
+extern bool mainpage_up;
+extern int n_roweb, n_rwweb;
+extern char *liveweb_openurl;
+
+
+
+
+/*********************************************************************************************
+ *
+ * magdecl.cpp
+ *
+ */
+
+extern bool magdecl (float l, float L, float e, float y, float *mdp);
+
+
+
+
+/*********************************************************************************************
+ *
+ * maidenhead.cpp
+ *
+ */
+
+
+extern void ll2maidenhead (char maid[MAID_CHARLEN], const LatLong &ll);
+extern bool maidenhead2ll (LatLong &ll, const char maid[MAID_CHARLEN]);
+extern void setNVMaidenhead (NV_Name nv, LatLong &ll);
+extern void getNVMaidenhead (NV_Name nv, char maid[MAID_CHARLEN]);
+
+
+
+
+/*********************************************************************************************
+ *
+ * mapmanage.cpp
+ *
+ */
+
+// unique enum for each band in BandCdtnMatrix
+typedef enum {
+    PROPBAND_80M,
+    PROPBAND_40M,
+    PROPBAND_30M,
+    PROPBAND_20M,
+    PROPBAND_17M,
+    PROPBAND_15M,
+    PROPBAND_12M,
+    PROPBAND_10M,
+    PROPBAND_N,
+} PropMapBand;
+
+typedef enum {
+    PROPTYPE_REL,                       // reliability
+    PROPTYPE_TOA,                       // take off angle
+} PropMapType;
+
+typedef struct {
+    bool active;                        // whether currently in play
+    PropMapBand band;                   // one of above if in play
+    PropMapType type;                   // one of above if in play
+} PropMapSetting;
+extern PropMapSetting prop_map;
+
+
+// CoreMaps and coremap_names
+#define COREMAPS                 \
+    X(CM_COUNTRIES, "Countries") \
+    X(CM_TERRAIN,   "Terrain")   \
+    X(CM_DRAP,      "DRAP")      \
+    X(CM_MUF,       "MUF")       \
+    X(CM_AURORA,    "Aurora")    \
+    X(CM_WX,        "Weather")
+
+#define X(a,b)  a,                      // expands COREMAPS to each enum followed by comma
+typedef enum {
+    COREMAPS
+    CM_N
+} CoreMaps;
+#undef X
+
+#define CM_NONE CM_N                    // handy alias meaning none active
+
+extern CoreMaps core_map;               // current map, if any
+extern const char *coremap_names[CM_N]; // core map style names
+
+extern SBox mapscale_b;                 // map scale box
+
+extern void initCoreMaps(void);
+extern bool installFreshMaps(void);
+extern float propMap2MHz (PropMapBand band);
+extern int propMap2Band (PropMapBand band);
+extern bool getMapDayPixel (uint16_t row, uint16_t col, uint16_t *dayp);
+extern bool getMapNightPixel (uint16_t row, uint16_t col, uint16_t *nightp);
+extern const char *getMapStyle (char s[]);
+extern void drawMapScale(void);
+extern void eraseMapScale(void);
+extern bool mapScaleIsUp(void);
+
+#if defined(__GNUC__)
+extern void mapMsg (bool force, uint32_t dwell_ms, const char *fmt, ...) __attribute__ ((format (__printf__, 3, 4)));
+#else
+extern void mapMsg (bool force, uint32_t dwell_ms, const char *fmt, ...);
+#endif
+
+
+
+typedef struct {
+    char name[33];      // name with EOS
+    char date[21];      // ISO 8601 date with EOS
+    time_t t0;          // unix time
+    uint32_t len;       // n bytes
+} FS_Info;
+extern FS_Info *getConfigDirInfo (int *n_info, char **fs_name, uint64_t *fs_size, uint64_t *fs_used);
+
+
+
+
+/*********************************************************************************************
+ *
+ * menu.cpp
+ *
+ */
+
+
+typedef enum {
+    MENU_LABEL,                 // insensitive string
+    MENU_1OFN,                  // exactly 1 of this set, round selector
+    MENU_01OFN,                 // exactly 0 or 1 of this set, round selector
+    MENU_AL1OFN,                // at least 1 of this set, square selector
+    MENU_TOGGLE,                // simple on/off with no grouping, square selector
+    MENU_IGNORE,                // ignore this entry entirely
+    MENU_BLANK,                 // empty space
+} MenuFieldType;
+
+// return whether the given MenuFieldType involves active user interaction
+#define MENU_ACTIVE(i)          ((i)==MENU_1OFN || (i)==MENU_01OFN || (i)==MENU_AL1OFN || (i)==MENU_TOGGLE)
+
+typedef enum {
+    MENU_OK_OK,                 // normal ok button appearance
+    MENU_OK_BUSY,               // busy ok button appearance
+    MENU_OK_ERR,                // error ok button appearance
+} MenuOkState;
+
+typedef struct {
+    MenuFieldType type;         // appearance and behavior
+    bool set;                   // whether selected
+    uint8_t group;              // association
+    uint8_t indent;             // pixels to indent
+    const char *label;          // string -- user must manage memory
+} MenuItem;
+
+typedef struct {
+    SBox &menu_b;               // initial menu box -- sized automatically and may be moved
+    SBox &ok_b;                 // box for Ok button -- user may use later with menuRedrawOk()
+    bool update_clocks;         // whether to update clocks while waiting
+    bool no_cancel;             // whether to just have Ok button
+    int n_cols;                 // number of columns in which to display items
+    int n_items;                // number of items[]
+    MenuItem *items;            // list -- user must manage memory
+} MenuInfo;
+
+extern bool runMenu (MenuInfo &menu);
+extern void menuMsg (const SBox &box, uint16_t color, const char *msg);
+extern void menuRedrawOk (SBox &ok_b, MenuOkState oks);
+
+
+typedef struct {
+    const SBox &inbox;                          // overall input box bounds
+    bool (*fp)(void);                           // user check function, else NULL
+    bool fp_true;                               // true if fp returned true
+    uint32_t to_ms;                             // timeout, msec, or 0 forever
+    bool update_clocks;                         // whether to update clocks while waiting
+    SCoord &tap;                                // tap location or ...
+    char &kbchar;                               // keyboard char code
+    bool ctrl, shift;                           // set if kbchar was accommpanied by modifier keys
+} UserInput;
+
+extern bool waitForUser (UserInput &ui);
+
+
+/*******************************************************************************************n
+ *
+ * moonpane.cpp and moon_imgs.cpp
+ *
+ */
+
+extern void updateMoonPane (const SBox &box, bool image_too);
+extern void drawMoonElPlot (void);
+extern const uint16_t moon_image[HC_MOON_W*HC_MOON_H] PROGMEM;
+
+
+
+
+
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * ncdxf.cpp
+ *
+ */
+
+#define NCDXF_B_NFIELDS         4       // n fields in NCDXF_b
+#define NCDXF_B_MAXLEN          10      // max field length
+
+extern void updateBeacons (bool immediate);
+extern void updateBeaconMapLocations(void);
+extern void doNCDXFStatsTouch (const SCoord &s, PlotChoice pcs[NCDXF_B_NFIELDS]);
+extern void doNCDXFBoxTouch (const SCoord &s);
+extern bool drawNCDXFBox(void);
+extern void initBRBRotset(void);
+extern void checkBRBRotset(void);
+extern void drawNCDXFStats (uint16_t color,
+                            const char titles[NCDXF_B_NFIELDS][NCDXF_B_MAXLEN],
+                            const char values[NCDXF_B_NFIELDS][NCDXF_B_MAXLEN],
+                            const uint16_t colors[NCDXF_B_NFIELDS]);
+
+#if defined (_IS_ESP8266)
+extern bool overAnyBeacon (const SCoord &s);
+#endif
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * nvram.cpp
+ *
+ */
+
 
 // string valued lengths including trailing EOS
 #define NV_WIFI_SSID_LEN        32
@@ -1889,25 +1715,11 @@ extern void reportEESize (uint16_t &ee_used, uint16_t &ee_size);
 
 /*********************************************************************************************
  *
- * maidenhead.cpp
- *
- */
-
-
-extern void ll2maidenhead (char maid[MAID_CHARLEN], const LatLong &ll);
-extern bool maidenhead2ll (LatLong &ll, const char maid[MAID_CHARLEN]);
-extern void setNVMaidenhead (NV_Name nv, LatLong &ll);
-extern void getNVMaidenhead (NV_Name nv, char maid[MAID_CHARLEN]);
-
-
-
-
-/*********************************************************************************************
- *
  * ontheair.cpp
  *
  */
 
+#define ONTA_INTERVAL   (60)                    // polling interval, secs; updates can be very rapid
 
 #define ONTAPrograms             \
     X(ONTA_POTA, "POTA")         \
@@ -1928,11 +1740,6 @@ extern bool getOnTheAirSpots (DXClusterSpot **spp, uint8_t *nspotsp, ONTAProgram
 extern void drawOnTheAirSpotsOnMap (void);
 extern void updateOnTheAirSpotMapLocations(void);
 extern bool getClosestOnTheAirSpot (const LatLong &ll, DXClusterSpot *sp, LatLong *llp);
-
-#if defined(_IS_ESP8266)
-extern bool overAnyOnTheAirSpots(const SCoord &s);
-#endif
-
 
 
 
@@ -1959,7 +1766,7 @@ extern bool plotXYstr (const SBox &box, float x[], float y[], int nxy, const cha
         const char *ylabel, uint16_t color, float y_min, float y_max, char *label_str);
 extern void plotWX (const SBox &b, uint16_t color, const WXInfo &wi);
 extern void plotMessage (const SBox &b, uint16_t color, const char *message);
-extern void plotNOAASWx (const SBox &box, const NOAASpaceWx &noaaspw);
+extern bool plotNOAASWx (const SBox &box);
 extern uint16_t maxStringW (char *str, uint16_t maxw);
 extern void prepPlotBox (const SBox &box);
 
@@ -2013,8 +1820,8 @@ extern bool drawHTTPBMP (const char *hc_url, const SBox &box, uint16_t color);
 extern int tickmarks (float min, float max, int numdiv, float ticks[]);
 extern bool paneIsRotating (PlotPane pp);
 extern bool ignorePane1Touch(void);
-extern bool paneComboOk (const uint32_t new_rotsets[PANE_N]);
 extern bool enforceDXCAlone (const SBox &box, uint32_t rotset);
+extern bool enforceCDownAlone (const SBox &box, uint32_t rotset);
 extern void restoreNormPANE0(void);
 
 
@@ -2063,7 +1870,7 @@ typedef enum {
 #define PSKMB_PSK       (PSKMB_SRC0)
 #define PSKMB_WSPR      (0)
 #define PSKMB_RBN       (PSKMB_SRC1)
-
+#define PSK_INTERVAL    (120)           // polling period. secs
 #define PSK_DOTR       2                // end point marker radius for several paths, not just PSK
 
 typedef enum {
@@ -2120,19 +1927,10 @@ extern void drawFarthestPSKSpots(void);
 extern bool getPSKBandStats (PSKBandStats stats[PSKBAND_N], const char *names[PSKBAND_N]);
 extern bool maxPSKageOk (int m);
 extern uint16_t getBandColor (long Hz);
-
-#if defined (_IS_ESP8266)
-extern bool overAnyFarthestPSKSpots (const SCoord &s);
-#endif
-
-#if defined(_IS_UNIX)
-
 extern bool getBandDashed (long Hz);
 extern void drawPSKPaths (void);
 extern bool getClosestPSK (const LatLong &ll, const PSKReport **rpp);
 extern void getPSKSpots (const PSKReport* &rp, int &n_rep);
-
-#endif // _IS_UNIX
 
 
 
@@ -2150,11 +1948,30 @@ extern void radioResetIO(void);
 
 /*********************************************************************************************
  *
- * grayline.cpp
+ * robinson.cpp
  *
  */
 
-extern void plotGrayline(void);
+extern void ll2sRobinson (const LatLong &ll, SCoord &s, int edge, int scalesz);
+extern bool s2llRobinson (const SCoord &s, LatLong &ll);
+extern float RobLat2G (const float lat_d);
+
+
+
+
+/*********************************************************************************************
+ *
+ * rss.cpp
+ *
+ */
+
+extern SBox rss_bnr_b;                  // rss banner button
+extern uint8_t rss_on;                  // rss on/off
+extern bool rss_local;
+extern void checkRSS(void);
+extern void checkRSSTouch(void);
+
+
 
 
 
@@ -2176,6 +1993,8 @@ extern const uint16_t runner[HC_RUNNER_W*HC_RUNNER_H] PROGMEM;
 
 extern void drawSanta(void);
 extern SBox santa_b;
+
+
 
 
 
@@ -2206,16 +2025,68 @@ extern void selectFontStyle (FontWeight w, FontSize s);
 
 
 
+
+/*********************************************************************************************
+ *
+ * scroll.cpp
+ *
+ */
+
+/* info and methods to control scrolling
+ */
+class ScrollState {
+
+    public:
+
+        void init (int mv, int tv, int nd) {
+            max_vis = mv;
+            top_vis = tv;
+            n_data = nd;
+        };
+
+        void drawScrollUpControl (const SBox &box, uint16_t color) const;
+        void drawScrollDownControl (const SBox &box, uint16_t color) const;
+
+        bool checkScrollUpTouch (const SCoord &s, const SBox &b) const;
+        bool checkScrollDownTouch (const SCoord &s, const SBox &b) const;
+
+        virtual void scrollDown (void);
+        virtual void scrollUp (void);
+        bool okToScrollDown (void) const;
+        bool okToScrollUp (void) const;
+
+        virtual int nMoreAbove (void) const;
+        virtual int nMoreBeneath (void) const;
+        void scrollToNewest (void);
+        bool findDataIndex (int display_row, int &array_index) const;
+        int getVisIndices (int &min_i, int &max_i) const;
+        int getDisplayRow (int array_index) const;
+
+        int max_vis;        // maximum rows in the displayed list
+        int top_vis;        // index into the data array being dislayed at the front of the list
+        int n_data;         // the number of entries in the data array
+
+    private:
+
+        void moveTowardsOlder();
+        void moveTowardsNewer();
+};
+
+
+
+
 /*********************************************************************************************
  *
  * sdo.cpp
  *
  */
 
+#define SDO_INTERVAL     40                     // annotation update interval, secs
+#define SDO_ROT_INTERVAL 90                     // image and annotation interval when rotating, secs
+
 extern bool checkSDOTouch (const SCoord &s, const SBox &b);
 extern bool updateSDOPane (const SBox &box, bool image_too);
 extern bool isSDORotating(void);
-
 
 
 
@@ -2257,7 +2128,7 @@ extern bool isSDORotating(void);
 
 // DRAP plot info, new data posted every few minutes
 // collect 24 hours of max value found in each 10 minute interval
-#define DRAPDATA_INTERVAL       (10*60)                 // interval, seconds
+#define DRAPDATA_INTERVAL       (10*60)                 // design interval, seconds
 #define DRAPPLOT_INTERVAL       (DRAPMAP_INTERVAL+5)    // polling interval, secs. N.B. avoid race with MAP
 #define DRAPDATA_PERIOD         (24*3600)               // total period, seconds
 #define DRAPDATA_NPTS           (DRAPDATA_PERIOD/DRAPDATA_INTERVAL)     // number of points to download
@@ -2271,7 +2142,6 @@ extern bool isSDORotating(void);
 #define KP_NHD                  7                       // N historical days
 #define KP_NPD                  2                       // N predicted days
 #define KP_NV                   ((KP_NHD+KP_NPD)*KP_VPD)// N total Kp values
-extern bool retrieveKp (float kpx[KP_NV], float kp[KP_NV]);
 
 
 // xray info, new data posted every 10 minutes
@@ -2291,27 +2161,20 @@ extern bool retrieveKp (float kpx[KP_NV], float kp[KP_NV]);
 #define AURORA_MAXPTS           (48)                    // every 30 minutes for 24 hours
 #define AURORA_MAXAGE           (24.0F)                 // max age to plot, hours
 
-typedef struct {
-    float age_hrs[AURORA_MAXPTS];                       // negative age "hours ago", oldest first
-    float percent[AURORA_MAXPTS];                       // percent likely
-    int n_points;                                       // n points defined
-    bool ok;
-} Aurora_t;
-
 
 /* consolidated space weather enum and stats. #define X to extract desired components.
- * N.B. set rank to desired value when rankSpaceWx() is false
+ * N.B. init rank to desired value when rankSpaceWx() is false
  */
-#define SPCWX_DATA                                                      \
-    X(SPCWX_SSN,        PLOT_CH_SSN,     SPW_ERR, 9, 0, 1, 0)           \
-    X(SPCWX_XRAY,       PLOT_CH_XRAY,    SPW_ERR, 1, 0, 1, 0)           \
-    X(SPCWX_FLUX,       PLOT_CH_FLUX,    SPW_ERR, 0, 0, 1, 0)           \
-    X(SPCWX_KP,         PLOT_CH_KP,      SPW_ERR, 2, 0, 1, 0)           \
-    X(SPCWX_SOLWIND,    PLOT_CH_SOLWIND, SPW_ERR, 9, 0, 1, 0)           \
-    X(SPCWX_DRAP,       PLOT_CH_DRAP,    SPW_ERR, 9, 0, 1, 0)           \
-    X(SPCWX_BZ,         PLOT_CH_BZBT,    SPW_ERR, 3, 0, 1, 0)           \
-    X(SPCWX_NOAASPW,    PLOT_CH_NOAASPW, SPW_ERR, 9, 0, 1, 0)        /* value will be max noaa_sw.val[] */ \
-    X(SPCWX_AURORA,     PLOT_CH_AURORA,  SPW_ERR, 9, 0, 1, 0)
+#define SPCWX_DATA                                           \
+    X(SPCWX_SSN,        PLOT_CH_SSN,     0, false, 9, 1, 0)  \
+    X(SPCWX_XRAY,       PLOT_CH_XRAY,    0, false, 1, 1, 0)  \
+    X(SPCWX_FLUX,       PLOT_CH_FLUX,    0, false, 0, 1, 0)  \
+    X(SPCWX_KP,         PLOT_CH_KP,      0, false, 2, 1, 0)  \
+    X(SPCWX_SOLWIND,    PLOT_CH_SOLWIND, 0, false, 9, 1, 0)  \
+    X(SPCWX_DRAP,       PLOT_CH_DRAP,    0, false, 9, 1, 0)  \
+    X(SPCWX_BZ,         PLOT_CH_BZBT,    0, false, 3, 1, 0)  \
+    X(SPCWX_NOAASPW,    PLOT_CH_NOAASPW, 0, false, 9, 1, 0)  /* value will be max noaa_sw.val[] */ \
+    X(SPCWX_AURORA,     PLOT_CH_AURORA,  0, false, 9, 1, 0)
 
 #define X(a,b,c,d,e,f,g) a,                     // expands SPCWX_DATA to each enum and comma
 typedef enum {
@@ -2323,34 +2186,103 @@ typedef enum {
 /* manage the display and sorting of space weather in NCDXF box
  */
 typedef struct {
-    SPCWX_t sp;                                 // which one we are
-    PlotChoice pc;                              // corresponding plot choice
-    float value;                                // current value, or SPW_ERR
-    int rank;                                   // display order for NCDXF, 0 is top
-    time_t next_update;                         // next scheduled update unless this stat a visible pane
+    SPCWX_t sp;                                 // which one we are, needed for sorting
+    PlotChoice pc;                              // corresponding plot choice if tapped
+    float value;                                // current value
+    bool value_ok;                              // whether value is valid
+    int rank;                                   // display order after sorting for NCDXF, 0 is top
     float m, b;                                 // slope and intercept to convert value when finding rank
 } SpaceWeather_t;
 
-#define SPW_ERR (-9999)                         // cookie value for bad space weather stat value
-
 extern SpaceWeather_t space_wx[SPCWX_N];
-extern NOAASpaceWx noaa_sw;                     // current and three day forecast of RGS space weather effects
 
-extern bool retrieveBzBt (float bzbt_hrsold[BZBT_NV], float bz[BZBT_NV], float bt[BZBT_NV]);
-extern int retrieveSolarWind(float x[SWIND_MAXN], float y[SWIND_MAXN]);
-extern bool retrieveSunSpots (float x[SSN_NV], float ssn[SSN_NV]);
-extern bool retrievSolarFlux (float x[SFLUX_NV], float sflux[SFLUX_NV]);
-extern bool retrieveDRAP (float x[DRAPDATA_NPTS], float y[DRAPDATA_NPTS]);
-extern bool retrieveXRay (float x[XRAY_NV], float lxray[XRAY_NV], float sxray[XRAY_NV]);
-extern bool retrieveNOAASWx(void);
-extern bool retrieveAurora(Aurora_t &a);
+/* data and age for each type of SP
+ */
+
+typedef struct {
+    time_t next_update;                         // when to try to get new data
+    bool data_ok;                               // set when data are known good
+    float x[BZBT_NV];                           // age, hrs
+    float bz[BZBT_NV];                          // value
+    float bt[BZBT_NV];                          // value
+} BzBtData;
+
+typedef struct {
+    time_t next_update;                         // when to try to get new data
+    bool data_ok;                               // set when data are known good
+    float x[SWIND_MAXN];                        // age, hrs
+    float y[SWIND_MAXN];                        // value
+    int n_values;                               // may not be full
+} SolarWindData;
+
+typedef struct {
+    time_t next_update;                         // when to try to get new data
+    bool data_ok;                               // set when data are known good
+    float x[SSN_NV];                            // age, days ago
+    float ssn[SSN_NV];                          // value
+} SunSpotData;
+
+typedef struct {
+    time_t next_update;                         // when to try to get new data
+    bool data_ok;                               // set when data are known good
+    float x[SFLUX_NV];                          // age, days ago
+    float sflux[SFLUX_NV];                      // value
+} SolarFluxData;
+
+typedef struct {
+    time_t next_update;                         // when to try to get new data
+    bool data_ok;                               // set when data are known good
+    float x[DRAPDATA_NPTS];                     // age, days ago
+    float y[DRAPDATA_NPTS];                     // value
+} DRAPData;
+
+typedef struct {
+    time_t next_update;                         // when to try to get new data
+    bool data_ok;                               // set when data are known good
+    float x[XRAY_NV];                           // age, days ago
+    float l[XRAY_NV];                           // long xray value
+    float s[XRAY_NV];                           // short xray value
+} XRayData;
+
+typedef struct {
+    time_t next_update;                         // when to try to get new data
+    bool data_ok;                               // set when data are known good
+    float x[KP_NV];                             // age, days ago
+    float p[KP_NV];                             // value
+} KpData;
+
+#define N_NOAASW_C      3                       // n categories : R, S and G
+#define N_NOAASW_V      4                       // values per cat : current and 3 days predictions
+typedef struct {
+    time_t next_update;                         // when to try to get new data
+    bool data_ok;                               // set when data are known good
+    char cat[N_NOAASW_C];                       // categories R S G
+    int val[N_NOAASW_C][N_NOAASW_V];            // each serverity code for each day
+} NOAASpaceWxData;
+
+typedef struct {
+    time_t next_update;                         // when to try to get new data
+    bool data_ok;                               // set when data are known good
+    float age_hrs[AURORA_MAXPTS];               // negative age "hours ago", oldest first
+    float percent[AURORA_MAXPTS];               // percent likely
+    int n_points;                               // n points defined
+} AuroraData;
+
+extern bool retrieveBzBt (BzBtData &bzbt);
+extern bool retrieveSolarWind(SolarWindData &sw);
+extern bool retrieveSunSpots (SunSpotData &ssn);
+extern bool retrievSolarFlux (SolarFluxData &sf);
+extern bool retrieveDRAP (DRAPData &drap);
+extern bool retrieveXRay (XRayData &xray);
+extern bool retrieveKp (KpData &kp);
+extern bool retrieveNOAASWx(NOAASpaceWxData &noaa);
+extern bool retrieveAurora(AuroraData &a);
 
 extern void doSpaceStatsTouch (const SCoord &s);
 extern void drawSpaceStats(uint16_t color);
-extern bool checkSpaceWx(void);                 // check all are up to date or ...
-extern bool checkAurora(void);                  // ... a few specific ones ...
-extern bool checkDRAP (void);                   // ...
-
+extern bool checkForNewSpaceWx(void);           // check for any new data or ...
+extern bool checkForNewDRAP(void);              // ... a few specific ones
+extern bool checkForNewAurora(void);            // ... a few specific ones
 
 
 
@@ -2368,17 +2300,92 @@ extern float simpleSphereDist (const LatLong &ll1, const LatLong &ll2);
 
 /*********************************************************************************************
  *
- * touch.cpp
+ * setup.cpp
  *
  */
 
-extern void drainTouch(void);
-extern TouchType readCalTouch (SCoord &s);
-extern TouchType checkKBWarp (SCoord &s);
 
-// for passing web touch command to checkTouch()
-extern TouchType wifi_tt;
-extern SCoord wifi_tt_s;
+typedef enum {
+    DF_MDY,
+    DF_DMY,
+    DF_YMD,
+    DF_N
+} DateFormat;
+
+#define N_DXCLCMDS      12                      // n dx cluster user commands
+#define THINPATHSZ      ((tft.SCALESZ+1)/2)     // NV_MAPSPOTS thin raw path size
+#define WIDEPATHSZ      (tft.SCALESZ+1)         // NV_MAPSPOTS wide raw path size
+
+
+#define NV_ROTHOST_LEN          18
+#define NV_RIGHOST_LEN          18
+#define NV_FLRIGHOST_LEN        18
+
+extern void clockSetup(void);
+extern const char *getWiFiSSID(void);
+extern const char *getWiFiPW(void);
+extern const char *getCallsign(void);
+extern bool setCallsign (const char *cs);
+extern const char *getDXClusterHost(void);
+extern int getDXClusterPort(void);
+extern bool setDXCluster (char *host, char *port_str, char ynot[]);
+extern bool useMetricUnits(void);
+extern bool useGeoIP(void);
+extern bool useGPSDTime(void);
+extern bool useGPSDLoc(void);
+extern bool labelSpots(void);
+extern bool dotSpots(void);
+extern bool plotSpotCallsigns(void);
+extern float getBMETempCorr(int i);
+extern float getBMEPresCorr(int i);
+extern bool setBMETempCorr(BMEIndex i, float delta);
+extern bool setBMEPresCorr(BMEIndex i, float delta);
+extern const char *getGPSDHost(void);
+extern bool useLocalNTPHost(void);
+extern const char *getLocalNTPHost(void);
+extern bool useDXCluster(void);
+extern uint32_t getKX3Baud(void);
+extern void drawStringInBox (const char str[], const SBox &b, bool inverted, uint16_t color);
+extern bool logUsageOk(void);
+extern uint16_t getMapColor (ColorSelection cid);
+extern const char* getMapColorName (ColorSelection cid);
+extern uint8_t getBrMax(void);
+extern uint8_t getBrMin(void);
+extern bool getX11FullScreen(void);
+extern bool getWebFullScreen(void);
+extern bool latSpecIsValid (const char *lng_spec, float &lng);
+extern bool lngSpecIsValid (const char *lng_spec, float &lng);
+extern bool getDemoMode(void);
+extern int16_t getCenterLng(void);
+extern DateFormat getDateFormat(void);
+extern bool getRigctld (char host[NV_RIGHOST_LEN], int *portp);
+extern bool getRotctld (char host[NV_ROTHOST_LEN], int *portp);
+extern bool getFlrig (char host[NV_FLRIGHOST_LEN], int *portp);
+extern const char *getDXClusterLogin(void);
+extern int getSpotPathSize(void);
+extern bool setMapColor (const char *name, uint16_t rgb565);
+extern void getDXClCommands(const char *cmds[N_DXCLCMDS], bool on[N_DXCLCMDS]);
+extern bool getColorDashed(ColorSelection id);
+extern bool useMagBearing(void);
+extern bool useWSJTX(void);
+extern bool weekStartsOnMonday(void);
+extern void formatLat (float lat_d, char s[], int s_len);
+extern void formatLng (float lng_d, char s[], int s_len);
+extern const char *getADIFilename(void);
+extern bool scrollTopToBottom(void);
+extern int nMoreScrollRows(void);
+extern bool useOSTime (void);
+extern bool onDXWatchList (const char *call);
+extern bool showOnlyOnDXWatchList(void);
+extern bool onSPOTAWatchList (const char *call);
+extern bool showOnlyOnSPOTAWatchList();
+extern bool rankSpaceWx(void);
+extern bool showNewDXDEWx(void);
+extern int getPaneRotationPeriod (void);
+extern bool showPIP(void);
+
+
+
 
 
 
@@ -2433,6 +2440,7 @@ extern SBox stopwatch_b;                        // clock icon on main display
 
 extern void initStopwatch(void);
 extern void checkStopwatchTouch(TouchType tt);
+extern void checkCountdownTouch(void);
 extern bool runStopwatch(void);
 extern void drawMainPageStopwatch (bool force);
 extern bool setSWEngineState (SWEngineState nsws, uint32_t ms);
@@ -2448,6 +2456,39 @@ extern void SWresetIO(void);
 
 
 
+
+
+
+
+/*********************************************************************************************
+ *
+ * string.cpp
+ *
+ */
+
+extern uint32_t stringHash (const char *str);
+extern void strtolower (char *str);
+extern void strtoupper (char *str);
+extern char *strtrim (char *str);
+extern void getTextBounds (const char str[], uint16_t *wp, uint16_t *hp);
+extern uint16_t getTextWidth (const char str[]);
+
+
+
+
+/*********************************************************************************************
+ *
+ * touch.cpp
+ *
+ */
+
+extern void drainTouch(void);
+extern TouchType readCalTouch (SCoord &s);
+extern TouchType checkKBWarp (SCoord &s);
+
+// for passing web touch command to checkTouch()
+extern TouchType wifi_tt;
+extern SCoord wifi_tt_s;
 
 
 
@@ -2481,7 +2522,6 @@ typedef struct {
 extern bool parseWebCommand (WebArgs &wa, char line[], size_t line_len);
 
 
-extern char *trim (char *str);
 extern void initWebServer(void);
 extern void checkWebServer(bool ro);
 extern TouchType readCalTouchWS (SCoord &s);
@@ -2539,7 +2579,9 @@ extern bool setRSSTitle (const char *title, int &n_titles, int &max_titles);
 extern void doSpaceStatsTouch (const SCoord &s);
 extern time_t nextPaneRotation (PlotPane pp);
 extern time_t nextWiFiRetry (PlotChoice pc);
+extern time_t nextWiFiRetry (const char *str);
 extern time_t nextPaneUpdate (PlotChoice pc, int interval);
+extern time_t nextRetrieval (PlotChoice pc, int interval);
 extern void scheduleFreshMap (void);
 
 
@@ -2564,10 +2606,7 @@ extern float bc_toa;
 extern uint8_t bc_utc_tl;
 extern const int n_bc_powers;
 extern uint16_t bc_powers[];
-
-extern bool checkBandConditions (void);
-
-extern char *xrayLevel (float xray, char *buf);
+extern char *xrayLevel (char *buf, const SpaceWeather_t &xray);
 
 
 
@@ -2615,8 +2654,6 @@ extern bool drawNCDXFWx (BRB_MODE m);
  *
  */
 
-#if defined(_SUPPORT_ZONES)
-
 // uncomment this to show the bounding boxes around each zone
 // #define DEBUG_ZONES_BB
 
@@ -2628,8 +2665,6 @@ typedef enum {
 extern bool findZoneNumber (ZoneID id, const SCoord &s, int *zone_n);
 extern void updateZoneSCoords(ZoneID id);
 extern void drawZone (ZoneID id, uint16_t color, int n_only);
-
-#endif // _SUPPORT_ZONES
 
 
 

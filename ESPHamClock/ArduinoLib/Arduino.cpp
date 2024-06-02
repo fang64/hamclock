@@ -66,7 +66,10 @@ const char *diag_files[N_DIAG_FILES] = {
   #error Unknown build configuration
 #endif
  
-static const char *pw_file;
+
+// public for user agent
+const char *pw_file;
+
 
 /* return milliseconds since first call
  */
@@ -105,6 +108,8 @@ long random(int max)
 
 uint16_t analogRead(int pin)
 {
+        (void) pin;
+
 	return (0);		// not supported on Pi, consider https://www.adafruit.com/product/1083
 }
 

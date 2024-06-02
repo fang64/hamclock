@@ -21,6 +21,8 @@ Adafruit_LTR329::Adafruit_LTR329(void)
  */
 bool Adafruit_LTR329::begin(TwoWire *theWire)
 {
+    (void) theWire;
+
     uint8_t val;
 
     if (!Wire.read8 (LTR329_I2CADDR_DEFAULT, LTR329_PART_ID, val) || val != 0xA0) {

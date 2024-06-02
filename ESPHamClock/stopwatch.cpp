@@ -383,11 +383,11 @@ static void loadSWNV(void)
 
     uint32_t once_time;
     if (!NVReadUInt32 (NV_ONCEALARM, &once_time)) {
-        once_time = nowWO();
+        once_time = (uint32_t)nowWO();
         NVWriteUInt32 (NV_ONCEALARM, once_time);
     } else {
         // beware past alarms
-        if (once_time < nowWO())
+        if (once_time < (uint32_t)nowWO())
             alarm_once.state = ALMS_OFF;
     }
     alarm_once.time = once_time;
@@ -880,11 +880,11 @@ static void drawCDTimeRemaining(bool force)
                     prepPlotBox (box);
 
                     // title
-                    static const char title[] = "Countdown timer";
-                    selectFontStyle (BOLD_FONT, FAST_FONT);
-                    uint16_t w = getTextWidth(title);
-                    tft.setCursor (box.x + (box.w - w)/2, box.y + 3);
-                    tft.setTextColor (RA8875_GREEN);
+                    static const char *title = "Countdown";
+                    selectFontStyle (LIGHT_FONT, SMALL_FONT);
+                    tft.setTextColor(BRGRAY);
+                    uint16_t tw = getTextWidth(title);
+                    tft.setCursor (box.x + (box.w-tw)/2, box.y + PANETITLE_H);
                     tft.print (title);
                 }
 
@@ -1017,7 +1017,7 @@ static bool drawBCDEWxInfo(void)
  */
 static void drawBCSpaceWxInfo (bool all)
 {
-    if (checkSpaceWx() || all)
+    if (checkForNewSpaceWx() || all)
         drawSpaceStats(sw_col);   
 }
 
@@ -2438,17 +2438,10 @@ void drawMainPageStopwatch (bool force)
 }
 
 
-/* stopwatch_b has been touched from HamClock Main page:
- * if tapped while counting down just reset and continue main HamClock page, else start main SW page.
+/* stopwatch_b has been touched from HamClock Main page: just enter stopwatch page.
  */
 void checkStopwatchTouch(TouchType tt)
 {
-    // if tapped the stop watch while counting down, just restart
-    if (sws_engine == SWE_COUNTDOWN && tt == TT_TAP) {
-        setSWEngineState (SWE_COUNTDOWN, countdown_period);
-        return;
-    }
-
     Serial.println(F("SW: main enter"));
 
     // close down other systems
@@ -2459,6 +2452,16 @@ void checkStopwatchTouch(TouchType tt)
     // fresh start
     eraseScreen();
     drawSWMainPage();
+}
+
+/* PLOT_CH_COUNTDOWN pane has been touched from HamClock Main page: restart countdown.
+ */
+void checkCountdownTouch(void)
+{
+    Serial.println(F("SW: PLOT_CH_COUNTDOWN touch"));
+
+    // restart countdown
+    setSWEngineState (SWE_COUNTDOWN, countdown_period);
 }
 
 /* called by main loop to run another iteration of the stop watch.

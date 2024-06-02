@@ -108,121 +108,30 @@ static void drawBeacon (NCDXFBeacon &nb)
     drawMapTag (nb.call, nb.call_b);
 }
 
-/* erase beacon
- * ESP only
- */
-static void eraseBeacon (NCDXFBeacon &nb)
-{
-
-#if defined (_IS_ESP8266)
-
-    resetWatchdog();
-
-    // redraw map under symbol
-    for (int8_t dy = -BEACONR; dy <= BEACONR/2; dy += 1) {
-        int8_t hw = 3*(dy+BEACONR)/5+1;
-        for (int8_t dx = -hw; dx <= hw; dx += 1)
-            drawMapCoord (nb.s.x+dx, nb.s.y+dy);
-    }
-
-    // redraw map under call
-    for (uint16_t y = nb.call_b.y; y < nb.call_b.y + nb.call_b.h; y++) {
-        for (uint16_t x = nb.call_b.x; x < nb.call_b.x + nb.call_b.w; x++)
-            drawMapCoord (x, y);
-    }
-
-#endif // _IS_ESP8266
-
-}
-
-#if defined (_IS_ESP8266)
-
-
-/* return whether the given point is anywhere inside a beacon symbol or call
- * ESP only
- */
-static bool overBeacon (const SCoord &s, const NCDXFBeacon &nb)
-{
-    // check call
-    if (inBox (s, nb.call_b))
-        return (true);
-
-    // check above or below symbol
-    if (s.y < nb.s.y - BEACONR || s.y > nb.s.y + BEACONR/2)
-        return (false);
-
-    // distance below top tip
-    uint16_t dy = s.y - (nb.s.y - BEACONR);
-
-    // width at this y (same as eraseBeacon)
-    int8_t hw = 3*dy/5+1;
-
-    // left or right
-    if (s.x < nb.s.x - hw || s.x > nb.s.x + hw)
-        return (false);
-
-    // yup
-    return (true);
-}
-
-/* return whether the given screen coord is over any visible map symbol or call sign box
- * ESP only
- */
-bool overAnyBeacon (const SCoord &s)
-{
-    if (!(brb_rotset & (1 << BRB_SHOW_BEACONS)))
-        return (false);
-
-    for (NCDXFBeacon *bp = blist; bp < &blist[NBEACONS]; bp++) {
-        if (bp->c == BCOL_S)
-            continue;
-        if (overBeacon (s, *bp))
-            return (true);
-    }
-
-    return (false);
-}
-
-#endif // _IS_ESP8266
-
-
 /* update map beacons, typically on each 10 second period unless immediate.
- * if erase_too then erase all beacons even if known to be off.
  */
-void updateBeacons (bool immediate, bool erase_too)
+void updateBeacons (bool immediate)
 {
     // counts as on as long as in rotation set, need not be in front now
     bool beacons_on = brb_rotset & (1 << BRB_SHOW_BEACONS);
+    if (!beacons_on)
+        return;
 
-    // process if immediate or (beacons are on and it's a new time period)
+    // process if immediate or it's a new time period
     static uint8_t prev_sec10;
     uint8_t sec10 = second(nowWO())/10;
-    if (!immediate && (!beacons_on || sec10 == prev_sec10))
+    if (!immediate && sec10 == prev_sec10)
         return;
     prev_sec10 = sec10;
 
-    resetWatchdog();
-
     // now update each beacon as required
-    bool erased_any = false;
     setBeaconStates();
     for (NCDXFBeacon *bp = blist; bp < &blist[NBEACONS]; bp++) {
-        if (bp->c == BCOL_S || !beacons_on) {
-            if (erase_too) {
-                eraseBeacon (*bp);
-                erased_any = true;
-            }
-        } else if (overMap(bp->s) && !overRSS (bp->call_b)) {
+        if (bp->c != BCOL_S && overMap(bp->s) && !overRSS (bp->call_b))
             drawBeacon (*bp);
-        }
     }
 
-    // draw other symbols in case erasing a beacon clobbered some -- beware recursion!
-    if (erased_any)
-        drawAllSymbols(false);
-
     updateClocks(false);
-
 }
 
 /* update screen location for all beacons.
@@ -310,7 +219,7 @@ bool drawNCDXFBox()
 
     case BRB_SHOW_SWSTATS:
 
-        (void) checkSpaceWx();
+        (void) checkForNewSpaceWx();
         drawSpaceStats(RA8875_BLACK);
         break;
 

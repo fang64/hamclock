@@ -220,6 +220,8 @@ static const uint8_t nv_sizes[NV_N] = {
     NV_SPOTAWLIST_LEN,          // NV_SPOTAWLIST
     4,                          // NV_ONCEALARM
     1,                          // NV_ONCEALARMMASK
+    1,                          // NV_PANEROTP
+    1,                          // NV_SHOWPIP
 
 
 };

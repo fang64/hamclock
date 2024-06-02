@@ -560,13 +560,24 @@ void plotBandConditions (const SBox &box, int busy, const BandCdtnMatrix *bmp, c
 }
 
 /* print the NOAA RSG Space Weather Scales in the given box.
+ * return whether at least the data transaction was valid.
  */
-void plotNOAASWx (const SBox &box, const NOAASpaceWx &noaaspw)
+bool plotNOAASWx (const SBox &box)
 {
     resetWatchdog();
 
     // prep
     prepPlotBox (box);
+
+    // fetch
+    NOAASpaceWxData noaa;
+    if (!retrieveNOAASWx(noaa)) {
+        plotMessage (box, RA8875_RED, "NOAA connection failed");
+        return (false);
+    } else if (!noaa.data_ok) {
+        plotMessage (box, RA8875_RED, "NOAA data invalid");
+        return (true);                                  // transaction itself was ok
+    }
 
     // title
     tft.setTextColor(NOAASPW_COLOR);
@@ -584,17 +595,20 @@ void plotNOAASWx (const SBox &box, const NOAASpaceWx &noaaspw)
         h += box.h/4;
         tft.setCursor (box.x+w+(i==2?-2:0), box.y+h);   // tweak G to better center
         tft.setTextColor(GRAY);
-        tft.print (noaaspw.cat[i]);
+        tft.print (noaa.cat[i]);
 
         w += box.w/10;
         for (int j = 0; j < N_NOAASW_V; j++) {
-            int val = noaaspw.val[i][j];
+            int val = noaa.val[i][j];
             w += box.w/7;
             tft.setCursor (box.x+w, box.y+h);
             tft.setTextColor(val == 0 ? RA8875_GREEN : (val <= 3 ? RA8875_YELLOW : RA8875_RED));
             tft.print (val);
         }
     }
+
+    // ok
+    return (true);
 }
 
 

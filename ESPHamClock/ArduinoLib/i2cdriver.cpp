@@ -98,7 +98,7 @@ static size_t readFromSerialPort(I2CDriver *sd, uint8_t *b, size_t s)
             printf ("I2C readFromSerialPort(0x%02X): select %zd/%zd timed out\n", sd->dev_addr, t, s);
             break;
         }
-        size_t n = read(sd->port, b + t, s - t);
+        ssize_t n = read(sd->port, b + t, s - t);
         if (n < 0) {
             printf ("I2C readFromSerialPort(0x%02X): read(%zd/%zd): %s\n", sd->dev_addr, t, s,                                                                                                  strerror(errno));
             break;
@@ -125,7 +125,7 @@ static size_t writeToSerialPort(I2CDriver *sd, const uint8_t *b, size_t s)
 {
     size_t t = 0;
     while (t < s) {
-        size_t n = write(sd->port, b + t, s - t);
+        ssize_t n = write(sd->port, b + t, s - t);
         if (n < 0) {
             printf ("I2C writeToSerialPort(0x%02X) write(%zd/%zd): %s\n", sd->dev_addr, t, s,
                                         strerror(errno));
@@ -294,7 +294,7 @@ bool i2c_getstatus(I2CDriver *sd)
     }
 
     readbuffer[_I2C_GETSTATSIZE] = 0;
-    int n_scan = sscanf((char*)readbuffer, "[%15s %8s %" SCNu64 " %f %f %f %c %d %d %d %d %x ]",
+    int n_scan = sscanf((char*)readbuffer, "[%15s %8s %" SCNu64 " %f %f %f %c %u %u %u %u %u ]",
         sd->model,
         sd->serial,
         &sd->uptime,

@@ -117,7 +117,12 @@ void WiFi::begin (char *ssid, char *pw)
         printf ("restarting wlan0\n");
         (void) !system ("wpa_cli -i wlan0 reconfigure");
 
-#endif // _IS_LINUX
+#else
+
+        (void) ssid;
+        (void) pw;
+
+#endif // !_IS_LINUX
 }
 
 
@@ -342,6 +347,8 @@ int WiFi::status(void)
 
 int WiFi::mode (int m)
 {
+        (void) m;
+
 	return (WIFI_OTHER);
 }
 

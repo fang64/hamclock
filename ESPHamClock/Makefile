@@ -9,6 +9,7 @@
 
 # build flags common to all options and architectures
 CXXFLAGS = -IArduinoLib -IwsServer/include -I. -g -O2 -Wall -DARDUINO=100 -pthread -std=c++17
+# CXXFLAGS += -Wextra -pedantic -Werror -Wno-attributes -Wno-unknown-pragmas
 LDXXFLAGS = -LArduinoLib -LwsServer -g -pthread
 LIBS = -lpthread -larduino -lws
 CXX = g++
@@ -76,6 +77,7 @@ OBJS = \
 	pskreporter.o \
 	radio.o \
 	robinson.o \
+	rss.o \
 	runner.o \
 	santa.o \
 	scroll.o \

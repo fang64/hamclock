@@ -24,8 +24,11 @@ const char platform[] = "HamClock-UNIX";
 
 #if defined(__GNUC__)
 static void sendHTTPError (WiFiClient &client, const char *fmt, ...) __attribute__ ((format(__printf__,2,3)));
+static void demoMsg (bool ok, int n, char buf[], size_t buf_len, const char *fmt, ...)
+        __attribute__ ((format (__printf__, 5, 6)));
 #else
 static void sendHTTPError (WiFiClient &client, const char *fmt, ...);
+static void demoMsg (bool ok, int n, char buf[], size_t buf_len, const char *fmt, ...);
 #endif
 
 
@@ -59,14 +62,13 @@ typedef enum {
     DEMO_NCDXF,
 
     // 10
-    DEMO_VOACAP,
     DEMO_CALLFG,
     DEMO_CALLBG,
     DEMO_DEFMT,
     DEMO_ONAIR,
+    DEMO_SAT,
 
     // 15
-    DEMO_SAT,
     DEMO_EME,
     DEMO_AUXTIME,
     DEMO_PSKMASK,
@@ -79,14 +81,6 @@ static bool runDemoChoice (DemoChoice choice, bool &slow, char msg[], size_t msg
 
 // hack around frame buffer readback weirdness that requires ignoring the very first pixel
 static bool first_pixel = true;
-
-#if defined(__GNUC__)
-static void demoMsg (bool ok, int n, char buf[], size_t buf_len, const char *fmt, ...)
-        __attribute__ ((format (__printf__, 5, 6)));
-#else
-static void demoMsg (bool ok, int n, char buf[], size_t buf_len, const char *fmt, ...);
-#endif
-
 
 // some color names culled from rgb.txt
 typedef struct {
@@ -174,31 +168,6 @@ static void printColorNames (WiFiClient &client)
         client.println (FPSTR(cnames[i].name));
 }
 
-/* remove leading and trailing white space IN PLACE, return str.
- */
-char *trim (char *str)
-{
-    if (!str)
-        return (str);
-
-    // skip leading blanks
-    char *blank = str;
-    while (isspace(*blank))
-        blank++;
-
-    // copy from first-nonblank back to beginning
-    size_t sl = strlen (blank);
-    if (blank > str)
-        memmove (str, blank, sl+1);             // include \0
-
-    // skip back from over trailing blanks
-    while (sl > 0 && isspace(str[sl-1]))
-        str[--sl] = '\0';
-
-    // return same starting point
-    return (str);
-}
-
 static bool rgbOk (int r, int g, int b)
 {
     return (r >= 0 && r <= 255 && g >= 0 && g <= 255 && b >= 0 && b <= 255);
@@ -281,27 +250,27 @@ bool parseWebCommand (WebArgs &wa, char line[], size_t line_len)
                 state = PWC_LOOKING_4_VALUE;                    // now look for value
             } else if (*line == '&') {
                 *line = '\0';                                   // terminate name
-                if (!setWCValue (wa, trim(name), NULL, line0, line_len))
+                if (!setWCValue (wa, strtrim(name), NULL, line0, line_len))
                     return (false);
                 name = line + 1;                                // start next name
                 value = NULL;                                   // no value yet
             } else if (*line == '\0') {
                 if (name[0] == '\0')
                     return (true);                              // no name at all is ok
-                return (setWCValue (wa, trim(name), trim(value), line0, line_len));
+                return (setWCValue (wa, strtrim(name), strtrim(value), line0, line_len));
             }
             break;
 
         case PWC_LOOKING_4_VALUE:
             if (*line == '&') {
                 *line = '\0';                                   // terminate value
-                if (!setWCValue (wa, trim(name), trim(value), line0, line_len))
+                if (!setWCValue (wa, strtrim(name), strtrim(value), line0, line_len))
                     return (false);
                 name = line + 1;                                // start next name
                 value = NULL;                                   // no value yet
                 state = PWC_LOOKING_4_NAME;                     // now look for name
             } else if (*line == '\0') {
-                return (setWCValue (wa, trim(name), trim(value), line0, line_len));
+                return (setWCValue (wa, strtrim(name), strtrim(value), line0, line_len));
             }
             break;
         }
@@ -1474,43 +1443,58 @@ static bool getWiFiSpaceWx (WiFiClient &client, char *unused_line, size_t line_l
     // send html header
     startPlainText(client);
 
-    // update info
-    checkSpaceWx();
-    checkBandConditions();
-
-    // send values
+    // send fresh values
+    (void) checkForNewSpaceWx();
     char buf[100];
     char xray_str[10];
 
     client.print (F(" Datum     Value\n"));
     client.print (F("-------- ---------\n"));
 
-    snprintf (buf, sizeof(buf), _FX("SSN      %9.1f\n"), space_wx[SPCWX_SSN].value);
-    client.print (buf);
+    if (space_wx[SPCWX_SSN].value_ok) {
+        snprintf (buf, sizeof(buf), _FX("SSN      %9.1f\n"), space_wx[SPCWX_SSN].value);
+        client.print (buf);
+    }
 
-    snprintf (buf, sizeof(buf), _FX("KP        %8.1f\n"), space_wx[SPCWX_KP].value);
-    client.print (buf);
+    if (space_wx[SPCWX_KP].value_ok) {
+        snprintf (buf, sizeof(buf), _FX("KP        %8.1f\n"), space_wx[SPCWX_KP].value);
+        client.print (buf);
+    }
 
-    snprintf (buf, sizeof(buf), _FX("FLUX     %9.1f\n"), space_wx[SPCWX_FLUX].value);
-    client.print (buf);
+    if (space_wx[SPCWX_FLUX].value_ok) {
+        snprintf (buf, sizeof(buf), _FX("FLUX     %9.1f\n"), space_wx[SPCWX_FLUX].value);
+        client.print (buf);
+    }
 
-    snprintf (buf, sizeof(buf), _FX("XRAY      %8s\n"), xrayLevel(space_wx[SPCWX_XRAY].value, xray_str));
-    client.print (buf);
+    if (space_wx[SPCWX_XRAY].value_ok) {
+        snprintf (buf, sizeof(buf), _FX("XRAY      %8s\n"), xrayLevel(xray_str, space_wx[SPCWX_XRAY]));
+        client.print (buf);
+    }
 
-    snprintf (buf, sizeof(buf), _FX("SOLWIND   %8.1f\n"), space_wx[SPCWX_SOLWIND].value);
-    client.print (buf);
+    if (space_wx[SPCWX_SOLWIND].value_ok) {
+        snprintf (buf, sizeof(buf), _FX("SOLWIND   %8.1f\n"), space_wx[SPCWX_SOLWIND].value);
+        client.print (buf);
+    }
 
-    snprintf (buf, sizeof(buf), _FX("DRAP      %8.1f\n"), space_wx[SPCWX_DRAP].value);
-    client.print (buf);
+    if (space_wx[SPCWX_DRAP].value_ok) {
+        snprintf (buf, sizeof(buf), _FX("DRAP      %8.1f\n"), space_wx[SPCWX_DRAP].value);
+        client.print (buf);
+    }
 
-    snprintf (buf, sizeof(buf), _FX("Bz        %8.1f\n"), space_wx[SPCWX_BZ].value);
-    client.print (buf);
+    if (space_wx[SPCWX_BZ].value_ok) {
+        snprintf (buf, sizeof(buf), _FX("Bz        %8.1f\n"), space_wx[SPCWX_BZ].value);
+        client.print (buf);
+    }
 
-    snprintf (buf, sizeof(buf), _FX("NOAA      %8.0f\n"), space_wx[SPCWX_NOAASPW].value);
-    client.print (buf);
+    if (space_wx[SPCWX_NOAASPW].value_ok) {
+        snprintf (buf, sizeof(buf), _FX("NOAA      %8.0f\n"), space_wx[SPCWX_NOAASPW].value);
+        client.print (buf);
+    }
 
-    snprintf (buf, sizeof(buf), _FX("Aurora    %8.0f\n"), space_wx[SPCWX_AURORA].value);
-    client.print (buf);
+    if (space_wx[SPCWX_AURORA].value_ok) {
+        snprintf (buf, sizeof(buf), _FX("Aurora    %8.0f\n"), space_wx[SPCWX_AURORA].value);
+        client.print (buf);
+    }
 
 
     // show path reliability for the current hour
@@ -1524,11 +1508,14 @@ static bool getWiFiSpaceWx (WiFiClient &client, char *unused_line, size_t line_l
     }
 
     // show NOAA conditions formatted similar to PLOT_CH_NOAASPW
-    for (int i = 0; i < N_NOAASW_C; i++) {
-        size_t bl = snprintf (buf, sizeof(buf), _FX("NSPW_%c    "), noaa_sw.cat[i]);
-        for (int j = 0; j < N_NOAASW_V; j++)
-            bl += snprintf (buf+bl, sizeof(buf)-bl, _FX(" %d"), noaa_sw.val[i][j]);
-        client.println (buf);
+    NOAASpaceWxData noaasw;
+    if (retrieveNOAASWx (noaasw) && noaasw.data_ok) {
+        for (int i = 0; i < N_NOAASW_C; i++) {
+            size_t bl = snprintf (buf, sizeof(buf), _FX("NSPW_%c    "), noaasw.cat[i]);
+            for (int j = 0; j < N_NOAASW_V; j++)
+                bl += snprintf (buf+bl, sizeof(buf)-bl, _FX(" %d"), noaasw.val[i][j]);
+            client.println (buf);
+        }
     }
 
     // ok
@@ -1558,7 +1545,6 @@ static bool getWiFiSys (WiFiClient &client, char *unused_line, size_t line_len)
     FWIFIPR (client, F("Version  ")); client.println (hc_version);
     snprintf (buf, sizeof(buf), _FX("BuildSz  %d x %d\n"), BUILD_W, BUILD_H); client.print(buf);
     FWIFIPR (client, F("MaxStack ")); client.println (worst_stack);
-    FWIFIPR (client, F("MaxWDDT  ")); client.println (max_wd_dt);
     FWIFIPR (client, F("Platform ")); client.println (platform);
     FWIFIPR (client, F("BEHost   ")); client.println (backend_host);
     FWIFIPR (client, F("BEPort   ")); client.println (backend_port);
@@ -2972,9 +2958,108 @@ static bool setWiFiloadBMP (WiFiClient &client, char line[], size_t line_len)
 
     // ack
     startPlainText (client);
-    client.print (F("ok"));
+    client.print ("ok\n");
     return (true);
 }
+
+/*  set desire pan and/or zoom, allow either abs or diff panning.
+ *    pan_x=X&pan_y=Y&pan_dx=dX&pan_dy=dY&zoom=Z" },
+ */
+static bool setWiFiPanZoom (WiFiClient &client, char line[], size_t line_len)
+{
+    // define all possible args
+    WebArgs wa;
+    wa.nargs = 0;
+    wa.name[wa.nargs++] = "pan_x";              // 0
+    wa.name[wa.nargs++] = "pan_y";              // 1
+    wa.name[wa.nargs++] = "pan_dx";             // 2
+    wa.name[wa.nargs++] = "pan_dy";             // 3
+    wa.name[wa.nargs++] = "zoom";               // 4
+
+    // parse
+    if (!parseWebCommand (wa, line, line_len))
+        return (false);
+
+    // get copy to update
+    PanZoom new_pz = pan_zoom;
+
+
+    // crack zoom
+    if (wa.found[4]) {
+        if (map_proj != MAPP_MERCATOR) {
+            snprintf (line, line_len, "Zooming requires Mercator projection");
+            return (false);
+        }
+        new_pz.zoom = atoi (wa.value[4]);
+    }
+
+
+    // crack x panning
+    if ((wa.found[0] || wa.found[2]) && !(map_proj == MAPP_MERCATOR || map_proj == MAPP_ROB)) {
+        snprintf (line, line_len, "Panning X requires Mercator or Robinson projection");
+        return (false);
+    }
+    if (wa.found[0] && wa.found[2]) {
+        snprintf (line, line_len, "Use only one of pan_x or pan_dx");
+        return (false);
+    }
+    if (wa.found[0])
+        new_pz.pan_x = atoi(wa.value[0]);
+    else if (wa.found[2])
+        new_pz.pan_x += atoi(wa.value[2]);
+
+
+    // crack y panning
+    if ((wa.found[1] || wa.found[3]) && map_proj != MAPP_MERCATOR) {
+        snprintf (line, line_len, "Panning Y requires Mercator projection");
+        return (false);
+    }
+    if (wa.found[1] && wa.found[3]) {
+        snprintf (line, line_len, "Use only one of pan_y or pan_dy");
+        return (false);
+    }
+    if (wa.found[1])
+        new_pz.pan_y = atoi(wa.value[1]);
+    else if (wa.found[3])
+        new_pz.pan_y += atoi(wa.value[3]);
+
+
+    // check ranges
+    if (new_pz.zoom < MIN_ZOOM || new_pz.zoom > MAX_ZOOM) {
+        snprintf (line, line_len, "Zoom must be [%d,%d]", MIN_ZOOM, MAX_ZOOM);
+        return (false);
+    }
+    if (new_pz.pan_x < MIN_PANX || new_pz.pan_x > MAX_PANX) {
+        snprintf (line, line_len, "Pan x must be [%d,%d)", MIN_PANX, MAX_PANX);
+        return (false);
+    }
+    if (new_pz.pan_y < MIN_PANY(new_pz.zoom) || new_pz.pan_y > MAX_PANY(new_pz.zoom)) {
+        snprintf (line, line_len, "Pan y must be [%d,%d]", MIN_PANY(new_pz.zoom), MAX_PANY(new_pz.zoom));
+        return (false);
+    }
+
+    // one more check
+    normalizePanZoom (new_pz);
+
+    // save and go if any change, else just report
+    if (memcmp (&pan_zoom, &new_pz, sizeof(pan_zoom))) {
+        pan_zoom = new_pz;
+        NVWriteUInt8 (NV_ZOOM, pan_zoom.zoom);
+        NVWriteInt16 (NV_PANX, pan_zoom.pan_x);
+        NVWriteInt16 (NV_PANY, pan_zoom.pan_y);
+        initEarthMap();
+        scheduleFreshMap();
+    }
+
+    // ack
+    startPlainText (client);
+    char buf[100];
+    snprintf (buf, sizeof(buf), "Pan now %d,%d zoom %dx\n", pan_zoom.pan_x, pan_zoom.pan_y, pan_zoom.zoom);
+    client.print (buf);
+    return (true);
+
+}
+
 
 /* control RSS list:
  *    reset      empty local list
@@ -3183,15 +3268,6 @@ static bool setWiFiPane (WiFiClient &client, char line[], size_t line_len)
         // DXC must appear alone
         if ((new_rotset & (1<<PLOT_CH_DXCLUSTER)) && (new_rotset & ~(1<<PLOT_CH_DXCLUSTER))) {
             strcpy (line, _FX("DX Cluster must be alone"));
-            return (false);
-        }
-
-        // check memory usage ok
-        uint32_t new_sets[PANE_N];
-        memcpy (new_sets, plot_rotset, sizeof(new_sets));
-        new_sets[pp] = new_rotset;
-        if (isSatDefined() && !paneComboOk(new_sets)) {
-            snprintf (line, line_len, _FX("too many panes with satellite"));
             return (false);
         }
 
@@ -3851,6 +3927,8 @@ static bool setWiFiLiveSpots (WiFiClient &client, char line[], size_t line_len)
  */
 static bool getWiFiLiveSpots (WiFiClient &client, char *line, size_t line_len)
 {
+    (void)(line_len);
+
     const PSKReport *rp;
     int n_rep;
     getPSKSpots (rp, n_rep);
@@ -3952,6 +4030,7 @@ static const CmdTble command_table[] PROGMEM = {
     { "set_newdx?",         setWiFiNewDX,          "grid=AB12&lat=X&lng=Y&TZ=local-utc" },
     { "set_once_alarm?",    setWiFiOnceAlarm,      "state=off|armed&time=YYYY-MM-DDTHR:MN&tz=DE|UTC" },
     { "set_pane?",          setWiFiPane,           "Pane[0123]=X,Y,Z... any from:" },
+    { "set_panzoom?",       setWiFiPanZoom,        "pan_x=X&pan_y=Y&pan_dx=dX&pan_dy=dY&zoom=Z" },
     { "set_rotator?",       setWiFiRotator,        "state=[un]stop|[un]auto&az=X&el=X" },
     { "set_rss?",           setWiFiRSS,            "reset|add=X|network|interval=secs|on|off|file POST" },
     { "set_satname?",       setWiFiSatName,        "abc|none" },
@@ -4086,14 +4165,14 @@ static void serveRemote(WiFiClient &client, bool ro)
     if (runWebserverCommand (client, ro, cmd_start, line + line_mem.getSize() - cmd_start))
         return;
 
-    // if get here, command was not found but client is still open to list help
+    // if get here, command was not found but client is still open for help
     startPlainText(client);
     if (liveweb_rw_port > 0) {
-        snprintf (line, line_mem.getSize(), "HamClock Live is R/W on port %d\r\n\r\n", liveweb_rw_port);
+        snprintf (line, line_mem.getSize(), "HamClock Live is R/W on port %d\r\n", liveweb_rw_port);
         client.print (line);
     }
     if (liveweb_ro_port > 0) {
-        snprintf (line, line_mem.getSize(), "HamClock Live is R/O on port %d\r\n\r\n", liveweb_ro_port);
+        snprintf (line, line_mem.getSize(), "HamClock Live is R/O on port %d\r\n", liveweb_ro_port);
         client.print (line);
     }
     for (uint8_t i = 0; i < N_CMDTABLE-N_UNDOC_CMD; i++) {
@@ -4227,21 +4306,20 @@ void runNextDemoCommand()
         3,      // DEMO_MAPPROJ
         3,      // DEMO_MAPNIGHT
         3,      // DEMO_MAPGRID
-        1,      // DEMO_MAPSTYLE
+        2,      // DEMO_MAPSTYLE
         9,      // DEMO_NCDXF
                 
                 // 10
-        2,      // DEMO_VOACAP
         5,      // DEMO_CALLFG
         4,      // DEMO_CALLBG
         12,     // DEMO_DEFMT
         4,      // DEMO_ONAIR
+        5,      // DEMO_SAT
 
                 // 15
-        5,      // DEMO_SAT
         5,      // DEMO_EME
         6,      // DEMO_AUXTIME
-        1,      // DEMO_PSKMASK
+        2,      // DEMO_PSKMASK
         6,      // DEMO_PANE0
     };
 
@@ -4397,13 +4475,22 @@ static bool runDemoChoice (DemoChoice choice, bool &slow, char msg[], size_t msg
 
     case DEMO_NEWDX:
         {
-            // avoid poles just for aesthetics
-            LatLong ll;
-            ll.lat_d = random(120)-60;
-            ll.lng_d = random(359)-180;
-            newDX (ll, NULL, NULL);
+            // walk a small collection of cities
+            static LatLong demo_ll[] = {
+                {0, 0, -26.2,  28.0},           // Johannesburg, South Africa
+                {0, 0, -22.9, -43.2},           // Rio de Janeiro, Brazi
+                {0, 0,  35.7, 139.7},           // Tokyo, Japan 
+                {0, 0, -33.9, 151.2},           // Sydney, Australia
+                {0, 0,  40.7, -74.0},           // New York City
+                {0, 0,  51.5, - 0.2},           // London
+            };
+            static int demo_ll_i;
+            LatLong &dll = demo_ll[demo_ll_i];
+            newDX (dll, NULL, NULL);
+            if (++demo_ll_i == NARRAY(demo_ll))
+                demo_ll_i = 0;
+            demoMsg (ok, choice, msg, msg_len, _FX("NewDX %g %g"), dll.lat_d, dll.lng_d);
             ok = true;
-            demoMsg (ok, choice, msg, msg_len, _FX("NewDX %g %g"), ll.lat_d, ll.lng_d);
         }
         break;
 
@@ -4454,38 +4541,9 @@ static bool runDemoChoice (DemoChoice choice, bool &slow, char msg[], size_t msg
         default:               brb_mode = BRB_SHOW_SWSTATS; break;
         }
         (void) drawNCDXFBox();
-        updateBeacons(true, true);
+        updateBeacons(true);
         ok = true;
         demoMsg (ok, choice, msg, msg_len, _FX("NCDXF %s"), brb_mode == BRB_SHOW_BEACONS ? "On" : "Off");
-        break;
-
-    case DEMO_VOACAP:
-        {
-            if (checkBandConditions() && bc_matrix.ok) {
-                // find hottest band now
-                int hr = hour(myNow());
-                uint8_t best_rel = 0;
-                for (int i = 0; i < BMTRX_COLS; i++) {
-                    if (bc_matrix.m[hr][i] > best_rel) {
-                        best_rel = bc_matrix.m[hr][i];
-                        prop_map.band = (PropMapBand)i;
-                    }
-                }
-
-                // engage
-                scheduleNewVOACAPMap (prop_map);
-                slow = true;
-                ok = true;
-
-                char ps[NV_COREMAPSTYLE_LEN];
-                demoMsg (ok, choice, msg, msg_len, _FX("VOACAP %s"), getMapStyle(ps));
-
-            } else {
-                // failed to update
-                ok = false;
-                demoMsg (ok, choice, msg, msg_len, _FX("VOACAP failed"));
-            }
-        }
         break;
 
     case DEMO_CALLFG:

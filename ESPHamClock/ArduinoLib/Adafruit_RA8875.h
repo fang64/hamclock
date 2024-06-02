@@ -102,43 +102,23 @@ class Adafruit_RA8875 {
 
 	Adafruit_RA8875(uint8_t CS, uint8_t RST);
 
-	void displayOn (int o)
-	{
-	}
+	void displayOn (int o) { (void)o; }
 
-	void GPIOX (int x)
-	{
-	}
+	void GPIOX (int x) { (void)x; }
 
-	void PWM1config(bool t, int x)
-	{
-	}
+	void PWM1config(bool t, int x) { (void)t; (void)x; }
 
-	void graphicsMode(void)
-	{
-	}
+	void graphicsMode(void) { }
 
+	void writeCommand (uint8_t c) { (void)c; }
 
-	void writeCommand (uint8_t c)
-	{
-	}
+	void setRotation (int r) { rotation = r; }
 
-	void setRotation (int r)
-	{
-	    rotation = r;
-	}
+	void textSetCursor(uint16_t x, uint16_t y) { (void)x; (void)y; }
 
-	void textSetCursor(uint16_t x, uint16_t y)
-	{
-	}
+	void PWM1out(uint16_t bpwm) { (void)bpwm; }
 
-	void PWM1out(uint16_t bpwm)
-	{
-	}
-
-	void touchEnable (bool b)
-	{
-	}
+	void touchEnable (bool b) { (void)b; }
 
 	bool begin (int x);
 	uint16_t width(void);
@@ -165,7 +145,7 @@ class Adafruit_RA8875 {
 	int16_t getCursorX(void);
 	int16_t getCursorY(void);
 	bool touched(void);
-	void touchRead (uint16_t *x, uint16_t *y);
+	void touchRead (uint16_t *x, uint16_t *y, int *button);
 	void drawPixel(int16_t x, int16_t y, uint16_t color16);
         void drawPixels(uint16_t * p, uint32_t count, int16_t x, int16_t y);
 	void drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color16);
@@ -305,6 +285,7 @@ class Adafruit_RA8875 {
 
 	pthread_mutex_t mouse_lock;
 	volatile int16_t mouse_x, mouse_y;
+        volatile int mouse_button;
 	volatile int mouse_ups, mouse_downs;
 
         typedef struct {

@@ -17,8 +17,16 @@ static const char noaaswx_page[] PROGMEM = "/NOAASpaceWX/noaaswx.txt";
 static const char aurora_page[] PROGMEM = "/aurora/aurora.txt";
 static const char sw_rank_page[] PROGMEM = "/NOAASpaceWX/rank_coeffs.txt";
 
-// space weather stats
-NOAASpaceWx noaa_sw = { false, {'R', 'S', 'G'} };
+// caches
+static BzBtData bzbt_cache;
+static SolarWindData sw_cache;
+static SunSpotData ssn_cache;
+static SolarFluxData sf_cache;
+static DRAPData drap_cache;
+static XRayData xray_cache;
+static KpData kp_cache;
+static NOAASpaceWxData noaasw_cache = {0, false, {'R', 'S', 'G'}, {}};
+static AuroraData aurora_cache;
 
 #define X(a,b,c,d,e,f,g) {a,b,c,d,e,f,g},       // expands SPCWX_DATA to each array initialization in {}
 SpaceWeather_t space_wx[SPCWX_N] = {
@@ -31,16 +39,16 @@ SpaceWeather_t space_wx[SPCWX_N] = {
 #define SW_RANKV(sp)     ((int)roundf((sp)->m * (sp)->value + (sp)->b))
 
 /* qsort-style function to compare the scaled value of two SpaceWeather_t.
- * N.B. largest first, any SPW_ERR at the end
+ * N.B. largest first, any bad values at the end
  */
 static int swQSF (const void *v1, const void *v2)
 {
     const SpaceWeather_t *s1 = (SpaceWeather_t *)v1;
     const SpaceWeather_t *s2 = (SpaceWeather_t *)v2;
 
-    if (s1->value == SPW_ERR)
-        return (s2->value != SPW_ERR);
-    else if (s2->value == SPW_ERR)
+    if (!s1->value_ok)
+        return (s2->value_ok);
+    else if (!s2->value_ok)
         return (-1);
 
     int rank_val1 = SW_RANKV(s1);
@@ -57,10 +65,8 @@ static bool initSWFit(void)
     bool ok = false;
 
     Serial.println (sw_rank_page);
-    resetWatchdog();
     if (wifiOk() && sw_client.connect(backend_host, backend_port)) {
 
-        resetWatchdog();
         updateClocks(false);
 
         char line[50];
@@ -115,8 +121,8 @@ static bool initSWFit(void)
   out:
 
     // clean up -- aleady logged any errors
+    updateClocks(false);
     sw_client.stop();
-    resetWatchdog();
     return (ok);
 }
 
@@ -192,7 +198,7 @@ void drawSpaceStats(uint16_t color)
 
                 case SPCWX_SSN:
                     strcpy (titles[i], _FX("SSN"));
-                    if (space_wx[SPCWX_SSN].value == SPW_ERR)
+                    if (!space_wx[SPCWX_SSN].value_ok)
                         strcpy (values[i], err);
                     else
                         snprintf (values[i], sizeof(values[i]), _FX("%.0f"), space_wx[SPCWX_SSN].value);
@@ -201,13 +207,16 @@ void drawSpaceStats(uint16_t color)
 
                 case SPCWX_XRAY:
                     strcpy (titles[i], _FX("X-Ray"));
-                    xrayLevel(space_wx[SPCWX_XRAY].value, values[i]);
+                    if (!space_wx[SPCWX_XRAY].value_ok)
+                        strcpy (values[i], err);
+                    else
+                        xrayLevel (values[i], space_wx[SPCWX_XRAY]);
                     colors[i] = RGB565(255,134,0);      // XRAY_LCOLOR is too alarming
                     break;
 
                 case SPCWX_FLUX:
                     strcpy (titles[i], _FX("SFI"));
-                    if (space_wx[SPCWX_FLUX].value == SPW_ERR)
+                    if (!space_wx[SPCWX_FLUX].value_ok)
                         strcpy (values[i], err);
                     else
                         snprintf (values[i], sizeof(values[i]), _FX("%.0f"), space_wx[SPCWX_FLUX].value);
@@ -216,7 +225,7 @@ void drawSpaceStats(uint16_t color)
 
                 case SPCWX_KP:
                     strcpy (titles[i], _FX("Kp"));
-                    if (space_wx[SPCWX_KP].value == SPW_ERR)
+                    if (!space_wx[SPCWX_KP].value_ok)
                         strcpy (values[i], err);
                     else
                         snprintf (values[i], sizeof(values[i]), _FX("%.1f"), space_wx[SPCWX_KP].value);
@@ -225,7 +234,7 @@ void drawSpaceStats(uint16_t color)
 
                 case SPCWX_SOLWIND:
                     strcpy (titles[i], _FX("Sol Wind"));
-                    if (space_wx[SPCWX_SOLWIND].value == SPW_ERR)
+                    if (!space_wx[SPCWX_SOLWIND].value_ok)
                         strcpy (values[i], err);
                     else
                         snprintf (values[i], sizeof(values[i]), _FX("%.1f"), space_wx[SPCWX_SOLWIND].value);
@@ -234,7 +243,7 @@ void drawSpaceStats(uint16_t color)
 
                 case SPCWX_DRAP:
                     strcpy (titles[i], _FX("DRAP"));
-                    if (space_wx[SPCWX_DRAP].value == SPW_ERR)
+                    if (!space_wx[SPCWX_DRAP].value_ok)
                         strcpy (values[i], err);
                     else
                         snprintf (values[i], sizeof(values[i]), _FX("%.0f"), space_wx[SPCWX_DRAP].value);
@@ -243,7 +252,7 @@ void drawSpaceStats(uint16_t color)
 
                 case SPCWX_BZ:
                     strcpy (titles[i], _FX("Bz"));
-                    if (space_wx[SPCWX_BZ].value == SPW_ERR)
+                    if (!space_wx[SPCWX_BZ].value_ok)
                         strcpy (values[i], err);
                     else
                         snprintf (values[i], sizeof(values[i]), _FX("%.1f"), space_wx[SPCWX_BZ].value);
@@ -252,19 +261,19 @@ void drawSpaceStats(uint16_t color)
 
                 case SPCWX_NOAASPW:
                     strcpy (titles[i], _FX("NOAA SpWx"));
-                    if (noaa_sw.ok)
-                        snprintf (values[i], sizeof(values[i]), _FX("%.0f"), space_wx[SPCWX_NOAASPW].value);
-                    else
+                    if (!space_wx[SPCWX_NOAASPW].value_ok)
                         strcpy (values[i], err);
+                    else
+                        snprintf (values[i], sizeof(values[i]), _FX("%.0f"), space_wx[SPCWX_NOAASPW].value);
                     colors[i] = NOAASPW_COLOR;
                     break;
 
                 case SPCWX_AURORA:
                     strcpy (titles[i], _FX("Aurora"));
-                    if (noaa_sw.ok)
-                        snprintf (values[i], sizeof(values[i]), _FX("%.0f"), space_wx[SPCWX_AURORA].value);
-                    else
+                    if (!space_wx[SPCWX_AURORA].value_ok)
                         strcpy (values[i], err);
+                    else
+                        snprintf (values[i], sizeof(values[i]), _FX("%.0f"), space_wx[SPCWX_AURORA].value);
                     colors[i] = AURORA_COLOR;
                     break;
 
@@ -281,21 +290,27 @@ void drawSpaceStats(uint16_t color)
 }
 
 
-
-/* retrieve latest sun spot indices and time scale in days from now.
+/* retrieve sun spot and SPCWX_SSN if it's time, else use cache.
  * return whether transaction was ok (even if data was not)
  */
-bool retrieveSunSpots (float x[SSN_NV], float ssn[SSN_NV])
+bool retrieveSunSpots (SunSpotData &ssn)
 {
+    // check cache first
+    if (myNow() < ssn_cache.next_update) {
+        ssn = ssn_cache;
+        return (true);
+    }
+
+    // get fresh
     char line[100];
     WiFiClient ss_client;
     bool ok = false;
 
     // mark value as bad until proven otherwise
-    space_wx[SPCWX_SSN].value = SPW_ERR;
+    space_wx[SPCWX_SSN].value_ok = false;
+    ssn_cache.data_ok = false;
 
     Serial.println(ssn_page);
-    resetWatchdog();
     if (wifiOk() && ss_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
@@ -314,18 +329,20 @@ bool retrieveSunSpots (float x[SSN_NV], float ssn[SSN_NV])
         // read lines into ssn array and build corresponding time value
         int8_t ssn_i;
         for (ssn_i = 0; ssn_i < SSN_NV && getTCPLine (ss_client, line, sizeof(line), NULL); ssn_i++) {
-            ssn[ssn_i] = atof(line+11);
-            x[ssn_i] = 1-SSN_NV + ssn_i;
+            ssn_cache.x[ssn_i] = 1-SSN_NV + ssn_i;
+            ssn_cache.ssn[ssn_i] = atof(line+11);
         }
 
         updateClocks(false);
-        resetWatchdog();
 
         // ok if all received
         if (ssn_i == SSN_NV) {
 
             // capture latest
-            space_wx[SPCWX_SSN].value = ssn[SSN_NV-1];
+            space_wx[SPCWX_SSN].value = ssn_cache.ssn[SSN_NV-1];
+            space_wx[SPCWX_SSN].value_ok = true;
+            ssn_cache.data_ok = true;
+            ssn = ssn_cache;
 
         } else {
 
@@ -339,64 +356,50 @@ bool retrieveSunSpots (float x[SSN_NV], float ssn[SSN_NV])
 
 out:
 
+    // set next update
+    ssn_cache.next_update = ok ? nextRetrieval (PLOT_CH_SSN, SSN_INTERVAL) : nextWiFiRetry(PLOT_CH_SSN);
+
     // clean up
+    updateClocks(false);
     ss_client.stop();
-    resetWatchdog();
     return (ok);
 }
 
 
-/* update SPCWX_SSN if not recently done so by its pane.
- * return whether transaction was ok (even if data was not)
+/* return whether new SPCWX_SSN data are ready, even if bad.
  */
-static bool checkSunSpots (void)
+static bool checkForNewSunSpots (void)
 {
-    // use our own delay unless being shown in a pane
-    PlotPane ssn_pp = findPaneChoiceNow (PLOT_CH_SSN);
-    time_t *next_p = ssn_pp == PANE_NONE ? &space_wx[SPCWX_SSN].next_update : &next_update[ssn_pp];
-
-    if (myNow() < *next_p)
+    if (myNow() < ssn_cache.next_update)
         return (false);
 
-    StackMalloc x_mem (SSN_NV * sizeof(float));
-    StackMalloc s_mem (SSN_NV * sizeof(float));
-    float *x = (float *) x_mem.getMem();
-    float *s = (float *) s_mem.getMem();
-
-    bool ok = retrieveSunSpots (x, s);
-    if (ok) {
-
-        // schedule next
-        *next_p = nextPaneUpdate (PLOT_CH_SSN, SSN_INTERVAL);
-
-    } else {
-
-        // schedule retry
-        *next_p = nextWiFiRetry(PLOT_CH_SSN);
-    }
-
-    // true, albeit may be SPW_ERR
-    return (ok);
+    SunSpotData ssn;
+    return (retrieveSunSpots (ssn));
 }
 
-/* retrieve latest and predicted solar flux indices.
+/* retrieve solar flux and SPCWX_FLUX if it's time, else use cache.
  * return whether transaction was ok (even if data was not)
  */
-bool retrievSolarFlux (float x[SFLUX_NV], float sflux[SFLUX_NV])
+bool retrievSolarFlux (SolarFluxData &sf)
 {
-    StackMalloc line_mem(120);
-    char *line = (char *) line_mem.getMem();
+    // check cache first
+    if (myNow() < sf_cache.next_update) {
+        sf = sf_cache;
+        return (true);
+    }
+
+    // get fresh
+    char line[120];
     WiFiClient sf_client;
     bool ok = false;
 
     // mark value as bad until proven otherwise
-    space_wx[SPCWX_FLUX].value = SPW_ERR;
+    space_wx[SPCWX_FLUX].value_ok = false;
+    sf_cache.data_ok = false;
 
     Serial.println (sf_page);
-    resetWatchdog();
     if (wifiOk() && sf_client.connect(backend_host, backend_port)) {
         updateClocks(false);
-        resetWatchdog();
 
         // query web page
         httpHCPGET (sf_client, backend_host, sf_page);
@@ -411,24 +414,26 @@ bool retrievSolarFlux (float x[SFLUX_NV], float sflux[SFLUX_NV])
         ok = true;
 
         // read lines into flux array and build corresponding time value
-        int8_t sflux_i;
-        for (sflux_i = 0; sflux_i < SFLUX_NV && getTCPLine(sf_client, line, line_mem.getSize(), NULL);
-                                                                        sflux_i++) {
-            sflux[sflux_i] = atof(line);
-            x[sflux_i] = (sflux_i - (SFLUX_NV-9-1))/3.0F;   // 3x(30 days history + 3 days predictions)
+        int8_t sf_i;
+        for (sf_i = 0; sf_i < SFLUX_NV && getTCPLine (sf_client, line, sizeof(line), NULL); sf_i++) {
+            sf_cache.x[sf_i] = (sf_i - (SFLUX_NV-9-1))/3.0F; // 3x(30 days history + 3 days predictions)
+            sf_cache.sflux[sf_i] = atof(line);
         }
 
-        // ok if found all
         updateClocks(false);
-        resetWatchdog();
-        if (sflux_i == SFLUX_NV) {
+
+        // ok if found all
+        if (sf_i == SFLUX_NV) {
 
             // capture current value (not predictions)
-            space_wx[SPCWX_FLUX].value = sflux[SFLUX_NV-10];
+            space_wx[SPCWX_FLUX].value = sf_cache.sflux[SFLUX_NV-10];
+            space_wx[SPCWX_FLUX].value_ok = true;
+            sf_cache.data_ok = true;
+            sf = sf_cache;
 
         } else {
 
-            Serial.printf (_FX("SFlux: data short: %d / %d\n"), sflux_i, SFLUX_NV);
+            Serial.printf (_FX("SFlux: data short: %d / %d\n"), sf_i, SFLUX_NV);
         }
 
     } else {
@@ -438,51 +443,40 @@ bool retrievSolarFlux (float x[SFLUX_NV], float sflux[SFLUX_NV])
 
 out:
 
+    // set next update
+    sf_cache.next_update = ok ? nextRetrieval (PLOT_CH_FLUX, SFLUX_INTERVAL) : nextWiFiRetry (PLOT_CH_FLUX);
+
     // clean up
+    updateClocks(false);
     sf_client.stop();
-    resetWatchdog();
     return (ok);
 }
 
-/* update SPCWX_FLUX if not recently done so by its pane.
- * return whether a new value is ready, even if SPW_ERR
+/* return whether fresh SPCWX_FLUX data are ready, even if bad.
  */
-static bool checkSolarFlux (void)
+static bool checkForNewSolarFlux (void)
 {
-    // use our own delay unless being shown in a pane
-    PlotPane sflux_pp = findPaneChoiceNow (PLOT_CH_FLUX);
-    time_t *next_p = sflux_pp == PANE_NONE ? &space_wx[SPCWX_FLUX].next_update : &next_update[sflux_pp];
-
-    if (myNow() < *next_p)
+    if (myNow() < sf_cache.next_update)
         return (false);
 
-    StackMalloc x_mem (SFLUX_NV * sizeof(float));
-    StackMalloc s_mem (SFLUX_NV * sizeof(float));
-    float *x = (float *) x_mem.getMem();
-    float *s = (float *) s_mem.getMem();
-
-    bool ok = retrievSolarFlux (x, s);
-    if (ok) {
-
-        // schedule next
-        *next_p = nextPaneUpdate (PLOT_CH_FLUX, SFLUX_INTERVAL);
-
-    } else {
-
-        // schedule retry
-        *next_p = nextWiFiRetry(PLOT_CH_FLUX);
-    }
-
-    // true, albeit may be SPW_ERR
-    return (true);
+    SolarFluxData sf;
+    return (retrievSolarFlux (sf));
 }
 
 
-/* retrieve latest DRAP frequencies and current space weather value.
+/* retrieve DRAP and SPCWX_DRAP if it's time, else use cache.
  * return whether transaction was ok (even if data was not)
  */
-bool retrieveDRAP (float x[DRAPDATA_NPTS], float y[DRAPDATA_NPTS])
+bool retrieveDRAP (DRAPData &drap)
 {
+    // check cache first
+    if (myNow() < drap_cache.next_update) {
+        drap = drap_cache;
+        return (true);
+    }
+
+    // get fresh
+
     #define _DRAPDATA_MAXMI     (DRAPDATA_NPTS/10)                      // max allowed missing intervals
     #define _DRAP_MINGOODI      (DRAPDATA_NPTS-3600/DRAPDATA_INTERVAL)  // min index with good data
 
@@ -491,19 +485,18 @@ bool retrieveDRAP (float x[DRAPDATA_NPTS], float y[DRAPDATA_NPTS])
     bool ok = false;                                                    // set iff all ok
 
     // want to find any holes in data so init x values to all 0
-    memset (x, 0, DRAPDATA_NPTS*sizeof(float));
+    memset (drap_cache.x, 0, DRAPDATA_NPTS*sizeof(float));
 
     // want max in each interval so init y values to all 0
-    memset (y, 0, DRAPDATA_NPTS*sizeof(float));
+    memset (drap_cache.y, 0, DRAPDATA_NPTS*sizeof(float));
 
     // mark data as bad until proven otherwise
-    space_wx[SPCWX_DRAP].value = SPW_ERR;
+    space_wx[SPCWX_DRAP].value_ok = false;
+    drap_cache.data_ok = false;
 
     Serial.println (drap_page);
-    resetWatchdog();
     if (wifiOk() && drap_client.connect(backend_host, backend_port)) {
         updateClocks(false);
-        resetWatchdog();
 
         // query web page
         httpHCPGET (drap_client, backend_host, drap_page);
@@ -541,13 +534,13 @@ bool retrieveDRAP (float x[DRAPDATA_NPTS], float y[DRAPDATA_NPTS])
                 // Serial.printf (_FX("DRAP: skipping age %g hrs\n"), age/3600.0F);
                 continue;
             }
-            x[xi] = age/(-3600.0F);                             // seconds to hours ago
+            drap_cache.x[xi] = age/(-3600.0F);                             // seconds to hours ago
 
             // set in array if larger
-            if (max > y[xi]) {
+            if (max > drap_cache.y[xi]) {
                 // if (y[xi] > 0)
                     // Serial.printf (_FX("DRAP: saw xi %d utime %ld age %d again\n"), xi, utime, age);
-                y[xi] = max;
+                drap_cache.y[xi] = max;
             }
 
             // Serial.printf (_FX("DRAP: %3d %6d: %g %g\n"), xi, age, x[xi], y[xi]);
@@ -556,17 +549,17 @@ bool retrieveDRAP (float x[DRAPDATA_NPTS], float y[DRAPDATA_NPTS])
 
         // look alive
         updateClocks(false);
-        resetWatchdog();
 
         // check for missing data
         int n_missing = 0;
         int maxi_good = 0;
         for (int i = 0; i < DRAPDATA_NPTS; i++) {
-            if (x[i] == 0) {
-                x[i] = (DRAPDATA_PERIOD - i*DRAPDATA_PERIOD/DRAPDATA_NPTS)/-3600.0F;
+            if (drap_cache.x[i] == 0) {
+                drap_cache.x[i] = (DRAPDATA_PERIOD - i*DRAPDATA_PERIOD/DRAPDATA_NPTS)/-3600.0F;
                 if (i > 0)
-                    y[i] = y[i-1];                      // fill with previous
-                Serial.printf (_FX("DRAP: filling missing interval %d at age %g hrs to %g\n"), i, x[i], y[i]);
+                    drap_cache.y[i] = drap_cache.y[i-1];                      // fill with previous
+                Serial.printf (_FX("DRAP: filling missing interval %d at age %g hrs to %g\n"), i,
+                                                drap_cache.x[i], drap_cache.y[i]);
                 n_missing++;
             } else {
                 maxi_good = i;
@@ -583,8 +576,11 @@ bool retrieveDRAP (float x[DRAPDATA_NPTS], float y[DRAPDATA_NPTS])
             goto out;
         }
 
-        // capture current value
-        space_wx[SPCWX_DRAP].value = y[DRAPDATA_NPTS-1];
+        // ok! capture current value
+        space_wx[SPCWX_DRAP].value = drap_cache.y[DRAPDATA_NPTS-1];
+        space_wx[SPCWX_DRAP].value_ok = true;
+        drap_cache.data_ok = true;
+        drap = drap_cache;
 
     } else {
 
@@ -593,63 +589,51 @@ bool retrieveDRAP (float x[DRAPDATA_NPTS], float y[DRAPDATA_NPTS])
 
 out:
 
+    // set next update
+    drap_cache.next_update = ok ? nextRetrieval (PLOT_CH_DRAP, DRAPPLOT_INTERVAL)
+                                : nextWiFiRetry (PLOT_CH_DRAP);
+
     // clean up
+    updateClocks(false);
     drap_client.stop();
-    resetWatchdog();
     return (ok);
 }
 
-/* update SPCWX_DRAP if not recently done so by its pane.
- * return whether a new value is ready.
+/* return whether fresh SPCWX_DRAP data are ready, even if bad.
  */
-bool checkDRAP ()
+bool checkForNewDRAP ()
 {
-    // use our own delay unless being shown in a pane
-    PlotPane drap_pp = findPaneChoiceNow (PLOT_CH_DRAP);
-    time_t *next_p = drap_pp == PANE_NONE ? &space_wx[SPCWX_DRAP].next_update : &next_update[drap_pp];
-
-    if (myNow() < *next_p)
+    if (myNow() < drap_cache.next_update)
         return (false);
 
-    StackMalloc x_mem (DRAPDATA_NPTS * sizeof(float));
-    StackMalloc y_mem (DRAPDATA_NPTS * sizeof(float));
-    float *x = (float *) x_mem.getMem();
-    float *y = (float *) y_mem.getMem();
-
-    bool ok = retrieveDRAP (x, y);
-    if (ok) {
-
-        // schedule next
-        *next_p = nextPaneUpdate (PLOT_CH_DRAP, DRAPPLOT_INTERVAL);
-
-    } else {
-
-        // schedule retry
-        *next_p = nextWiFiRetry(PLOT_CH_DRAP);
-    }
-
-    // true, albeit may be SPW_ERR
-    return (true);
+    DRAPData drap;
+    return (retrieveDRAP (drap));
 }
 
-/* retrieve latest and predicted kp indices and space_wx info.
+/* retrieve Kp and SPCWX_KP if it's time, else use cache.
  * return whether transaction was ok (even if data was not)
  */
-bool retrieveKp (float kpx[KP_NV], float kp[KP_NV])
+bool retrieveKp (KpData &kp)
 {
+    // check cache first
+    if (myNow() < kp_cache.next_update) {
+        kp = kp_cache;
+        return (true);
+    }
+
+    // get fresh
     WiFiClient kp_client;                               // wifi client connection
     int kp_i = 0;                                       // next kp index to use
     char line[100];                                     // text line
     bool ok = false;                                    // set if no network errors
 
     // mark value as bad until proven otherwise
-    space_wx[SPCWX_KP].value = SPW_ERR;
+    space_wx[SPCWX_KP].value_ok = false;
+    kp_cache.data_ok = false;
 
     Serial.println(kp_page);
-    resetWatchdog();
     if (wifiOk() && kp_client.connect(backend_host, backend_port)) {
         updateClocks(false);
-        resetWatchdog();
 
         // query web page
         httpHCPGET (kp_client, backend_host, kp_page);
@@ -666,8 +650,8 @@ bool retrieveKp (float kpx[KP_NV], float kp[KP_NV])
         // read lines into kp array and build x
         const int now_i = KP_NHD*KP_VPD-1;              // last historic is now
         for (kp_i = 0; kp_i < KP_NV && getTCPLine (kp_client, line, sizeof(line), NULL); kp_i++) {
-            kp[kp_i] = atof(line);
-            kpx[kp_i] = (kp_i-now_i)/(float)KP_VPD;
+            kp_cache.x[kp_i] = (kp_i-now_i)/(float)KP_VPD;
+            kp_cache.p[kp_i] = atof(line);
             // Serial.printf ("%2d%c: kp[%5.3f] = %g from \"%s\"\n", kp_i, kp_i == now_i ? '*' : ' ', kpx[kp_i], kp[kp_i], line);
         }
 
@@ -675,7 +659,10 @@ bool retrieveKp (float kpx[KP_NV], float kp[KP_NV])
         if (kp_i == KP_NV) {
 
             // save current (not last!) value
-            space_wx[SPCWX_KP].value = kp[now_i];
+            space_wx[SPCWX_KP].value = kp_cache.p[now_i];
+            space_wx[SPCWX_KP].value_ok = true;
+            kp_cache.data_ok = true;
+            kp = kp_cache;
 
         } else {
 
@@ -689,50 +676,38 @@ bool retrieveKp (float kpx[KP_NV], float kp[KP_NV])
 
 out:
 
+    // set next update
+    kp_cache.next_update = ok ? nextRetrieval (PLOT_CH_KP, KP_INTERVAL) : nextWiFiRetry(PLOT_CH_KP);
+
     // clean up
+    updateClocks(false);
     kp_client.stop();
-    resetWatchdog();
     return (ok);
 }
 
-/* update SPCWX_KP if not recently done so by its pane.
- * return whether a new value is ready, even if SPW_ERR
+/* return whether fresh SPCWX_KP data are ready, even if bad.
  */
-static bool checkKp (void)
+static bool checkForNewKp (void)
 {
-    // use our own delay unless being shown in a pane
-    PlotPane kp_pp = findPaneChoiceNow (PLOT_CH_KP);
-    time_t *next_p = kp_pp == PANE_NONE ? &space_wx[SPCWX_KP].next_update : &next_update[kp_pp];
-
-    if (myNow() < *next_p)
+    if (myNow() < kp_cache.next_update)
         return (false);
 
-    StackMalloc x_mem (KP_NV * sizeof(float));
-    StackMalloc k_mem (KP_NV * sizeof(float));
-    float *x = (float *) x_mem.getMem();
-    float *k = (float *) k_mem.getMem();
-
-    bool ok = retrieveKp (x, k);
-    if (ok) {
-
-        // schedule next
-        *next_p = nextPaneUpdate (PLOT_CH_KP, KP_INTERVAL);
-
-    } else {
-
-        // schedule retry
-        *next_p = nextWiFiRetry(PLOT_CH_KP);
-    }
-
-    // true, albeit may be SPW_ERR
-    return (true);
+    KpData kp;
+    return (retrieveKp (kp));
 }
 
-/* retrieve latest xray indices.
+/* retrieve XRay and SPCWX_XRAY if it's time, else use cache.
  * return whether transaction was ok (even if data was not)
  */
-bool retrieveXRay (float x[XRAY_NV], float lxray[XRAY_NV], float sxray[XRAY_NV])
+bool retrieveXRay (XRayData &xray)
 {
+    // check cache first
+    if (myNow() < xray_cache.next_update) {
+        xray = xray_cache;
+        return (true);
+    }
+
+    // get fresh
     uint8_t xray_i;                                     // next index to use
     WiFiClient xray_client;
     char line[100];
@@ -740,10 +715,10 @@ bool retrieveXRay (float x[XRAY_NV], float lxray[XRAY_NV], float sxray[XRAY_NV])
     bool ok = false;
 
     // mark value as bad until proven otherwise
-    space_wx[SPCWX_XRAY].value = SPW_ERR;
+    space_wx[SPCWX_XRAY].value_ok = false;
+    xray_cache.data_ok = false;
 
     Serial.println(xray_page);
-    resetWatchdog();
     if (wifiOk() && xray_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
@@ -770,17 +745,17 @@ bool retrieveXRay (float x[XRAY_NV], float lxray[XRAY_NV], float sxray[XRAY_NV])
                 float s = atof(line+35);
                 if (s <= 0)                             // missing values are set to -1.00e+05, also guard 0
                     s = 1e-9;
-                sxray[xray_i] = log10f(s);
+                xray_cache.s[xray_i] = log10f(s);
 
                 // long
                 float l = atof(line+47);
                 if (l <= 0)                             // missing values are set to -1.00e+05, also guard 0
                     l = 1e-9;
-                lxray[xray_i] = log10f(l);
+                xray_cache.l[xray_i] = log10f(l);
                 raw_lxray = l;                          // last one will be current
 
                 // time in hours back from 0
-                x[xray_i] = (xray_i-XRAY_NV)/6.0;       // 6 entries per hour
+                xray_cache.x[xray_i] = (xray_i-XRAY_NV)/6.0;       // 6 entries per hour
 
                 // good
                 xray_i++;
@@ -792,6 +767,10 @@ bool retrieveXRay (float x[XRAY_NV], float lxray[XRAY_NV], float sxray[XRAY_NV])
 
             // capture
             space_wx[SPCWX_XRAY].value = raw_lxray;
+            space_wx[SPCWX_XRAY].value_ok = true;
+            xray_cache.data_ok = true;
+            xray = xray_cache;
+
 
         } else {
 
@@ -805,63 +784,49 @@ bool retrieveXRay (float x[XRAY_NV], float lxray[XRAY_NV], float sxray[XRAY_NV])
 
 out:
 
+    // set next update
+    xray_cache.next_update = ok ? nextRetrieval (PLOT_CH_XRAY, XRAY_INTERVAL) : nextWiFiRetry(PLOT_CH_XRAY);
+
     // clean up
+    updateClocks(false);
     xray_client.stop();
-    resetWatchdog();
     return (ok);
 }
 
-/* update SPCWX_XRAY if not recently done so by its pane.
- * return whether a new value is ready, even if SPW_ERR
+/* return whether fresh SPCWX_XRAY data are ready, even if bad.
  */
-static bool checkXRay (void)
+static bool checkForNewXRay (void)
 {
-    // use our own delay unless being shown in a pane
-    PlotPane xray_pp = findPaneChoiceNow (PLOT_CH_XRAY);
-    time_t *next_p = xray_pp == PANE_NONE ? &space_wx[SPCWX_XRAY].next_update : &next_update[xray_pp];
-
-    if (myNow() < *next_p)
+    if (myNow() < xray_cache.next_update)
         return (false);
 
-    StackMalloc x_mem (XRAY_NV * sizeof(float));
-    StackMalloc l_mem (XRAY_NV * sizeof(float));
-    StackMalloc s_mem (XRAY_NV * sizeof(float));
-    float *x = (float *) x_mem.getMem();               // x coords of plot
-    float *l = (float *) l_mem.getMem();               // long wavelength values
-    float *s = (float *) s_mem.getMem();               // short wavelength values
-
-    bool ok = retrieveXRay (x, l, s);
-    if (ok) {
-
-        // schedule next
-        *next_p = nextPaneUpdate (PLOT_CH_XRAY, XRAY_INTERVAL);
-
-    } else {
-
-        // schedule retry
-        *next_p = nextWiFiRetry(PLOT_CH_XRAY);
-    }
-
-    // true, albeit may be SPW_ERR
-    return (true);
+    XRayData xray;
+    return (retrieveXRay (xray));
 }
 
-/* retrieve latest bzbt indices.
+/* retrieve BzBt data and SPCWX_BZBT if it's time, else use cache.
  * return whether transaction was ok (even if data was not)
  */
-bool retrieveBzBt (float bzbt_hrsold[BZBT_NV], float bz[BZBT_NV], float bt[BZBT_NV])
+bool retrieveBzBt (BzBtData &bzbt)
 {
+    // check cache first
+    if (myNow() < bzbt_cache.next_update) {
+        bzbt = bzbt_cache;
+        return (true);
+    }
+
+    // get fresh
     int bzbt_i;                                     // next index to use
     WiFiClient bzbt_client;
     char line[100];
     bool ok = false;
     time_t t0 = myNow();
 
-    // mark value as bad until proven otherwise
-    space_wx[SPCWX_BZ].value = SPW_ERR;
+    // mark data as bad until proven otherwise
+    space_wx[SPCWX_BZ].value_ok = false;
+    bzbt_cache.data_ok = false;
 
     Serial.println(bzbt_page);
-    resetWatchdog();
     if (wifiOk() && bzbt_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
@@ -893,28 +858,31 @@ bool retrieveBzBt (float bzbt_hrsold[BZBT_NV], float bz[BZBT_NV], float bt[BZBT_
             }
 
             // store at bzbt_i
-            bz[bzbt_i] = this_bz;
-            bt[bzbt_i] = this_bt;
+            bzbt_cache.bz[bzbt_i] = this_bz;
+            bzbt_cache.bt[bzbt_i] = this_bt;
 
             // time in hours back from now but clamp at 0 in case we are slightly late
-            bzbt_hrsold[bzbt_i] = unix < t0 ? (unix - t0)/3600.0 : 0;
+            bzbt_cache.x[bzbt_i] = unix < t0 ? (unix - t0)/3600.0 : 0;
 
-            // good
+            // n read
             bzbt_i++;
         }
 
         // proceed iff we found all and current
-        if (bzbt_i == BZBT_NV && bzbt_hrsold[BZBT_NV-1] > -0.25F) {
+        if (bzbt_i == BZBT_NV && bzbt_cache.x[BZBT_NV-1] > -0.25F) {
 
             // capture latest
-            space_wx[SPCWX_BZ].value = bz[BZBT_NV-1];
+            space_wx[SPCWX_BZ].value = bzbt_cache.bz[BZBT_NV-1];
+            space_wx[SPCWX_BZ].value_ok = true;
+            bzbt_cache.data_ok = true;
+            bzbt = bzbt_cache;
 
         } else {
 
             if (bzbt_i < BZBT_NV)
                 Serial.printf (_FX("BZBT: data short %d of %d\n"), bzbt_i, BZBT_NV);
             else
-                Serial.printf (_FX("BZBT: data %g hrs old\n"), -bzbt_hrsold[BZBT_NV-1]);
+                Serial.printf (_FX("BZBT: data %g hrs old\n"), -bzbt_cache.x[BZBT_NV-1]);
         }
 
     } else {
@@ -924,64 +892,49 @@ bool retrieveBzBt (float bzbt_hrsold[BZBT_NV], float bz[BZBT_NV], float bt[BZBT_
 
 out:
 
+    // set next update
+    bzbt_cache.next_update = ok ? nextRetrieval (PLOT_CH_BZBT, BZBT_INTERVAL) : nextWiFiRetry(PLOT_CH_BZBT);
+
     // clean up
+    updateClocks(false);
     bzbt_client.stop();
-    resetWatchdog();
     return (ok);
 }
 
-/* update SPCWX_BZ if not recently done so by its pane.
- * return whether a new value is ready, even if SPW_ERR
+/* return whether fresh SPCWX_BZBT data are ready, even if bad.
  */
-static bool checkBzBt(void)
+static bool checkForNewBzBt(void)
 {
-    // use our own delay unless being shown in a pane
-    PlotPane bzbt_pp = findPaneChoiceNow (PLOT_CH_BZBT);
-    time_t *next_p = bzbt_pp == PANE_NONE ? &space_wx[SPCWX_BZ].next_update : &next_update[bzbt_pp];
-
-    if (myNow() < *next_p)
+    if (myNow() < bzbt_cache.next_update)
         return (false);
-
-    StackMalloc old_mem (BZBT_NV * sizeof(float));
-    StackMalloc bz_mem (BZBT_NV * sizeof(float));
-    StackMalloc bt_mem (BZBT_NV * sizeof(float));
-    float *old = (float *) old_mem.getMem();
-    float *bz = (float *) bz_mem.getMem();
-    float *bt = (float *) bt_mem.getMem();
-
-    bool ok = retrieveBzBt (old, bz, bt);
-    if (ok) {
-
-        // schedule next
-        *next_p = nextPaneUpdate (PLOT_CH_BZBT, BZBT_INTERVAL);
-
-    } else {
-
-        // schedule retry
-        *next_p = nextWiFiRetry(PLOT_CH_BZBT);
-    }
-
-    // true, albeit may be SPW_ERR
-    return (true);
+    BzBtData bzbt;
+    return (retrieveBzBt (bzbt));
 }
 
-/* retrieve latest and predicted solar wind age and indices, return count.
- * x is hours ago, y is wind index, oldest first.
+
+/* retrieve solar wind and SPCWX_SOLWIND if it's time, else use cache.
+ * return whether transaction was ok (even if data was not)
  */
-int retrieveSolarWind(float x[SWIND_MAXN], float y[SWIND_MAXN])
+bool retrieveSolarWind(SolarWindData &sw)
 {
+    // check cache first
+    if (myNow() < sw_cache.next_update) {
+        sw = sw_cache;
+        return (true);
+    }
+
+    // get fresh
     WiFiClient swind_client;
     char line[80];
+    bool ok = false;
 
     // mark value as bad until proven otherwise
-    space_wx[SPCWX_SOLWIND].value = SPW_ERR;
-    int nsw = 0;
+    space_wx[SPCWX_SOLWIND].value_ok = false;
+    sw_cache.data_ok = false;
 
     Serial.println (swind_page);
-    resetWatchdog();
     if (wifiOk() && swind_client.connect(backend_host, backend_port)) {
         updateClocks(false);
-        resetWatchdog();
 
         // query web page
         httpHCPGET (swind_client, backend_host, swind_page);
@@ -992,12 +945,16 @@ int retrieveSolarWind(float x[SWIND_MAXN], float y[SWIND_MAXN])
             goto out;
         }
 
+        // transaction successful
+        ok = true;
+
         // read lines into wind array and build corresponding x/y values
         time_t t0 = myNow();
         time_t start_t = t0 - SWIND_PER;
         time_t prev_unixs = 0;
         float max_y = 0;
-        for (nsw = 0; nsw < SWIND_MAXN && getTCPLine (swind_client, line, sizeof(line), NULL); ) {
+        for (sw_cache.n_values = 0; sw_cache.n_values < SWIND_MAXN
+                                                && getTCPLine (swind_client, line, sizeof(line), NULL); ) {
             // Serial.printf (_FX("SolWind: %3d: %s\n"), nsw, line);
             long unixs;         // unix seconds
             float density;      // /cm^2
@@ -1015,27 +972,30 @@ int retrieveSolarWind(float x[SWIND_MAXN], float y[SWIND_MAXN])
                 max_y = this_y;
 
             // skip until find within period and new interval or always included last
-            if ((unixs < start_t || unixs - prev_unixs < SWIND_DT) && nsw != SWIND_MAXN-1)
+            if ((unixs < start_t || unixs - prev_unixs < SWIND_DT) && sw_cache.n_values != SWIND_MAXN-1)
                 continue;
             prev_unixs = unixs;
 
             // want x axis to be hours back from now
-            x[nsw] = (t0 - unixs)/(-3600.0F);
-            y[nsw] = max_y;
+            sw_cache.x[sw_cache.n_values] = (t0 - unixs)/(-3600.0F);
+            sw_cache.y[sw_cache.n_values] = max_y;
             // Serial.printf (_FX("SolWind: %3d %5.2f %5.2f\n"), nsw, x[nsw], y[nsw]);
 
             // good one
             max_y = 0;
-            nsw++;
+            sw_cache.n_values++;
         }
 
-        // proceed iff found enough
         updateClocks(false);
-        resetWatchdog();
-        if (nsw >= SWIND_MINN) {
 
-            // capture
-            space_wx[SPCWX_SOLWIND].value = y[nsw-1];
+        // good iff found enough
+        if (sw_cache.n_values >= SWIND_MINN) {
+
+            // capture latest
+            space_wx[SPCWX_SOLWIND].value = sw_cache.y[sw_cache.n_values-1];
+            space_wx[SPCWX_SOLWIND].value_ok = true;
+            sw_cache.data_ok = true;
+            sw = sw_cache;
 
         } else {
             Serial.println (F("SolWind:: data error"));
@@ -1048,69 +1008,56 @@ int retrieveSolarWind(float x[SWIND_MAXN], float y[SWIND_MAXN])
 
 out:
 
+    // set next update
+    sw_cache.next_update = ok ? nextRetrieval (PLOT_CH_SOLWIND, SWIND_INTERVAL)
+                              : nextWiFiRetry(PLOT_CH_SOLWIND);
+
     // clean up
+    updateClocks(false);
     swind_client.stop();
-    resetWatchdog();
-    return (nsw);
+    return (ok);
 }
 
-/* update SPCWX_SOLWIND if not recently done so by its pane.
- * return whether a new value is ready, even if SPW_ERR
+/* return whether fresh SPCWX_SOLWIND data are ready, even if bad.
  */
-static bool checkSolarWind (void)
+static bool checkForNewSolarWind (void)
 {
-    // use our own delay unless being shown in a pane
-    PlotPane swind_pp = findPaneChoiceNow (PLOT_CH_SOLWIND);
-    time_t *next_p = swind_pp == PANE_NONE ? &space_wx[SPCWX_SOLWIND].next_update : &next_update[swind_pp];
-
-    if (myNow() < *next_p)
+    if (myNow() < sw_cache.next_update)
         return (false);
 
-    StackMalloc x_mem(SWIND_MAXN*sizeof(float));  // hours ago
-    StackMalloc y_mem(SWIND_MAXN*sizeof(float));  // wind
-    float *x = (float *) x_mem.getMem();
-    float *y = (float *) y_mem.getMem();
-    int nsw = retrieveSolarWind (x, y);
-    if (nsw >= SWIND_MINN) {
-
-        // schedule next
-        *next_p = nextPaneUpdate (PLOT_CH_SOLWIND, SWIND_INTERVAL);
-
-    } else {
-
-        // schedule retry
-        *next_p = nextWiFiRetry(PLOT_CH_SOLWIND);
-    }
-
-    // true, albeit may be SPW_ERR
-    return (nsw >= SWIND_MINN);
+    SolarWindData sw;
+    return (retrieveSolarWind (sw));
 }
 
-/* retrieve SPCWX_NOAASPW and noaa_sw.
+/* retrieve NOAA space weather indices and SPCWX_NOAASPW if it's time, else use cache.
  * return whether transaction was ok (even if data was not)
  */
-bool retrieveNOAASWx(void)
+bool retrieveNOAASWx (NOAASpaceWxData &noaasw)
 {
+    // check cache first
+    if (myNow() < noaasw_cache.next_update) {
+        noaasw = noaasw_cache;
+        return (true);
+    }
+
     // expecting 3 reply lines of the following form, anything else is an error message
     //  R  0 0 0 0
     //  S  0 0 0 0
     //  G  0 0 0 0
 
-    // init err until known good
-    noaa_sw.ok = false;
-    space_wx[SPCWX_NOAASPW].value = SPW_ERR;
-
-    // TCP client
+    // get fresh
     WiFiClient noaaswx_client;
     bool ok = false;
 
+    // mark data as bad until proven otherwise
+    space_wx[SPCWX_NOAASPW].value_ok = false;
+    noaasw_cache.data_ok = false;
+
     // read scales
     Serial.println(noaaswx_page);
-    resetWatchdog();
     char line[100];
     if (wifiOk() && noaaswx_client.connect(backend_host, backend_port)) {
 
-        resetWatchdog();
         updateClocks(false);
 
         // fetch page
@@ -1122,9 +1069,10 @@ bool retrieveNOAASWx(void)
             // transaction successful
             ok = true;
 
-            // find sum
+            // find max
             int noaasw_max = 0;
 
+            // for each of N_NOAASW_C categories
             for (int i = 0; i < N_NOAASW_C; i++) {
 
                 // read next line
@@ -1134,19 +1082,19 @@ bool retrieveNOAASWx(void)
                 }
                 // Serial.printf (_FX("NOAA: %d %s\n"), i, line);
 
-                // category is first char must match
-                if (noaa_sw.cat[i] != line[0]) {
+                // category in first char must match
+                if (noaasw_cache.cat[i] != line[0]) {
                     Serial.printf (_FX("NOAASW: invalid class: %s\n"), line);
                     goto out;
                 }
 
-                // then N_NOAASW_V ints
+                // for each of N_NOAASW_V values
                 char *lp = line+1;
                 for (int j = 0; j < N_NOAASW_V; j++) {
 
                     // convert next int
                     char *endptr;
-                    noaa_sw.val[i][j] = strtol (lp, &endptr, 10);
+                    noaasw_cache.val[i][j] = strtol (lp, &endptr, 10);
                     if (lp == endptr) {
                         Serial.printf (_FX("NOAASW: invalid line: %s\n"), line);
                         goto out;
@@ -1154,15 +1102,17 @@ bool retrieveNOAASWx(void)
                     lp = endptr;
 
                     // find max
-                    if (noaa_sw.val[i][j] > noaasw_max)
-                        noaasw_max = noaa_sw.val[i][j];
+                    if (noaasw_cache.val[i][j] > noaasw_max)
+                        noaasw_max = noaasw_cache.val[i][j];
                 }
 
             }
 
             // values ok
-            noaa_sw.ok = true;
             space_wx[SPCWX_NOAASPW].value = noaasw_max;
+            space_wx[SPCWX_NOAASPW].value_ok = true;
+            noaasw_cache.data_ok = true;
+            noaasw = noaasw_cache;
 
         } else {
             Serial.println (F("NOAASW: header short"));
@@ -1176,56 +1126,50 @@ bool retrieveNOAASWx(void)
 
 out:
 
+    // set next update
+    noaasw_cache.next_update = ok ? nextRetrieval (PLOT_CH_NOAASPW, NOAASPW_INTERVAL)
+                                  : nextWiFiRetry(PLOT_CH_NOAASPW);
+
     // clean up
+    updateClocks(false);
     noaaswx_client.stop();
-    resetWatchdog();
     return (ok);
 }
 
-/* update noaa_sw if not recently done so by its pane.
- * return whether new data are ready, even if not ok.
+/* return whether fresh SPCWX_NOAASPW data are ready, even if bad.
  */
-static bool checkNOAASWx (void)
+static bool checkForNewNOAASWx (void)
 {
-    PlotPane noaasw_pp = findPaneChoiceNow (PLOT_CH_NOAASPW);
-    time_t *next_p = noaasw_pp == PANE_NONE ? &noaa_sw.next_update : &next_update[noaasw_pp];
-
-    if (myNow() < *next_p)
+    if (myNow() < noaasw_cache.next_update)
         return (false);
-
-    if (retrieveNOAASWx()) {
-
-        // schedule next
-        *next_p = nextPaneUpdate (PLOT_CH_NOAASPW, NOAASPW_INTERVAL);
-
-    } else {
-
-        // schedule retry
-        *next_p = nextWiFiRetry (PLOT_CH_NOAASPW);
-    }
-
-    // true, albeit may be !noaa_sp.ok
-    return (true);
+    NOAASpaceWxData noaasw;
+    return (retrieveNOAASWx(noaasw));
 }
 
-/* retrieve last 24 hrs of Aurora prediction percentages and space_wx[SPCWX_AURORA].
+
+/* retrieve aurora and SPCWX_AURORA if it's time, else use cache.
  * return whether transaction was ok (even if data was not)
  */
-bool retrieveAurora (Aurora_t &a)
+bool retrieveAurora (AuroraData &aurora)
 {
+    // check cache first
+    if (myNow() < aurora_cache.next_update) {
+        aurora = aurora_cache;
+        return (true);
+    }
+
+    // get fresh
     WiFiClient aurora_client;                                           // wifi client connection
-    char line[50];                                                      // text line
+    char line[100];                                                     // text line
     bool ok = false;                                                    // set iff all ok
 
     // mark data as bad until proven otherwise
-    space_wx[SPCWX_AURORA].value = SPW_ERR;
-    a.ok = false;
+    space_wx[SPCWX_AURORA].value_ok = false;
+    aurora_cache.data_ok = false;
 
     Serial.println (aurora_page);
-    resetWatchdog();
     if (wifiOk() && aurora_client.connect(backend_host, backend_port)) {
         updateClocks(false);
-        resetWatchdog();
 
         // query web page
         httpHCPGET (aurora_client, backend_host, aurora_page);
@@ -1243,7 +1187,7 @@ bool retrieveAurora (Aurora_t &a)
         time_t t_now = myNow();
         float prev_age = 1e10;
         int n_lines = 0;
-        a.n_points = 0;
+        aurora_cache.n_points = 0;
 
         // read lines keep up to AURORA_NPTS newest
         while (getTCPLine (aurora_client, line, sizeof(line), NULL)) {
@@ -1267,34 +1211,36 @@ bool retrieveAurora (Aurora_t &a)
             prev_age = age;
 
             // add to list, shift out oldest if full
-            if (a.n_points == AURORA_MAXPTS) {
-                memmove (&a.age_hrs[0], &a.age_hrs[1], (AURORA_MAXPTS-1)*sizeof(float));
-                memmove (&a.percent[0], &a.percent[1], (AURORA_MAXPTS-1)*sizeof(float));
-                a.n_points = AURORA_MAXPTS - 1;
+            if (aurora_cache.n_points == AURORA_MAXPTS) {
+                memmove (&aurora_cache.age_hrs[0], &aurora_cache.age_hrs[1], (AURORA_MAXPTS-1)*sizeof(float));
+                memmove (&aurora_cache.percent[0], &aurora_cache.percent[1], (AURORA_MAXPTS-1)*sizeof(float));
+                aurora_cache.n_points = AURORA_MAXPTS - 1;
             }
-            a.age_hrs[a.n_points] = -age;               // want "ago"
-            a.percent[a.n_points] = percent;
-            a.n_points++;
+            aurora_cache.age_hrs[aurora_cache.n_points] = -age;               // want "ago"
+            aurora_cache.percent[aurora_cache.n_points] = percent;
+            aurora_cache.n_points++;
         }
 
         // look alive
         updateClocks(false);
-        resetWatchdog();
 
         // require at least a few recent
-        if (a.n_points < 5) {
-            Serial.printf (_FX("AURORA: only %d points\n"), a.n_points);
-        } else if (a.age_hrs[a.n_points-1] <= -1.0F) {
-            Serial.printf (_FX("AURORA: newest is too old: %g hrs\n"), -a.age_hrs[a.n_points-1]);
+        if (aurora_cache.n_points < 5) {
+            Serial.printf (_FX("AURORA: only %d points\n"), aurora_cache.n_points);
+        } else if (aurora_cache.age_hrs[aurora_cache.n_points-1] <= -1.0F) {
+            Serial.printf (_FX("AURORA: newest is too old: %g hrs\n"),
+                                -aurora_cache.age_hrs[aurora_cache.n_points-1]);
         } else {
-            // good
-            a.ok = true;
 
-            Serial.printf (_FX("AURORA: found %d points [%g,%g] hrs old\n"), a.n_points,
-                    -a.age_hrs[0], -a.age_hrs[a.n_points-1]);
+            // good
+            Serial.printf (_FX("AURORA: found %d points [%g,%g] hrs old\n"), aurora_cache.n_points,
+                    -aurora_cache.age_hrs[0], -aurora_cache.age_hrs[aurora_cache.n_points-1]);
 
             // capture newest value for space wx
-            space_wx[SPCWX_AURORA].value = a.percent[a.n_points-1];
+            space_wx[SPCWX_AURORA].value = aurora_cache.percent[aurora_cache.n_points-1];
+            space_wx[SPCWX_AURORA].value_ok = true;
+            aurora_cache.data_ok = true;
+            aurora = aurora_cache;
         }
 
     } else {
@@ -1304,58 +1250,41 @@ bool retrieveAurora (Aurora_t &a)
 
 out:
 
+    // set next update
+    aurora_cache.next_update = ok ? nextRetrieval (PLOT_CH_AURORA, AURORA_INTERVAL)
+                                  : nextWiFiRetry(PLOT_CH_AURORA);
+
     // clean up
+    updateClocks(false);
     aurora_client.stop();
-    resetWatchdog();
     return (ok);
 }
 
-/* update SPCWX_AURORA if not recently done so by its pane.
- * return whether a new value is ready.
+/* return whether fresh SPCWX_AURORA data are ready, even if bad.
  */
-bool checkAurora ()
+bool checkForNewAurora ()
 {
-    // use our own delay unless being shown in a pane
-    PlotPane aurora_pp = findPaneChoiceNow (PLOT_CH_AURORA);
-    time_t *next_p = aurora_pp == PANE_NONE ? &space_wx[SPCWX_AURORA].next_update : &next_update[aurora_pp];
-
-    if (myNow() < *next_p)
+    if (myNow() < aurora_cache.next_update)
         return (false);
-
-    StackMalloc a_mem (sizeof(Aurora_t));
-    Aurora_t *a_p = (Aurora_t *) a_mem.getMem();;
-    bool ok = retrieveAurora (*a_p);
-
-    if (ok) {
-
-        // schedule next
-        *next_p = nextPaneUpdate (PLOT_CH_AURORA, AURORA_INTERVAL);
-
-    } else {
-
-        // schedule retry
-        *next_p = nextWiFiRetry(PLOT_CH_AURORA);
-    }
-
-    // true, albeit may be SPW_ERR
-    return (true);
+    AuroraData a;
+    return (retrieveAurora(a));
 }
 
 /* update all space_wx stats but no faster than their respective panes would do.
  * return whether any actually updated.
  */
-bool checkSpaceWx()
+bool checkForNewSpaceWx()
 {
     // check each
-    bool sf = checkSolarFlux();
-    bool kp = checkKp();
-    bool xr = checkXRay();
-    bool bz = checkBzBt();
-    bool dr = checkDRAP();
-    bool sw = checkSolarWind();
-    bool ss = checkSunSpots();
-    bool na = checkNOAASWx();
-    bool au = checkAurora();
+    bool sf = checkForNewSolarFlux();
+    bool kp = checkForNewKp();
+    bool xr = checkForNewXRay();
+    bool bz = checkForNewBzBt();
+    bool dr = checkForNewDRAP();
+    bool sw = checkForNewSolarWind();
+    bool ss = checkForNewSunSpots();
+    bool na = checkForNewNOAASWx();
+    bool au = checkForNewAurora();
 
     // check whether any
     bool any_new = sf || kp || xr || bz || dr || sw || ss || na || au;

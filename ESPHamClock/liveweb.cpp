@@ -22,12 +22,13 @@
 
 
 // public
-time_t last_live;                                       // last live update; public for wifi.cpp
+int n_roweb, n_rwweb;                                   // stats for user agent
 bool liveweb_fs_ready;                                  // set when ok to send fullscreen command
 char *liveweb_openurl;                                  // a url to attempt to open
 int liveweb_rw_port = LIVEWEB_RW_PORT;                  // r/w server port -- can be changed with -w
 int liveweb_ro_port = LIVEWEB_RO_PORT;                  // r/o server port -- can be changed with -r
 int liveweb_max = 10;                                   // max allowed connections < ws.h::MAX_CLIENTS
+bool mainpage_up;                                       // set when ok to draw r/o symbol
 const int liveweb_maxmax = MAX_CLIENTS-1;               // max max for -help
 
 
@@ -157,8 +158,12 @@ static void updateExistingClient (ws_cli_conn_t *client)
                                 ws_getaddress(client), TVDELUS (tv0,tv1));
     }
 
-    // add a small indicator to mark the r/o page.
-    if (client->port == liveweb_ro_port) {
+    // add a small indicator to mark the r/o page when showing main page.
+    if (mainpage_up && client->port == liveweb_ro_port) {
+
+        // count for user agent
+        n_roweb++;
+
         // N.B. do not use drawPixelRaw() because that will draw in real fb and thus seen by everyone
         // define location of r/o mark in raw pixels, then mult by LIVE_BYPPIX to get array index
         #define RO_MARK_RAWX (tft.SCALESZ*lkscrn_b.x)
@@ -169,6 +174,10 @@ static void updateExistingClient (ws_cli_conn_t *client)
         for (int y = RO_MARK_RAWY; y < RO_MARK_RAWY+RO_MARK_RAWH; y++)
             for (int x = RO_MARK_RAWX; x < RO_MARK_RAWX+RO_MARK_RAWW; x++)
                 memcpy (&img_now[y*LIVE_BYPPIX*BUILD_W + x*LIVE_BYPPIX], rgb_mark, LIVE_BYPPIX);
+    } else {
+
+        // count for user agent
+        n_rwweb++;
     }
 
     // we only send small regions that have changed since previous, ie changes from img_client to img_now.
@@ -400,8 +409,7 @@ static void setLiveChar (ws_cli_conn_t *client, char args[], size_t args_len)
 {
     // ignore if this is from the r/o port
     if (client->port == liveweb_ro_port) {
-        if (live_verbose)
-            Serial.printf ("LIVE: ignoring setLiveChar on r/o port %d\n", liveweb_ro_port);
+        Serial.printf ("LIVE: ignoring setLiveChar on r/o port %d\n", liveweb_ro_port);
         return;
     }
 
@@ -482,8 +490,7 @@ static void setLiveTouch (ws_cli_conn_t *client, char args[], size_t args_len)
 {
     // ignore if this is from the r/o port
     if (client->port == liveweb_ro_port) {
-        if (live_verbose)
-            Serial.printf ("LIVE: ignoring setLiveTouch on r/o port %d\n", liveweb_ro_port);
+        Serial.printf ("LIVE: ignoring setLiveTouch on r/o port %d\n", liveweb_ro_port);
         return;
     }
 
@@ -492,6 +499,7 @@ static void setLiveTouch (ws_cli_conn_t *client, char args[], size_t args_len)
     wa.nargs = 0;
     wa.name[wa.nargs++] = "x";
     wa.name[wa.nargs++] = "y";
+    wa.name[wa.nargs++] = "button";
 
     // parse
     if (!parseWebCommand (wa, args, args_len)) {
@@ -513,12 +521,12 @@ static void setLiveTouch (ws_cli_conn_t *client, char args[], size_t args_len)
         } else {
 
             // inform checkTouch() to use wifi_tt_s; it will reset
+            int button = wa.found[2] ? atoi (wa.value[2]) : 0;
             wifi_tt_s.x = x;
             wifi_tt_s.y = y;
-            wifi_tt = TT_TAP;
+            wifi_tt = button ? TT_TAP_BX : TT_TAP;              // 0 means button 1 -- go figure
 
-            if (live_verbose)
-                Serial.printf ("LIVE: set_touch %d %d\n", wifi_tt_s.x, wifi_tt_s.y);
+            Serial.printf ("LIVE: set_touch %d %d with %d\n", wifi_tt_s.x, wifi_tt_s.y, button);
         }
     }
 }
@@ -664,7 +672,7 @@ static void ws_onclose (ws_cli_conn_t *client)
         }
     }
 
-    // if get here, client was not found in si_list -- usually just because we closed because too many 
+    // if get here, client was not found in si_list -- usually just because closed because too many open
     // Serial.printf ("LIVE: client %s: disappeared after closing websocket\n", ws_getaddress(client));
 }
 
@@ -672,6 +680,9 @@ static void ws_onclose (ws_cli_conn_t *client)
  */
 static void ws_onmessage (ws_cli_conn_t *client, const unsigned char *msg, uint64_t size, int type)
 {
+    // unused
+    (void)type;
+
     // list of core commands
     static struct {
         const char *cmd_name;
