@@ -86,6 +86,7 @@ OBJS = \
 	setup.o \
 	spacewx.o \
 	sphere.o \
+	spots.o \
 	stopwatch.o \
 	string.o \
 	touch.o \

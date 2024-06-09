@@ -1889,6 +1889,20 @@ void Adafruit_RA8875::encodeKeyEvent (XKeyEvent *event)
         }
 }
 
+/* return Button code from event.
+ * N.B. must be used both in ButtonPress and ButtonRelease
+ */
+// _USE_X11
+int Adafruit_RA8875::decodeMouseButton (XEvent event)
+{
+        // button1+mods or button2 coded as Button2, all else as Button1.
+        // N.B. Mac's report plane Button2 with Button1+Option
+        bool mods = (event.xbutton.state & (Mod1Mask|ControlMask)) != 0;
+        return ((event.xbutton.button == Button1 && mods) || (event.xbutton.button == Button2)
+                        ? Button2 : Button1
+        );
+}
+
 /* thread that runs forever reacting to X11 events and painting fb_canvas whenever it changes
  */
 // _USE_X11
@@ -2055,12 +2069,8 @@ void Adafruit_RA8875::fbThread ()
 		    pthread_mutex_lock (&mouse_lock);
 			mouse_x = event.xbutton.x;
 			mouse_y = event.xbutton.y;
+                        mouse_button = decodeMouseButton (event);
 			mouse_downs++;
-
-                        // code button 1 alone as Button1, other buttons or any modifiers report as Button2
-                        mouse_button =
-                                (event.xbutton.button == Button1 && !(event.xbutton.state & ~Button1Mask))
-                                ? Button1 : Button2;
 
 		    pthread_mutex_unlock (&mouse_lock);
 
@@ -2075,12 +2085,8 @@ void Adafruit_RA8875::fbThread ()
 		    pthread_mutex_lock (&mouse_lock);
 			mouse_x = event.xbutton.x;
 			mouse_y = event.xbutton.y;
+                        mouse_button = decodeMouseButton (event);
 			mouse_ups++;
-
-                        // code button 1 alone as Button1, other buttons or any modifiers report as Button2
-                        mouse_button =
-                                (event.xbutton.button == Button1 && !(event.xbutton.state & ~Button1Mask))
-                                ? Button1 : Button2;
 
 		    pthread_mutex_unlock (&mouse_lock);
 

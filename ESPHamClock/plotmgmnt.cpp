@@ -236,9 +236,6 @@ static PlotChoice askPaneChoice (PlotPane pp)
 
     if (menu_ok) {
 
-        // show feedback
-        menuRedrawOk (ok_b, MENU_OK_BUSY);
-
         // find new rotset for this pane
         uint32_t new_rotset = 0;
         for (int i = 0; i < n_mitems; i++) {
@@ -419,11 +416,9 @@ bool checkPlotTouch (const SCoord &s, PlotPane pp, TouchType tt)
         }
         break;
     case PLOT_CH_MOON:
-        if (!in_top) {
-            drawMoonElPlot();
-            initEarthMap();
-            return(true);
-        }
+        if (checkMoonTouch (s, box))
+            return (true);
+        in_top = true;
         break;
     case PLOT_CH_SSN:
         if (!in_top) {

@@ -48,7 +48,7 @@ const char *coremap_names[CM_N] = {
 
 // prop and muf style names
 static const char prop_style[] = "PropMap";
-static const char muf_style[] = "MUFMap";
+static const char muf_v_style[] = "MUFMap";
 
 // handy zoomed w and h
 #define ZOOM_W  (HC_MAP_W*pan_zoom.zoom)
@@ -595,7 +595,7 @@ static bool installFileMaps()
 
         // confirm core_map is one of the file styles
         if (core_map != CM_COUNTRIES && core_map != CM_TERRAIN && core_map != CM_DRAP
-                            && core_map != CM_AURORA && core_map != CM_WX)
+                            && core_map != CM_AURORA && core_map != CM_WX && core_map != CM_MUF_RT)
             fatalError (_FX("style not a file map %d"), core_map);        // does not return
 
         // create names and titles
@@ -639,8 +639,8 @@ static bool installFileMaps()
 static bool installMUFMaps()
 {
         char msg[100];
-        snprintf (msg, sizeof(msg), _FX("Calculating %s..."), muf_style);
-        return (installQueryMaps (_FX("fetchVOACAP-MUF.pl"), msg, muf_style, 0));
+        snprintf (msg, sizeof(msg), _FX("Calculating %s..."), muf_v_style);
+        return (installQueryMaps (_FX("fetchVOACAP-MUF.pl"), msg, muf_v_style, 0));
 }
 
 /* retrieve and install VOACAP maps for the current time and given band.
@@ -675,7 +675,7 @@ bool installFreshMaps()
             ok = installPropMaps();
         else {
             bool core_ok = false;
-            if (core_map == CM_MUF)
+            if (core_map == CM_MUF_V)
                 core_ok = installMUFMaps();
             else
                 core_ok = installFileMaps();
@@ -840,7 +840,11 @@ int propMap2Band (PropMapBand band)
 bool mapScaleIsUp(void)
 {
     return (prop_map.active
-                || core_map == CM_DRAP || core_map == CM_MUF || core_map == CM_AURORA || core_map == CM_WX);
+                || core_map == CM_DRAP
+                || core_map == CM_MUF_V
+                || core_map == CM_MUF_RT
+                || core_map == CM_AURORA
+                || core_map == CM_WX);
 }
 
 /* draw the appropriate scale at mapscale_b depending on core_map or prop_map, if any.
@@ -855,7 +859,7 @@ void drawMapScale()
         bool black_text;                                // black text, else white
     } MapScalePoint;
 
-    // CM_DRAP and CM_MUF
+    // CM_DRAP and CM_MUF_V and CM_MUF_RT
     static PROGMEM const MapScalePoint d_scale[] = {    // see fetchDRAP.pl and fetchVOACAP-MUF.pl
         {0,  0x000000, 0},
         {4,  0x4E138A, 0},
@@ -936,7 +940,8 @@ void drawMapScale()
     } else {
 
         switch (core_map) {
-        case CM_MUF:        // fallthru
+        case CM_MUF_V:          // fallthru
+        case CM_MUF_RT:         // fallthru
         case CM_DRAP:
             msp = d_scale;
             n_scale = NARRAY(d_scale);

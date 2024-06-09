@@ -481,11 +481,11 @@ char live_html[] =  R"_raw_html_(
                     return;
                 }
 
-                // code button 1 alone as Button1, other buttons or any modifiers report as Button2.
+                // code button0+mods or button1 as button 1, else button 0.
                 // N.B. event.button 0 means button 1 !
-                var any_mod = event.shiftKey || event.metaKey || event.ctrlKey || event.altKey;
-                var button = (event.button == 0 && !any_mod) ? 0 : 1;
-                console.log ("button " + button);
+                var mods = event.ctrlKey || event.metaKey;
+                var button = ((event.button == 0 && mods) || event.button == 1) ? 1 : 0;
+                console.log (event.button + "+" + mods + " -> " + button);
 
                 // compose and send
                 let msg = 'set_touch?x=' + m.x + '&y=' + m.y + '&button=' + button;

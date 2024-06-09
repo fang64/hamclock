@@ -568,6 +568,9 @@ extern SBox NCDXF_b;                    // NCDXF box, and more
 #define PLOTBOX0_H      332             // PANE_0 height - overlays DE/DX panels including borders
 extern SBox sensor_b;
 
+#define LISTING_Y0      47              // first entry y down from box top
+#define LISTING_DY      14              // listing row separation
+
 extern SBox clock_b;                    // main time
 extern SBox auxtime_b;                  // extra time 
 extern SCircle satpass_c;               // satellite pass horizon
@@ -711,7 +714,7 @@ typedef struct {
 
 
 // cursor distance to map point
-#define MAX_CSR_DIST    150             // miles
+#define MAX_CSR_DIST    (150/pan_zoom.zoom)             // miles
 
 
 // pane title height
@@ -864,25 +867,28 @@ extern void doOTAupdate(const char *ver);
  */
 
 
-// DXClusterSpot used in several places
+// DXSpot used in several places
 #define MAX_SPOTCALL_LEN                12      // including \0
 #define MAX_SPOTGRID_LEN                MAID_CHARLEN
 #define MAX_SPOTMODE_LEN                8
 typedef struct {
-    char de_call[MAX_SPOTCALL_LEN];     // DE call
-    char dx_call[MAX_SPOTCALL_LEN];     // DX call
-    char de_grid[MAX_SPOTGRID_LEN];     // DE grid
-    char dx_grid[MAX_SPOTGRID_LEN];     // DX grid
-    float dx_lat, dx_lng;               // dx location, rads +N +E
-    float de_lat, de_lng;               // de location, rads +N +E
+
+    // adif:           "my_*" fields are considered RX
+    // dxcluster:      spotted is TX, spotter is RX
+    // ontheair:       spotted is TX, repurpose RX for id and program name
+    // psk live spots: if PSKMB_OFDE then DE is TX, else DE is RX
+
+    char tx_call[MAX_SPOTCALL_LEN];
+    char tx_grid[MAX_SPOTGRID_LEN];
+    char rx_call[MAX_SPOTCALL_LEN];
+    char rx_grid[MAX_SPOTGRID_LEN];
+
     char mode[MAX_SPOTMODE_LEN];        // operating mode
+    LatLong rx_ll, tx_ll;               // locations
     float kHz;                          // freq
-    union {
-        SBox map_b;                     // DX map text label location, canonical coords like text
-        SCircle map_c;                  // DX map dot location, RAW coords
-    } dx_map;                           // use map_b iff labelSpot() else map_c
+    float snr;                          // only used by pskreporter.cpp
     time_t spotted;                     // UTC when spotted
-} DXClusterSpot;
+} DXSpot;
 
 
 extern bool from_set_adif;
@@ -890,7 +896,7 @@ extern void updateADIF (const SBox &box);
 extern bool checkADIFTouch (const SCoord &s, const SBox &box);
 extern void drawADIFSpotsOnMap (void);
 extern int readADIFWiFiClient (WiFiClient &client, long content_length, char ynot[], int n_ynot);
-extern bool getClosestADIFSpot (const LatLong &ll, DXClusterSpot *sp, LatLong *llp);
+extern bool getClosestADIFSpot (const LatLong &ll, DXSpot *sp, LatLong *llp);
 extern void checkADIF(void);
 
 
@@ -1128,23 +1134,24 @@ extern const char* getAlarmedContestTitle (time_t t);
  *
  */
 
+typedef enum {
+    LOM_TXEND,
+    LOM_RXEND
+} LabelOnMapEnd;
+
+typedef enum {
+    LOM_ALL,
+    LOM_JUSTDOT
+} LabelOnMapDot;
+
 extern bool updateDXCluster(const SBox &box);
 extern void closeDXCluster(void);
 extern bool checkDXClusterTouch (const SCoord &s, const SBox &box);
-extern bool getDXClusterSpots (DXClusterSpot **spp, uint8_t *nspotsp);
+extern bool getDXClusterSpots (DXSpot **spp, uint8_t *nspotsp);
 extern void drawDXClusterSpotsOnMap (void);
-extern void updateDXClusterSpotMapLocations(void);
 extern bool isDXClusterConnected(void);
 extern bool sendDXClusterDELLGrid(void);
-extern bool getClosestDXCluster (const LatLong &ll, DXClusterSpot *sp, LatLong *llp);
-
-extern void drawDXCLabelOnMap (const DXClusterSpot &spot);
-extern bool getClosestDXC (const DXClusterSpot *list, int n_list, const LatLong &ll,
-    DXClusterSpot *sp, LatLong *llp);
-extern void setDXCSpotPosition (DXClusterSpot &s);
-extern void getRawSpotSizes (uint16_t &lwRaw, uint16_t &mkRaw);
-extern void drawSpotOnList (const SBox &box, const DXClusterSpot &spot, int row, uint16_t bg_color);
-extern void drawDXPathOnMap (const DXClusterSpot &spot);
+extern bool getClosestDXCluster (const LatLong &ll, DXSpot *sp, LatLong *llp);
 
 
 
@@ -1399,8 +1406,8 @@ struct kd_node_t {
 typedef struct kd_node_t KD3Node;
 
 extern KD3Node* mkKD3NodeTree (KD3Node *t, int len, int idx);
-extern void nearestKD3Node (KD3Node *root, KD3Node *nd, int idx, KD3Node **best, float *best_dist,
-    int *n_visited);
+extern void nearestKD3Node (const KD3Node *root, const KD3Node *nd, int level, const KD3Node **best,
+    float *best_dist, int *n_visited);
 extern void ll2KD3Node (const LatLong &ll, KD3Node *kp);
 extern void KD3Node2ll (const KD3Node &n, LatLong *llp);
 extern float nearestKD3Dist2Miles(float d);
@@ -1494,12 +1501,13 @@ extern PropMapSetting prop_map;
 
 
 // CoreMaps and coremap_names
-#define COREMAPS                 \
-    X(CM_COUNTRIES, "Countries") \
-    X(CM_TERRAIN,   "Terrain")   \
-    X(CM_DRAP,      "DRAP")      \
-    X(CM_MUF,       "MUF")       \
-    X(CM_AURORA,    "Aurora")    \
+#define COREMAPS                        \
+    X(CM_COUNTRIES, "Countries")        \
+    X(CM_TERRAIN,   "Terrain")          \
+    X(CM_DRAP,      "DRAP")             \
+    X(CM_MUF_V,     "MUF-VOACAP")       \
+    X(CM_MUF_RT,    "MUF-RT")           \
+    X(CM_AURORA,    "Aurora")           \
     X(CM_WX,        "Weather")
 
 #define X(a,b)  a,                      // expands COREMAPS to each enum followed by comma
@@ -1618,6 +1626,7 @@ extern bool waitForUser (UserInput &ui);
 extern void updateMoonPane (const SBox &box, bool image_too);
 extern void drawMoonElPlot (void);
 extern const uint16_t moon_image[HC_MOON_W*HC_MOON_H] PROGMEM;
+extern bool checkMoonTouch (const SCoord &s, const SBox &box);
 
 
 
@@ -1736,10 +1745,9 @@ extern const char *onta_names[ONTA_N];
 
 extern bool updateOnTheAir (const SBox &box, ONTAProgram onta);
 extern bool checkOnTheAirTouch (const SCoord &s, const SBox &box, ONTAProgram onta);
-extern bool getOnTheAirSpots (DXClusterSpot **spp, uint8_t *nspotsp, ONTAProgram onta);
+extern bool getOnTheAirSpots (DXSpot **spp, uint8_t *nspotsp, ONTAProgram onta);
 extern void drawOnTheAirSpotsOnMap (void);
-extern void updateOnTheAirSpotMapLocations(void);
-extern bool getClosestOnTheAirSpot (const LatLong &ll, DXClusterSpot *sp, LatLong *llp);
+extern bool getClosestOnTheAirSpot (const LatLong &ll, DXSpot *sp, LatLong *llp);
 
 
 
@@ -1870,8 +1878,8 @@ typedef enum {
 #define PSKMB_PSK       (PSKMB_SRC0)
 #define PSKMB_WSPR      (0)
 #define PSKMB_RBN       (PSKMB_SRC1)
-#define PSK_INTERVAL    (120)           // polling period. secs
-#define PSK_DOTR       2                // end point marker radius for several paths, not just PSK
+#define PSK_INTERVAL    (150)           // polling period. secs
+#define PSK_DOTR        2               // end point marker radius for several paths, not just PSK
 
 typedef enum {
     PSKBAND_160M,
@@ -1889,29 +1897,12 @@ typedef enum {
     PSKBAND_N
 } PSKBandSetting;
 
-// info known about each report
-// N.B. match char sizes with sscanf in pskreporter.cpp
-typedef struct {
-    time_t posting;
-    char txgrid[10];
-    char txcall[20];
-    char rxgrid[10];
-    char rxcall[20];
-    char mode[20];
-    LatLong dx_ll;                      // location of the "other" guy, regardless of tx/rx
-    long Hz;
-    int snr;
-} PSKReport;
-
 // current stats for each band
 typedef struct {
     int count;                          // spots count
-    float maxkm;                        // distance to farthest spot, km
-    float maxlat;                       // lat of farthest spot, rads +N
-    float maxlng;                       // longitude of farthest spot, rads +E
-    char maxcall[20];                   // call of farthest station. N.B. match size of PSKReport.txcall
-    SCoord max_s;                       // screen coord of farthest spot
-    SBox maxtag_b;                      // screen location of tag
+    float maxkm;                        // distance of farthest spot from DE, km
+    LatLong maxll;                      // location of farthest spot
+    char maxcall[MAX_SPOTCALL_LEN];     // call of farthest station
 } PSKBandStats;
 
 extern uint8_t psk_mask;                // bitmask of PSKModeBits
@@ -1919,7 +1910,7 @@ extern uint32_t psk_bands;              // bitmask of 1 << PSKBandSetting
 extern uint16_t psk_maxage_mins;        // max age, minutes
 extern uint8_t psk_showdist;
 
-extern bool updatePSKReporter (const SBox &box);
+extern bool updatePSKReporter (const SBox &box, bool force);
 extern bool checkPSKTouch (const SCoord &s, const SBox &box);
 extern void initPSKState(void);
 extern void savePSKState(void);
@@ -1929,8 +1920,8 @@ extern bool maxPSKageOk (int m);
 extern uint16_t getBandColor (long Hz);
 extern bool getBandDashed (long Hz);
 extern void drawPSKPaths (void);
-extern bool getClosestPSK (const LatLong &ll, const PSKReport **rpp);
-extern void getPSKSpots (const PSKReport* &rp, int &n_rep);
+extern bool getClosestPSK (const LatLong &ll, DXSpot *sp);
+extern void getPSKSpots (const DXSpot* &rp, int &n_rep);
 
 
 
@@ -1998,33 +1989,6 @@ extern SBox santa_b;
 
 
 
-/*********************************************************************************************
- *
- * selectFont.cpp
- *
- */
-
-
-extern const GFXfont Germano_Regular16pt7b PROGMEM;
-extern const GFXfont Germano_Bold16pt7b PROGMEM;
-extern const GFXfont Germano_Bold30pt7b PROGMEM;
-
-typedef enum {
-    BOLD_FONT,
-    LIGHT_FONT
-} FontWeight;
-
-typedef enum {
-    FAST_FONT,
-    SMALL_FONT,
-    LARGE_FONT
-} FontSize;
-
-extern void selectFontStyle (FontWeight w, FontSize s);
-
-
-
-
 
 /*********************************************************************************************
  *
@@ -2087,6 +2051,140 @@ class ScrollState {
 extern bool checkSDOTouch (const SCoord &s, const SBox &b);
 extern bool updateSDOPane (const SBox &box, bool image_too);
 extern bool isSDORotating(void);
+
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * selectFont.cpp
+ *
+ */
+
+
+extern const GFXfont Germano_Regular16pt7b PROGMEM;
+extern const GFXfont Germano_Bold16pt7b PROGMEM;
+extern const GFXfont Germano_Bold30pt7b PROGMEM;
+
+typedef enum {
+    BOLD_FONT,
+    LIGHT_FONT
+} FontWeight;
+
+typedef enum {
+    FAST_FONT,
+    SMALL_FONT,
+    LARGE_FONT
+} FontSize;
+
+extern void selectFontStyle (FontWeight w, FontSize s);
+
+
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * setup.cpp
+ *
+ */
+
+#define LABELNAMES              \
+    X(LBL_NONE,     "None")     \
+    X(LBL_DOT,      "Dot")      \
+    X(LBL_PREFIX,   "Prefix")   \
+    X(LBL_CALL,     "Call")
+
+#define X(a,b)  a,              // expands LABEL_TYPE to each enum and comma
+typedef enum {
+    LABELNAMES
+    LBL_N
+} LabelType;
+#undef X
+
+typedef enum {
+    DF_MDY,
+    DF_DMY,
+    DF_YMD,
+    DF_N
+} DateFormat;
+
+#define N_DXCLCMDS      12                      // n dx cluster user commands
+#define THINPATHSZ      (tft.SCALESZ)           // NV_MAPSPOTS thin raw path size
+#define WIDEPATHSZ      (5*THINPATHSZ/2)        // NV_MAPSPOTS wide raw path size
+
+
+#define NV_ROTHOST_LEN          18
+#define NV_RIGHOST_LEN          18
+#define NV_FLRIGHOST_LEN        18
+
+extern void clockSetup(void);
+extern const char *getWiFiSSID(void);
+extern const char *getWiFiPW(void);
+extern const char *getCallsign(void);
+extern bool setCallsign (const char *cs);
+extern const char *getDXClusterHost(void);
+extern int getDXClusterPort(void);
+extern bool setDXCluster (char *host, char *port_str, char ynot[]);
+extern bool useMetricUnits(void);
+extern bool useGeoIP(void);
+extern bool useGPSDTime(void);
+extern bool useGPSDLoc(void);
+extern float getBMETempCorr(int i);
+extern float getBMEPresCorr(int i);
+extern bool setBMETempCorr(BMEIndex i, float delta);
+extern bool setBMEPresCorr(BMEIndex i, float delta);
+extern const char *getGPSDHost(void);
+extern bool useLocalNTPHost(void);
+extern const char *getLocalNTPHost(void);
+extern bool useDXCluster(void);
+extern uint32_t getKX3Baud(void);
+extern void drawStringInBox (const char str[], const SBox &b, bool inverted, uint16_t color);
+extern bool logUsageOk(void);
+extern uint16_t getMapColor (ColorSelection cid);
+extern const char* getMapColorName (ColorSelection cid);
+extern uint8_t getBrMax(void);
+extern uint8_t getBrMin(void);
+extern bool getX11FullScreen(void);
+extern bool getWebFullScreen(void);
+extern bool latSpecIsValid (const char *lng_spec, float &lng);
+extern bool lngSpecIsValid (const char *lng_spec, float &lng);
+extern bool getDemoMode(void);
+extern int16_t getCenterLng(void);
+extern DateFormat getDateFormat(void);
+extern bool getRigctld (char host[NV_RIGHOST_LEN], int *portp);
+extern bool getRotctld (char host[NV_ROTHOST_LEN], int *portp);
+extern bool getFlrig (char host[NV_FLRIGHOST_LEN], int *portp);
+extern const char *getDXClusterLogin(void);
+extern int getSpotPathWidth (void);
+extern int getPathWidth (void);
+extern int getSpotDotRadius (void);
+extern LabelType getSpotLabelType (void);
+extern bool setMapColor (const char *name, uint16_t rgb565);
+extern void getDXClCommands(const char *cmds[N_DXCLCMDS], bool on[N_DXCLCMDS]);
+extern bool getColorDashed(ColorSelection id);
+extern bool useMagBearing(void);
+extern bool useWSJTX(void);
+extern bool weekStartsOnMonday(void);
+extern void formatLat (float lat_d, char s[], int s_len);
+extern void formatLng (float lng_d, char s[], int s_len);
+extern const char *getADIFilename(void);
+extern bool scrollTopToBottom(void);
+extern int nMoreScrollRows(void);
+extern bool useOSTime (void);
+extern bool onDXWatchList (const char *call);
+extern bool showOnlyOnDXWatchList(void);
+extern bool onSPOTAWatchList (const char *call);
+extern bool showOnlyOnSPOTAWatchList();
+extern bool rankSpaceWx(void);
+extern bool showNewDXDEWx(void);
+extern int getPaneRotationPeriod (void);
+extern bool showPIP(void);
+
 
 
 
@@ -2300,90 +2398,16 @@ extern float simpleSphereDist (const LatLong &ll1, const LatLong &ll2);
 
 /*********************************************************************************************
  *
- * setup.cpp
+ * spots.cpp
  *
  */
 
-
-typedef enum {
-    DF_MDY,
-    DF_DMY,
-    DF_YMD,
-    DF_N
-} DateFormat;
-
-#define N_DXCLCMDS      12                      // n dx cluster user commands
-#define THINPATHSZ      ((tft.SCALESZ+1)/2)     // NV_MAPSPOTS thin raw path size
-#define WIDEPATHSZ      (tft.SCALESZ+1)         // NV_MAPSPOTS wide raw path size
-
-
-#define NV_ROTHOST_LEN          18
-#define NV_RIGHOST_LEN          18
-#define NV_FLRIGHOST_LEN        18
-
-extern void clockSetup(void);
-extern const char *getWiFiSSID(void);
-extern const char *getWiFiPW(void);
-extern const char *getCallsign(void);
-extern bool setCallsign (const char *cs);
-extern const char *getDXClusterHost(void);
-extern int getDXClusterPort(void);
-extern bool setDXCluster (char *host, char *port_str, char ynot[]);
-extern bool useMetricUnits(void);
-extern bool useGeoIP(void);
-extern bool useGPSDTime(void);
-extern bool useGPSDLoc(void);
-extern bool labelSpots(void);
-extern bool dotSpots(void);
-extern bool plotSpotCallsigns(void);
-extern float getBMETempCorr(int i);
-extern float getBMEPresCorr(int i);
-extern bool setBMETempCorr(BMEIndex i, float delta);
-extern bool setBMEPresCorr(BMEIndex i, float delta);
-extern const char *getGPSDHost(void);
-extern bool useLocalNTPHost(void);
-extern const char *getLocalNTPHost(void);
-extern bool useDXCluster(void);
-extern uint32_t getKX3Baud(void);
-extern void drawStringInBox (const char str[], const SBox &b, bool inverted, uint16_t color);
-extern bool logUsageOk(void);
-extern uint16_t getMapColor (ColorSelection cid);
-extern const char* getMapColorName (ColorSelection cid);
-extern uint8_t getBrMax(void);
-extern uint8_t getBrMin(void);
-extern bool getX11FullScreen(void);
-extern bool getWebFullScreen(void);
-extern bool latSpecIsValid (const char *lng_spec, float &lng);
-extern bool lngSpecIsValid (const char *lng_spec, float &lng);
-extern bool getDemoMode(void);
-extern int16_t getCenterLng(void);
-extern DateFormat getDateFormat(void);
-extern bool getRigctld (char host[NV_RIGHOST_LEN], int *portp);
-extern bool getRotctld (char host[NV_ROTHOST_LEN], int *portp);
-extern bool getFlrig (char host[NV_FLRIGHOST_LEN], int *portp);
-extern const char *getDXClusterLogin(void);
-extern int getSpotPathSize(void);
-extern bool setMapColor (const char *name, uint16_t rgb565);
-extern void getDXClCommands(const char *cmds[N_DXCLCMDS], bool on[N_DXCLCMDS]);
-extern bool getColorDashed(ColorSelection id);
-extern bool useMagBearing(void);
-extern bool useWSJTX(void);
-extern bool weekStartsOnMonday(void);
-extern void formatLat (float lat_d, char s[], int s_len);
-extern void formatLng (float lng_d, char s[], int s_len);
-extern const char *getADIFilename(void);
-extern bool scrollTopToBottom(void);
-extern int nMoreScrollRows(void);
-extern bool useOSTime (void);
-extern bool onDXWatchList (const char *call);
-extern bool showOnlyOnDXWatchList(void);
-extern bool onSPOTAWatchList (const char *call);
-extern bool showOnlyOnSPOTAWatchList();
-extern bool rankSpaceWx(void);
-extern bool showNewDXDEWx(void);
-extern int getPaneRotationPeriod (void);
-extern bool showPIP(void);
-
+extern void solveSphere (float A, float b, float cc, float sc, float *cap, float *Bp);
+extern bool getClosestSpot (const DXSpot *list, int n_list, const LatLong &ll,
+    DXSpot *sp, LatLong *llp);
+extern void drawSpotLabelOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMapDot dot);
+extern void drawSpotPathOnMap (const DXSpot &spot);
+extern void drawSpotOnList (const SBox &box, const DXSpot &spot, int row, uint16_t bg_color);
 
 
 
@@ -2538,11 +2562,8 @@ extern bool bypass_pw;
  */
 
 // core map update intervals
-#if defined(_IS_ESP8266)
-#define DRAPMAP_INTERVAL        (900)                   // polling interval, secs -- save FLASH writes
-#else
 #define DRAPMAP_INTERVAL        (300)                   // polling interval, secs
-#endif // _IS_ESP8266
+#define MUF_RT_INTERVAL         (900)                   // polling interval, secs
 #define OTHER_MAPS_INTERVAL     (1800)                  // polling interval, secs
 
 

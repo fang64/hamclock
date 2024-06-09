@@ -111,6 +111,46 @@ void updateMoonPane (const SBox &box, bool image_too)
         tft.print (rt_str);
 }
 
+/* check for touch at s, assumed to be within b.
+ * return whether ours
+ */
+bool checkMoonTouch (const SCoord &s, const SBox &box)
+{
+    // not ours if in title area
+    if (s.y < box.y + PANETITLE_H)
+        return (false);
+
+    // show menu
+    const int indent = 3;
+    MenuItem mitems[2] = {
+        {MENU_TOGGLE, false, 1, indent, "Show EME tool"},
+        {MENU_TOGGLE, false, 2, indent, "Show movie"},
+    };
+    const int n_mitems = NARRAY(mitems);
+
+    SBox menu_b = box;          // copy, not ref
+    menu_b.w = 0;               // shrink to fit
+    menu_b.x += 20;
+    menu_b.y += 60;
+    SBox ok_b;
+    MenuInfo menu = {menu_b, ok_b, true, false, 1, n_mitems, mitems};
+    if (runMenu(menu)) {
+        if (mitems[0].set) {
+            // need immediate refresh because drawMoonElPlot blocks
+            updateMoonPane (box, true);
+            drawMoonElPlot();
+            initEarthMap();
+        }
+        if (mitems[1].set)
+            openURL ("https://apod.nasa.gov/apod/ap240602.html");
+    }
+
+    // refresh pane regardless
+    scheduleNewPlot (PLOT_CH_MOON);
+
+    return (true);
+}
+
 
 
 /************************************************************************************************

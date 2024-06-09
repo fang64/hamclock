@@ -107,14 +107,13 @@ Adafruit_MCP23X17 mcp;
 bool found_mcp;
 
 static uint32_t gpath_time;                     // millis() when great path was drawn, else 0
-static SBox prefix_b;                           // where to show DX prefix text
 
 // manage using a known DX cluster prefix or one derived from nearest LL
 static bool dx_prefix_use_override;             // whether to use dx_override_prefixp[] or ll2Prefix()
 static char dx_override_prefix[MAX_PREF_LEN];
 
 // whether flash crc is ok -- from old ESP days
-uint8_t flash_crc_ok;
+uint8_t flash_crc_ok = 1;
 
 // name of each DETIME setting, for menu and set_defmt
 #define X(a,b)  b,                              // expands DETIMES to name plus comma
@@ -139,7 +138,6 @@ static void toggleLockScreen(void);
 static void eraseDXPath(void);
 static void eraseDXMarker(void);
 static void drawRainbow (SBox &box);
-static void drawDXCursorPrefix (void);
 static void setDXPrefixOverride (const char *ovprefix);
 static void unsetDXPrefixOverride (void);
 static void runShutdownMenu(void);
@@ -466,7 +464,7 @@ void setup()
     // wifi info box
     wifi_b.x = uptime_b.x + uptime_b.w;
     wifi_b.y = cs_info.box.y+cs_info.box.h+CSINFO_DROP;
-    wifi_b.w = 130;
+    wifi_b.w = 127;
     wifi_b.h = CSINFO_H;
 
     // version box
@@ -635,6 +633,10 @@ void setup()
 
     // check for saved satellite
     dx_info_for_sat = initSatSelection();
+
+
+    // log screen lock
+    Serial.printf ("Screen lock is now %s\n", screenIsLocked() ? "On" : "Off");
 
     // perform inital screen layout
     initScreen();
@@ -1020,9 +1022,10 @@ void newDX (LatLong &ll, const char grid[MAID_CHARLEN], const char *ovprefix)
     drawDXInfo ();
     drawAllSymbols();
 
+    // TODO: why draw it at all?? Was this an ESP thing?
     // don't draw if prefix from cluster because it draws also
-    if (!dx_prefix_use_override)
-        drawDXCursorPrefix();
+    // if (!dx_prefix_use_override)
+        // drawDXCursorPrefix();
 
     // show DX weather and update band conditions if showing
     scheduleNewPlot(PLOT_CH_BC);
@@ -1326,7 +1329,7 @@ void drawDXPath ()
         ll2sRaw (asinf(ca), fmodf(de_ll.lng+B+5*M_PIF,2*M_PIF)-M_PIF, s1, 1);
         bool show_seg = b < dist ? (!sp_dashed || dash_toggle) : (!lp_dashed || dash_toggle);
         if (s0.x) {
-            if (segmentSpanOkRaw (s0, s1, 1)) {
+            if (segmentSpanOkRaw (s0, s1, tft.SCALESZ)) {
                 if (show_seg)
                     tft.drawLineRaw (s0.x, s0.y, s1.x, s1.y, tft.SCALESZ, b < dist ? short_col : long_col);
             } else {
@@ -2221,6 +2224,7 @@ bool getDXPrefix (char p[MAX_PREF_LEN+1])
     }
 }
 
+#if 0           // see comments in newDX
 /* display the DX prefix at dx_c 
  */
 static void drawDXCursorPrefix()
@@ -2231,6 +2235,7 @@ static void drawDXCursorPrefix()
         drawMapTag (p, prefix_b);
     }
 }
+#endif
 
 /* this function positions a box to contain short text beneath a symbol at location s that has radius r,
  *   where s is assumed to be over map. the preferred position is centered below s, but it may be moved

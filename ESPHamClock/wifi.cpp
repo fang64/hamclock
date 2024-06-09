@@ -650,6 +650,8 @@ void checkBGMap(void)
                 // schedule next refresh
                 if (core_map == CM_DRAP)
                     next_map = myNow() + DRAPMAP_INTERVAL;
+                else if (core_map == CM_MUF_RT)
+                    next_map = myNow() + MUF_RT_INTERVAL;
                 else
                     next_map = myNow() + OTHER_MAPS_INTERVAL;
 
@@ -1234,7 +1236,7 @@ void updateWiFi(void)
 
         case PLOT_CH_BC:
             if (t0 >= next_update[pp]) {
-                if (updateBandConditions (box, false))
+                if (updateBandConditions (box, next_update[pp] == 0))   // in case of newDX
                     next_update[pp] = nextPaneUpdate (pc, BC_INTERVAL);
                 else
                     next_update[pp] = nextWiFiRetry (PLOT_CH_BC);
@@ -1384,7 +1386,7 @@ void updateWiFi(void)
 
         case PLOT_CH_PSK:
             if (t0 >= next_update[pp]) { 
-                if (updatePSKReporter(box))
+                if (updatePSKReporter(box, next_update[pp] == 0))       // force if scheduled
                     next_update[pp] = nextPaneUpdate (pc, PSK_INTERVAL);
                 else
                     next_update[pp] = nextWiFiRetry(pc);
@@ -1762,16 +1764,19 @@ void sendUserAgent (WiFiClient &client)
                 n_dashed++;
 
         // path size: 0 none, 1 thin, 2 wide
-        int path = getSpotPathSize();                   // returns 0, THINPATHSZ or WIDEPATHSZ
+        int path = getSpotPathWidth();                  // returns 0, THINPATHSZ or WIDEPATHSZ
         if (path)
             path = (path == THINPATHSZ ? 1 : 2);
 
         // label spots: 0 no, 1 prefix, 2 call, 3 dot
-        int spots = labelSpots();
-        if (spots)
-            spots = (plotSpotCallsigns() ? 2 : 1);
-        else
-            spots = dotSpots() ? 3 : 0;
+        int spots = 0;
+        switch (getSpotLabelType()) {
+        case LBL_NONE:   spots = 0; break;
+        case LBL_DOT:    spots = 3; break;
+        case LBL_PREFIX: spots = 1; break;
+        case LBL_CALL:   spots = 2; break;
+        case LBL_N:      fatalError ("Bogus log spots\n");
+        }
 
         // crc code
         int crc = flash_crc_ok;
@@ -1810,17 +1815,20 @@ void sendUserAgent (WiFiClient &client)
             de_time_fmt, brb, dx_info_for_sat, rss_code, useMetricUnits(),
             getNBMEConnected(), gpio, io, getBMETempCorr(BME_76), getBMEPresCorr(BME_76),
             desrss, dxsrss, BUILD_W, dpy_mode,
+
             // new for LV5:
             alarms, getCenterLng(), (int)auxtime /* getDoy() before 2.80 */, names_on, getDemoMode(),
             (int)getSWEngineState(NULL,NULL), (int)getBigClockBits(), utcOffset(), gpsd,
             rss_interval, dayf, rr_score,
+
             // new for LV6:
             useMagBearing(), n_dashed, ntp, path, spots,
             call_fg, call_bg, !clockTimeOk(), // default clock 0 == ok
+
             // new for LV7:
             scrollTopToBottom(), nMoreScrollRows(), rankSpaceWx(), showNewDXDEWx(), getPaneRotationPeriod(),
-            pw_file != NULL, n_roweb>0, pz, plotops[PANE_0],
-            0, 0, 0, 0, 0, 0);
+            pw_file != NULL, n_roweb>0, pz, plotops[PANE_0], screenIsLocked(), showPIP(),
+            0, 0, 0, 0);
 
     } else {
         snprintf (ua, sizeof(ua), _FX("User-Agent: %s/%s (id %u up %lld) crc %d\r\n"),

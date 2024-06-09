@@ -778,42 +778,34 @@ static bool getWiFiDXInfo (WiFiClient &client, char line[], size_t line_len)
     return (getWiFiDEDXInfo_helper (client, line, line_len, true));
 }
 
-/* helper to print list of DXClusterSpot.
+/* helper to print list of tx DXSpot.
  */
-static void spotsHelper (WiFiClient &client, const DXClusterSpot *spots, int nspots, char *buf, int buf_len)
+static void spotsHelper (WiFiClient &client, const DXSpot *spots, int nspots, char *buf, int buf_len)
 {
     // print each row
     FWIFIPR (client, F("#  kHz   Call        UTC     Mode Grid      Lat     Lng     DEDist   DEBearing\n"));
     for (uint8_t i = 0; i < nspots; i++) {
 
-        const DXClusterSpot &spot = spots[i];
+        const DXSpot &spot = spots[i];
 
         // start with pretty freq, fixed 8 chars
         const char *f_fmt = spot.kHz < 1e6 ? "%8.1f" : "%8.0f";
         int bufl = snprintf (buf, buf_len, f_fmt, spot.kHz);
 
         // distance and bearing from DE
-        LatLong to_ll;
-        to_ll.lat = spot.dx_lat;
-        to_ll.lat_d = rad2deg(to_ll.lat);
-        to_ll.lng = spot.dx_lng;
-        to_ll.lng_d = rad2deg(to_ll.lng);
         float dist, bear;
-        propDEPath (show_lp, to_ll, &dist, &bear);
+        propDEPath (show_lp, spot.tx_ll, &dist, &bear);
         dist *= ERAD_M;                                 // angle to miles
         bear *= 180/M_PIF;                              // rad -> degrees
         bool bear_ismag = desiredBearing (de_ll, bear);
         if (useMetricUnits())
             dist *= KM_PER_MI;
 
-        // grid
-        char grid[MAID_CHARLEN];
-        ll2maidenhead (grid, to_ll);
-
         // add remaining fields
         snprintf (buf+bufl, buf_len-bufl, _FX(" %-*s %02d%02d %7s %6s %7.2f %7.2f   %6.0f   %4.0f %s\n"),
-                MAX_SPOTCALL_LEN-1, spot.dx_call, hour(spot.spotted), minute(spot.spotted), spot.mode,
-                grid, to_ll.lat_d, to_ll.lng_d, dist, bear, bear_ismag ? _FX("magnetic") : _FX("true"));
+                MAX_SPOTCALL_LEN-1, spot.tx_call, hour(spot.spotted), minute(spot.spotted), spot.mode,
+                spot.tx_grid, spot.tx_ll.lat_d, spot.tx_ll.lng_d, dist, bear,
+                bear_ismag ? _FX("magnetic") : _FX("true"));
 
         // print
         client.print(buf);
@@ -829,7 +821,7 @@ static bool getWiFiDXSpots (WiFiClient &client, char line[], size_t line_len)
     startPlainText (client);
 
     // retrieve spots, if available
-    DXClusterSpot *spots;
+    DXSpot *spots;
     uint8_t nspots;
     if (!getDXClusterSpots (&spots, &nspots)) {
         strcpy (line, _FX("No dx spots"));
@@ -851,7 +843,7 @@ static bool getWiFiOnTheAir (WiFiClient &client, char line[], size_t line_len)
     startPlainText (client);
 
     // retrieve and show each list, if any
-    DXClusterSpot *spots;
+    DXSpot *spots;
     uint8_t nspots;
     bool any = false;
     for (int i = 0; i < ONTA_N; i++) {
@@ -895,7 +887,7 @@ static bool getWiFiLiveStats (WiFiClient &client, char *line, size_t line_len)
     for (int i = 0; i < PSKBAND_N; i++) {
         PSKBandStats &s = stats[i];
         snprintf (buf, sizeof(buf), _FX("%-6s %5d %5.0f %7.2f %7.2f\n"), names[i], s.count,
-                useMetricUnits() ? s.maxkm : s.maxkm / KM_PER_MI, rad2deg(s.maxlat), rad2deg(s.maxlng));
+                useMetricUnits() ? s.maxkm : s.maxkm / KM_PER_MI, s.maxll.lat_d, s.maxll.lng_d);
         client.print(buf);
     }
 
@@ -3929,7 +3921,7 @@ static bool getWiFiLiveSpots (WiFiClient &client, char *line, size_t line_len)
 {
     (void)(line_len);
 
-    const PSKReport *rp;
+    const DXSpot *rp;
     int n_rep;
     getPSKSpots (rp, n_rep);
     if (n_rep == 0) {
@@ -3942,16 +3934,16 @@ static bool getWiFiLiveSpots (WiFiClient &client, char *line, size_t line_len)
 
     // heading
     char buf[200];
-    snprintf (buf, sizeof(buf), "#Age,s txcall    txgrid  rxcall    rxgrid   mode      lat      lng        Hz    snr\n");
+    snprintf (buf, sizeof(buf), "#Age,s txcall    txgrid  rxcall    rxgrid   mode      lat      lng        kHz   snr\n");
     client.print(buf);
 
     // table
     long long t0 = myNow();
     for (int i = 0; i < n_rep; i++) {
-        const PSKReport &r = rp[i];
-        snprintf (buf, sizeof(buf), "%5lld  %-10s %-4s   %-10s %-4s    %-8s %6.2f  %7.2f  %9ld %d\n",
-            t0-r.posting, r.txcall, r.txgrid,  r.rxcall,  r.rxgrid, r.mode, r.dx_ll.lat_d, r.dx_ll.lng_d, 
-            r.Hz, r.snr);
+        const DXSpot &r = rp[i];
+        snprintf (buf, sizeof(buf), "%5lld  %-10s %-4.4s   %-10s %-4.4s    %-8s %6.2f  %7.2f  %9.3f %5.1f\n",
+            t0-r.spotted, r.tx_call, r.tx_grid,  r.rx_call,  r.rx_grid, r.mode, r.tx_ll.lat_d, r.tx_ll.lng_d, 
+            r.kHz, r.snr);
         client.print(buf);
     }
 

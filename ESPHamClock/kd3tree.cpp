@@ -65,7 +65,7 @@ static float sqr(float a) { return (a*a); }
 
 /* return distance metric between two nodes
  */
-static float dist (KD3Node *a, KD3Node *b)
+static float kd3dist (const KD3Node *a, const KD3Node *b)
 {
     float d2 = sqr(a->s[0] - b->s[0]);
     d2 += sqr(a->s[1] - b->s[1]);
@@ -73,14 +73,14 @@ static float dist (KD3Node *a, KD3Node *b)
     return (d2);
 }
 
-static void swap(KD3Node *x, KD3Node *y)
+static void kd3swap(KD3Node *x, KD3Node *y)
 {
     KD3Node tmp = *x;
     *x = *y;
     *y = tmp;
 }
 
-static KD3Node* find_median(KD3Node *start, KD3Node *end, int idx)
+static KD3Node* find_median(KD3Node *start, KD3Node *end, int level)
 {
     if (end <= start) return NULL;
     if (end == start + 1)
@@ -90,55 +90,55 @@ static KD3Node* find_median(KD3Node *start, KD3Node *end, int idx)
 
     float pivot;
     while (1) {
-        pivot = md->s[idx];
+        pivot = md->s[level];
  
-        swap(md, end - 1);
+        kd3swap(md, end - 1);
         for (store = p = start; p < end; p++) {
-            if (p->s[idx] < pivot) {
+            if (p->s[level] < pivot) {
                 if (p != store)
-                    swap(p, store);
+                    kd3swap(p, store);
                 store++;
             }
         }
-        swap(store, end - 1);
+        kd3swap(store, end - 1);
  
         /* median has duplicate values */
-        if (store->s[idx] == md->s[idx])
+        if (store->s[level] == md->s[level])
             return md;
  
         if (store > md) end = store;
-        else        start = store;
+        else          start = store;
     }
 }
  
 /* transform and array of KD3Node into a proper kd3tree in place.
- * initial call with idx 0.
+ * initial call with level 0.
  */
-KD3Node* mkKD3NodeTree (KD3Node *t, int len, int idx)
+KD3Node* mkKD3NodeTree (KD3Node *t, int len, int level)
 {
     KD3Node *n;
  
     if (!len) return NULL;
  
-    if ((n = find_median(t, t + len, idx))) {
-        idx = (idx + 1) % 3;
-        n->left  = mkKD3NodeTree(t, n - t, idx);
-        n->right = mkKD3NodeTree(n + 1, t + len - (n + 1), idx);
+    if ((n = find_median(t, t + len, level))) {
+        level = (level + 1) % 3;
+        n->left  = mkKD3NodeTree(t, n - t, level);
+        n->right = mkKD3NodeTree(n + 1, t + len - (n + 1), level);
     }
     return n;
 }
  
 /* given a kd3tree created with mkKD3NodeTree, find the closest entry to nd.
- * initial call with idx 0.
+ * initial call with level 0.
  */
-void nearestKD3Node (KD3Node *root, KD3Node *nd, int idx, KD3Node **best, float *best_dist,
+void nearestKD3Node (const KD3Node *root, const KD3Node *nd, int level, const KD3Node **best, float *best_dist,
     int *n_visited)
 {
     float d, dx, dx2;
     
     if (!root) return;
-    d = dist(root, nd);
-    dx = root->s[idx] - nd->s[idx];
+    d = kd3dist (root, nd);
+    dx = root->s[level] - nd->s[level];
     dx2 = dx * dx;
  
     (*n_visited)++;
@@ -148,11 +148,11 @@ void nearestKD3Node (KD3Node *root, KD3Node *nd, int idx, KD3Node **best, float 
         *best = root;
     }
 
-    idx = (idx + 1) % 3;
+    level = (level + 1) % 3;
  
-    nearestKD3Node(dx > 0 ? root->left : root->right, nd, idx, best, best_dist, n_visited);
+    nearestKD3Node(dx > 0 ? root->left : root->right, nd, level, best, best_dist, n_visited);
     if (dx2 >= *best_dist) return;
-    nearestKD3Node(dx > 0 ? root->right : root->left, nd, idx, best, best_dist, n_visited);
+    nearestKD3Node(dx > 0 ? root->right : root->left, nd, level, best, best_dist, n_visited);
 }
 
 /* handy convert ll.lat/lng to KD3Node

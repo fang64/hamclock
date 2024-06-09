@@ -14,8 +14,8 @@ class ESPhttpUpdate ESPhttpUpdate;
 
 
 // approximate number of lines generated when running unzip and make, used for progress meter.
-#define N_UNZIP_LINES   140
-#define N_MAKE_LINES    100
+#define N_UNZIP_LINES   145
+#define N_MAKE_LINES    103
 
 
 ESPhttpUpdate::ESPhttpUpdate()
@@ -264,7 +264,7 @@ t_httpUpdate_return ESPhttpUpdate::update(WiFiClient &client, const char *url)
 	    return (HTTP_UPDATE_FAILED);
 
 	// download url into tmp_dir naming it zip_file
-	if (!runCommand (false, 5, 10, 1, "curl --retry 3 --silent --show-error --output '%s/%s' '%s'",
+	if (!runCommand (false, 5, 10, 1, "curl --max-time 10 --retry 2 --silent --show-error --output '%s/%s' '%s'",
                                                                 tmp_dir, zip_file, url)) {
             cleanupDir (tmp_dir);
 	    return (HTTP_UPDATE_FAILED);

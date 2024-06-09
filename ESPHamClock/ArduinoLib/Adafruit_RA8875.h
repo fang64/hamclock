@@ -257,6 +257,7 @@ class Adafruit_RA8875 {
         void encodeKeyEvent (XKeyEvent *event);
         void captureSelection(void);
         bool requestSelection (KeySym ks, unsigned kb_state);
+        int decodeMouseButton (XEvent event);
 
 
 #endif // _USE_X11

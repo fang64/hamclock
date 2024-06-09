@@ -176,6 +176,12 @@ static char i2c_fn[NV_I2CFN_LEN];
 #define USEGPSD_FORTIME_BIT     0x1
 #define USEGPSD_FORLOC_BIT      0x2
 
+// label names
+#define X(a,b)  b,                              // expands LABELNAMES to name plus comma
+static const char *lbl_names[LBL_N] = {
+    LABELNAMES
+};
+#undef X
 
 // define a string prompt
 typedef struct {
@@ -250,7 +256,7 @@ static StringPrompt string_pr[N_SPR] = {
 
     {0, { 10, R2Y(0), 70, PR_H}, { 90, R2Y(0), 270, PR_H}, "Call:",   call_sign, NV_CALLSIGN_LEN, 0}, 
     {0, { 90, R2Y(1),180, PR_H}, {270, R2Y(1), 110, PR_H}, "Enter DE Lat:", NULL, 0, 0},       // shadowed
-    {0, {380, R2Y(1), 50, PR_H}, {430, R2Y(1), 120, PR_H}, "Lng:", NULL, 0, 0},                // shadowed
+    {0, {380, R2Y(1), 50, PR_H}, {430, R2Y(1), 130, PR_H}, "Lng:", NULL, 0, 0},                // shadowed
     {0, {560, R2Y(1), 60, PR_H}, {620, R2Y(1), 130, PR_H}, "Grid:", NULL, 0, 0},               // shadowed
     {0, {460, R2Y(2), 60, PR_H}, {520, R2Y(2), 280, PR_H}, "host:", gpsd_host, NV_GPSDHOST_LEN, 0},
     {0, { 90, R2Y(4), 60, PR_H}, {160, R2Y(4), 500, PR_H}, "SSID:", wifi_ssid, NV_WIFI_SSID_LEN, 0},
@@ -298,7 +304,7 @@ static StringPrompt string_pr[N_SPR] = {
 
     // "page 4" -- index 3
 
-    {3, {10,  R2Y(0), 200, PR_H}, {250, R2Y(0),  70, PR_H}, "Map center lng:", NULL, 0, 0},     // shadowed
+    {3, {10,  R2Y(0), 200, PR_H}, {250, R2Y(0),  100,PR_H}, "Map center lng:", NULL, 0, 0},     // shadowed
 
     {3, {350, R2Y(1),  70, PR_H}, {440, R2Y(1),  360,PR_H}, "name:", i2c_fn, NV_I2CFN_LEN, 0},
 
@@ -380,18 +386,18 @@ typedef enum {
     BEARING_BPR,
     RANKSW_BPR,
     NEWDXDEWX_BPR,
-    SPOTLBL_BPR,
-    SPOTLBLCALL_BPR,
-    SPOTPATH_BPR,
-    SPOTPATHSZ_BPR,
+    SPOTLBLA_BPR,
+    SPOTLBLB_BPR,
+    SPOTPSZA_BPR,
+    SPOTPSZB_BPR,
     SCROLLDIR_BPR,
     SCROLLLEN_BPR,
     SCROLLBIG_BPR,
-    WEB_FULLSCRN_BPR,
-    X11_FULLSCRN_BPR,
     PANE_ROTPA_BPR,
     PANE_ROTPB_BPR,
     SHOWPIP_BPR,
+    WEB_FULLSCRN_BPR,
+    X11_FULLSCRN_BPR,
 
     N_BPR,                                      // number of fields
 
@@ -526,13 +532,15 @@ static BoolPrompt bool_pr[N_BPR] = {
     {4, {400, R2Y(3), 170, PR_H},  {570, R2Y(3), 150, PR_H}, false, "New DX Wx?",  "No", "Yes", NOMATE},
 
 
-    {4, {10,  R2Y(4), 170, PR_H},  {180, R2Y(4), 150, PR_H}, false,"Spot labels?","No","Dot",SPOTLBLCALL_BPR},
-    {4, {150, R2Y(4), 170, PR_H},  {180, R2Y(4), 150, PR_H}, false, NULL, "Prefix", "Call", SPOTLBL_BPR},
+    {4, {10,  R2Y(4), 170, PR_H},  {180, R2Y(4), 150, PR_H}, false, "Spot labels?",
+                                        lbl_names[LBL_NONE], lbl_names[LBL_DOT], SPOTLBLB_BPR},
+    {4, {150, R2Y(4), 170, PR_H},  {180, R2Y(4), 150, PR_H}, false, NULL,
+                                        lbl_names[LBL_PREFIX], lbl_names[LBL_CALL], SPOTLBLA_BPR},
                                                 // 4x entangled: No: FF Dot: TF  Prefix: FT  Call: TT
 
 
-    {4, {400, R2Y(4), 170, PR_H},  {570, R2Y(4), 150, PR_H}, false, "Spot paths?", "No", NULL,SPOTPATHSZ_BPR},
-    {4, {540, R2Y(4), 170, PR_H},  {570, R2Y(4), 150, PR_H}, false, NULL, "Thin", "Wide", SPOTPATH_BPR},
+    {4, {400, R2Y(4), 170, PR_H},  {570, R2Y(4), 150, PR_H}, false, "Spot paths?", "No", NULL,SPOTPSZB_BPR},
+    {4, {540, R2Y(4), 170, PR_H},  {570, R2Y(4), 150, PR_H}, false, NULL, "Thin", "Wide", SPOTPSZA_BPR},
                                                 // 3x entangled: No: FX  Thin: TF  Wide: TT
 
 
@@ -547,20 +555,22 @@ static BoolPrompt bool_pr[N_BPR] = {
                                                 // N.B. match NSCROLL_X
 
 
-    {4, {10,  R2Y(6), 170, PR_H}, {180, R2Y(6), 150, PR_H}, false, "Full scrn web?", "No", "Yes", NOMATE},
 
-    {4, {400, R2Y(6), 170, PR_H}, {570, R2Y(6), 150, PR_H}, false, "Full scrn direct?", "No", "Yes", NOMATE},
-                                                // N.B. state box must be wide enough for "Won't fit"
-
-
-    {4, {10,  R2Y(7), 170, PR_H}, {180, R2Y(7), 150, PR_H}, false, "Pane rotation?",
+    {4, {10,  R2Y(6), 170, PR_H}, {180, R2Y(6), 150, PR_H}, false, "Pane rotation?",
                                                 "5 seconds", "10 seconds", PANE_ROTPB_BPR},
-    {4, {10,  R2Y(7), 170, PR_H}, {180, R2Y(7), 150, PR_H}, false, NULL,
+    {4, {10,  R2Y(6), 170, PR_H}, {180, R2Y(6), 150, PR_H}, false, NULL,
                                                 "20 seconds", "40 seconds", PANE_ROTPA_BPR},
                                                 // 4x entangled:  5: FF  10: TF   20: FT  40: TT
                                                 // FF -> TF -> FT -> TT -> ...
 
-    {4, {400, R2Y(7), 170, PR_H}, {570, R2Y(7), 150, PR_H}, false, "Show public IP?", "No", "Yes", NOMATE},
+
+    {4, {400, R2Y(6), 170, PR_H}, {570, R2Y(6), 150, PR_H}, false, "Show public IP?", "No", "Yes", NOMATE},
+
+
+    {4, {10,  R2Y(7), 170, PR_H}, {180, R2Y(7), 150, PR_H}, false, "Full scrn web?", "No", "Yes", NOMATE},
+
+    {4, {400, R2Y(7), 170, PR_H}, {570, R2Y(7), 150, PR_H}, false, "Full scrn direct?", "No", "Yes", NOMATE},
+                                                // N.B. state box must be wide enough for "Won't fit"
 
 
 
@@ -897,7 +907,7 @@ static void logAllPrompts(void)
 {
     // strings
     for (StringPrompt *sp = string_pr; sp < &string_pr[N_SPR]; sp++)
-        if (sp->p_str)
+        if (sp->p_str && sp->v_str != wifi_ssid && sp->v_str != wifi_pw)
             Serial.printf (_FX("Setup: %s = %s\n"), sp->p_str, sp->v_str ? sp->v_str : _FX("NULL"));
 
     // bools
@@ -1384,14 +1394,14 @@ static void nextTabFocus (bool backwards)
         { NULL, &bool_pr[BEARING_BPR] },
         { NULL, &bool_pr[RANKSW_BPR] },
         { NULL, &bool_pr[NEWDXDEWX_BPR] },
-        { NULL, &bool_pr[SPOTLBL_BPR] },
-        { NULL, &bool_pr[SPOTPATH_BPR] },
+        { NULL, &bool_pr[SPOTLBLA_BPR] },
+        { NULL, &bool_pr[SPOTPSZA_BPR] },
         { NULL, &bool_pr[SCROLLDIR_BPR] },
         { NULL, &bool_pr[SCROLLLEN_BPR] },
-        { NULL, &bool_pr[WEB_FULLSCRN_BPR] },
-        { NULL, &bool_pr[X11_FULLSCRN_BPR] },
         { NULL, &bool_pr[PANE_ROTPA_BPR] },
         { NULL, &bool_pr[SHOWPIP_BPR] },
+        { NULL, &bool_pr[WEB_FULLSCRN_BPR] },
+        { NULL, &bool_pr[X11_FULLSCRN_BPR] },
     };
     #define N_TAB_FIELDS    NARRAY(tab_fields)
 
@@ -3227,10 +3237,10 @@ static void initSetup()
         NVWriteUInt8 (NV_MAPSPOTS, spotops);
     }
     uint8_t spotops_msk = spotops & NVMS_MKMSK;
-    bool_pr[SPOTLBL_BPR].state =     spotops_msk == NVMS_DOT || spotops_msk == NVMS_CALL;
-    bool_pr[SPOTLBLCALL_BPR].state = spotops_msk == NVMS_PREFIX || spotops_msk == NVMS_CALL;
-    bool_pr[SPOTPATH_BPR].state =    (spotops & (NVMS_WIDE|NVMS_THIN)) != 0;
-    bool_pr[SPOTPATHSZ_BPR].state =  (spotops & NVMS_WIDE) != 0;
+    bool_pr[SPOTLBLA_BPR].state = spotops_msk == NVMS_DOT || spotops_msk == NVMS_CALL;
+    bool_pr[SPOTLBLB_BPR].state = spotops_msk == NVMS_PREFIX || spotops_msk == NVMS_CALL;
+    bool_pr[SPOTPSZA_BPR].state = (spotops & (NVMS_WIDE|NVMS_THIN)) != 0;
+    bool_pr[SPOTPSZB_BPR].state = (spotops & NVMS_WIDE) != 0;
 
     uint16_t dx_cmdmask;
     if (!NVReadUInt16 (NV_DXCMDMASK, &dx_cmdmask)) {
@@ -4097,9 +4107,9 @@ static void saveParams2NV()
     NVWriteString (NV_DXLOGIN, dx_login);
     NVWriteUInt8 (NV_LOGUSAGE, bool_pr[LOGUSAGE_BPR].state);
     NVWriteUInt8 (NV_MAPSPOTS,
-              (bool_pr[SPOTLBL_BPR].state ? (bool_pr[SPOTLBLCALL_BPR].state ? NVMS_CALL : NVMS_DOT)
-                                          : (bool_pr[SPOTLBLCALL_BPR].state ? NVMS_PREFIX : NVMS_NONE))
-            | (bool_pr[SPOTPATH_BPR].state ? (bool_pr[SPOTPATHSZ_BPR].state ? NVMS_WIDE : NVMS_THIN) : 0));
+              (bool_pr[SPOTLBLA_BPR].state ? (bool_pr[SPOTLBLB_BPR].state ? NVMS_CALL : NVMS_DOT)
+                                           : (bool_pr[SPOTLBLB_BPR].state ? NVMS_PREFIX : NVMS_NONE))
+            | (bool_pr[SPOTPSZA_BPR].state ? (bool_pr[SPOTPSZB_BPR].state ? NVMS_WIDE : NVMS_THIN) : 0));
     NVWriteUInt8 (NV_NTPSET, bool_pr[NTPSET_BPR].state);
     NVWriteString (NV_NTPHOST, ntp_host);
     NVWriteString (NV_ADIFFN, adif_fn);
@@ -4401,38 +4411,52 @@ bool useMagBearing()
     return (bool_pr[BEARING_BPR].state);
 }
 
-/* return Raw size of spot paths, including zero if not wanted
+/* return Raw spot path width, including zero if not wanted
  */
-int getSpotPathSize()
+int getSpotPathWidth()
 {
-    if (bool_pr[SPOTPATH_BPR].state)
-        return (bool_pr[SPOTPATHSZ_BPR].state ? WIDEPATHSZ : THINPATHSZ);
+    if (bool_pr[SPOTPSZA_BPR].state)
+        return (bool_pr[SPOTPSZB_BPR].state ? WIDEPATHSZ : THINPATHSZ);
     else
         return (0);
 }
 
-/* return whether to label spots with either call or prefix.
- *   call plotSpotCallsigns() to determine which.
- *   this does NOT include DOT, call dotSpots() to determine that.
+/* return Raw path width for any purpose, not just spots.
+ * use spots if enabled else a modest default.
  */
-bool labelSpots()
+int getPathWidth()
 {
-    return (bool_pr[SPOTLBLCALL_BPR].state);
+    int pw = getSpotPathWidth();
+    if (pw == 0)
+        pw = (WIDEPATHSZ+THINPATHSZ)/2;
+    return (pw);
 }
 
-/* return whether to label spots with dots.
+/* return Raw spot dot radius, including zero if not wanted
  */
-bool dotSpots()
+int getSpotDotRadius()
 {
-    return (bool_pr[SPOTLBL_BPR].state && !bool_pr[SPOTLBLCALL_BPR].state);
+    // no labels: no dots
+    if (getSpotLabelType() == LBL_NONE)
+        return (0);
+
+    // no path but still want dots: average dot
+    int sw = getSpotPathWidth();
+    if (sw == 0)
+        sw = (WIDEPATHSZ+THINPATHSZ)/2;
+    return (2*sw);
 }
 
-/* return whether to label spots as whole callsigns, else just prefix.
- * N.B. only sensible if labelSpots() is true
+/* return desired spot label style
  */
-bool plotSpotCallsigns()
+LabelType getSpotLabelType (void)
 {
-    return (bool_pr[SPOTLBL_BPR].state);
+    const char *lbl = getEntangledValue (&bool_pr[SPOTLBLA_BPR], &bool_pr[SPOTLBLB_BPR]);
+    for (int i = 0; i < LBL_N; i++)
+        if (strcmp (lbl_names[i], lbl) == 0)
+            return ((LabelType)i);
+    fatalError ("Bogus label type: %s\n", lbl);
+    return (LBL_NONE);  // lint
 }
 
 /* return whether to use IP geolocation

@@ -780,10 +780,9 @@ static void drawMouseLoc()
 
     // draw menu content PSK else DX Cluster else default, fields shown left and right justified
 
-    const PSKReport *psk_rp;
-    DXClusterSpot dxc_s;
+    DXSpot dx_s;
     LatLong dxc_ll;
-    if (getClosestPSK (ll, &psk_rp)) {
+    if (getClosestPSK (ll, &dx_s)) {
 
         // PSK, WSPR or RBN spot
 
@@ -793,53 +792,53 @@ static void drawMouseLoc()
         ty += 1;
 
         // show tx info
-        snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, psk_rp->txcall);
+        snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, dx_s.tx_call);
         tw = getTextWidth(buf);
         tft.setCursor (tx + (view_btn_b.w-tw)/2, ty);
         tft.printf (buf);
-        snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, psk_rp->txgrid);
+        snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, dx_s.tx_grid);
         tw = getTextWidth(buf);
         tft.setCursor (tx + (view_btn_b.w-tw)/2, ty += ML_LINEDY);
         tft.printf (buf);
 
         // show rx info
-        snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, psk_rp->rxcall);
+        snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, dx_s.rx_call);
         tw = getTextWidth(buf);
         tft.setCursor (tx + (view_btn_b.w-tw)/2, ty += ML_LINEDY);
         tft.printf (buf);
-        snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, psk_rp->rxgrid);
+        snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, dx_s.rx_grid);
         tw = getTextWidth(buf);
         tft.setCursor (tx + (view_btn_b.w-tw)/2, ty += ML_LINEDY);
         tft.printf (buf);
 
         // show mode
-        snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, psk_rp->mode);
+        snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, dx_s.mode);
         tw = getTextWidth(buf);
         tft.setCursor (tx + (view_btn_b.w-tw)/2, ty += ML_LINEDY);
         tft.printf (buf);
 
         // show freq
-        drawMLFreq (psk_rp->Hz, tx+ML_INDENT, ML_LINEDY, ty);
+        drawMLFreq (1000*dx_s.kHz, tx+ML_INDENT, ML_LINEDY, ty);
 
         // show age
-        drawMLAge (psk_rp->posting, tx+ML_INDENT, ML_LINEDY, ty);
+        drawMLAge (dx_s.spotted, tx+ML_INDENT, ML_LINEDY, ty);
 
         // show snr
         tft.setCursor (tx+ML_INDENT, ty += ML_LINEDY);
-        tft.printf ("SNR %5d", psk_rp->snr);
+        tft.printf ("SNR %5.0f", dx_s.snr);
 
         // show distance and bearing
-        drawMLDB (psk_rp->dx_ll, tx+ML_INDENT, ML_LINEDY, ty);
+        drawMLDB (dx_s.tx_ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // show weather
-        drawMLWX (psk_rp->dx_ll, tx+ML_INDENT, ML_LINEDY, ty);
+        drawMLWX (dx_s.tx_ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // border in band color
         tft.drawRect (view_btn_b.x, view_btn_b.y + view_btn_b.h, view_btn_b.w-1, ML_LINEDY*ML_NLINES+1,
-                        getBandColor(psk_rp->Hz));
+                        getBandColor(1000*dx_s.kHz));
 
-    } else if (getClosestDXCluster (ll, &dxc_s, &dxc_ll) || getClosestOnTheAirSpot (ll, &dxc_s, &dxc_ll)
-                        || getClosestADIFSpot (ll, &dxc_s, &dxc_ll)) {
+    } else if (getClosestDXCluster (ll, &dx_s, &dxc_ll) || getClosestOnTheAirSpot (ll, &dx_s, &dxc_ll)
+                        || getClosestADIFSpot (ll, &dx_s, &dxc_ll)) {
 
         // DX Cluster or POTA/SOTA or ADIF spot
 
@@ -849,28 +848,28 @@ static void drawMouseLoc()
         ty += 1;
 
         // show tx info
-        snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, dxc_s.dx_call);
+        snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, dx_s.tx_call);
         tw = getTextWidth(buf);
         tft.setCursor (tx + (view_btn_b.w-tw)/2, ty);
         tft.printf (buf);
-        snprintf (buf, sizeof(buf), "%.*s", 4, dxc_s.dx_grid);
+        snprintf (buf, sizeof(buf), "%.*s", 4, dx_s.tx_grid);
         tw = getTextWidth(buf);
         tft.setCursor (tx + (view_btn_b.w-tw)/2, ty += ML_LINEDY);
         tft.printf (buf);
 
         // show rx info
-        snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, dxc_s.de_call);
+        snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, dx_s.rx_call);
         tw = getTextWidth(buf);
         tft.setCursor (tx + (view_btn_b.w-tw)/2, ty += ML_LINEDY);
         tft.printf (buf);
-        snprintf (buf, sizeof(buf), "%.*s", 4, dxc_s.de_grid);
+        snprintf (buf, sizeof(buf), "%.*s", 4, dx_s.rx_grid);
         tw = getTextWidth(buf);
         tft.setCursor (tx + (view_btn_b.w-tw)/2, ty += ML_LINEDY);
         tft.printf (buf);
 
         // show mode if known
-        if (strlen (dxc_s.mode) > 0) {
-            snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, dxc_s.mode);
+        if (strlen (dx_s.mode) > 0) {
+            snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, dx_s.mode);
             tw = getTextWidth(buf);
             tft.setCursor (tx + (view_btn_b.w-tw)/2, ty += ML_LINEDY);
             tft.printf (buf);
@@ -878,10 +877,10 @@ static void drawMouseLoc()
             ty += ML_LINEDY;
 
         // show freq
-        drawMLFreq (dxc_s.kHz*1000, tx+ML_INDENT, ML_LINEDY, ty);
+        drawMLFreq (dx_s.kHz*1000, tx+ML_INDENT, ML_LINEDY, ty);
 
         // show spot age
-        drawMLAge (dxc_s.spotted, tx+ML_INDENT, ML_LINEDY, ty);
+        drawMLAge (dx_s.spotted, tx+ML_INDENT, ML_LINEDY, ty);
 
         // show local time
         drawMLLMT (dxc_ll, tx+ML_INDENT, ML_LINEDY, ty);
@@ -894,7 +893,7 @@ static void drawMouseLoc()
 
         // border in band color
         tft.drawRect (view_btn_b.x, view_btn_b.y + view_btn_b.h, view_btn_b.w-1, ML_LINEDY*ML_NLINES+1,
-                        getBandColor(1000*dxc_s.kHz));
+                        getBandColor(1000*dx_s.kHz));
 
     } else {
 
@@ -1102,7 +1101,7 @@ static void drawMapMenu()
 {
 
     enum MIName {     // menu items -- N.B. must be in same order as mitems[]
-        MI_STY_TTL, MI_STR_CRY, MI_STY_TER, MI_STY_DRA, MI_STY_MUF, MI_STY_AUR, MI_STY_WXX, MI_STY_PRP,
+        MI_STY_TTL, MI_STR_CRY, MI_STY_TER, MI_STY_DRA, MI_STY_MUF, MI_STY_MRT, MI_STY_AUR, MI_STY_WXX, MI_STY_PRP,
         MI_GRD_TTL, MI_GRD_NON, MI_GRD_TRO, MI_GRD_LLG, MI_GRD_MAI, MI_GRD_AZM, MI_GRD_CQZ, MI_GRD_ITU,
         MI_PRJ_TTL, MI_PRJ_MER, MI_PRJ_AZM, MI_PRJ_AZ1, MI_PRJ_MOL,
         MI_RSS_YES,
@@ -1117,7 +1116,8 @@ static void drawMapMenu()
             {MENU_1OFN, false, 1, SEC_INDENT, coremap_names[CM_COUNTRIES]},
             {MENU_1OFN, false, 1, SEC_INDENT, coremap_names[CM_TERRAIN]},
             {MENU_1OFN, false, 1, SEC_INDENT, coremap_names[CM_DRAP]},
-            {MENU_1OFN, false, 1, SEC_INDENT, coremap_names[CM_MUF]},
+            {MENU_1OFN, false, 1, SEC_INDENT, coremap_names[CM_MUF_V]},
+            {MENU_1OFN, false, 1, SEC_INDENT, coremap_names[CM_MUF_RT]},
             {MENU_1OFN, false, 1, SEC_INDENT, coremap_names[CM_AURORA]},
             {MENU_1OFN, false, 1, SEC_INDENT, coremap_names[CM_WX]},
             {MENU_IGNORE, false, 1, SEC_INDENT, NULL},     // MI_STY_PRP: see below
@@ -1154,7 +1154,8 @@ static void drawMapMenu()
         mitems[MI_STR_CRY].set = core_map == CM_COUNTRIES;
         mitems[MI_STY_TER].set = core_map == CM_TERRAIN;
         mitems[MI_STY_DRA].set = core_map == CM_DRAP;
-        mitems[MI_STY_MUF].set = core_map == CM_MUF;
+        mitems[MI_STY_MUF].set = core_map == CM_MUF_V;
+        mitems[MI_STY_MRT].set = core_map == CM_MUF_RT;
         mitems[MI_STY_AUR].set = core_map == CM_AURORA;
         mitems[MI_STY_WXX].set = core_map == CM_WX;
     }
@@ -1192,9 +1193,6 @@ static void drawMapMenu()
 
         resetWatchdog();
 
-        // set Ok yellow while processing
-        menuRedrawOk (ok_b, MENU_OK_BUSY);
-
         // schedule a new map if style changed
         bool prop_turned_off = prop_map.active && !mitems[MI_STY_PRP].set;
         if (mitems[MI_STR_CRY].set && (prop_turned_off || core_map != CM_COUNTRIES))
@@ -1203,8 +1201,10 @@ static void drawMapMenu()
             scheduleNewCoreMap (CM_TERRAIN);
         else if (mitems[MI_STY_DRA].set && (prop_turned_off || core_map != CM_DRAP))
             scheduleNewCoreMap (CM_DRAP);
-        else if (mitems[MI_STY_MUF].set && (prop_turned_off || core_map != CM_MUF))
-            scheduleNewCoreMap (CM_MUF);
+        else if (mitems[MI_STY_MUF].set && (prop_turned_off || core_map != CM_MUF_V))
+            scheduleNewCoreMap (CM_MUF_V);
+        else if (mitems[MI_STY_MRT].set && (prop_turned_off || core_map != CM_MUF_RT))
+            scheduleNewCoreMap (CM_MUF_RT);
         else if (mitems[MI_STY_AUR].set && (prop_turned_off || core_map != CM_AURORA))
             scheduleNewCoreMap (CM_AURORA);
         else if (mitems[MI_STY_WXX].set && (prop_turned_off || core_map != CM_WX))
@@ -1343,10 +1343,8 @@ void initEarthMap()
     drawDEInfo();
     drawDXInfo();
 
-    // insure NCDXF and DX spots screen coords match current map type
+    // insure NCDXF screen coords match current map type
     updateBeaconMapLocations();
-    updateDXClusterSpotMapLocations();
-    updateOnTheAirSpotMapLocations();
 
     // update zone screen boundaries
     updateZoneSCoords(ZONE_CQ);

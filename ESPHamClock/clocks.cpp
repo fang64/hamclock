@@ -454,7 +454,7 @@ static void drawAuxTime (bool all, const time_t &t_wo, const tmElements_t &tm_wo
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
     tft.setTextColor(AUX_C);
     uint16_t y = auxtime_b.y + auxtime_b.h - _UCCD;
-    char buf[32];
+    char buf[64];
 
     if (auxtime == AUXT_DATE) {
 
@@ -468,8 +468,9 @@ static void drawAuxTime (bool all, const time_t &t_wo, const tmElements_t &tm_wo
 
                 // Weekday, date month year
 
-                int l = snprintf (buf, sizeof(buf), _FX("%s, "), dayShortStr(tm_wo.Wday));
-                snprintf (buf+l, sizeof(buf)-1, _FX("%2d %s %d"), tm_wo.Day, monthShortStr(tm_wo.Month), year);
+                int buf_l = snprintf (buf, sizeof(buf), "%s, ", dayShortStr(tm_wo.Wday));
+                snprintf (buf+buf_l, sizeof(buf)-buf_l, "%2d %s %d",
+                                                                tm_wo.Day, monthShortStr(tm_wo.Month), year);
                 uint16_t bw = getTextWidth (buf);
                 int16_t x = auxtime_b.x + (auxtime_b.w-bw)/2;
                 if (x < 0)
@@ -481,8 +482,9 @@ static void drawAuxTime (bool all, const time_t &t_wo, const tmElements_t &tm_wo
 
                 // Weekday month date, year
 
-                int l = snprintf (buf, sizeof(buf), _FX("%s  "), dayShortStr(tm_wo.Wday));
-                snprintf (buf+l, sizeof(buf)-l, _FX("%s %2d, %d"), monthShortStr(tm_wo.Month), tm_wo.Day, year);
+                int buf_l = snprintf (buf, sizeof(buf), "%s  ", dayShortStr(tm_wo.Wday));
+                snprintf (buf+buf_l, sizeof(buf)-buf_l, "%s %2d, %d",
+                                                                monthShortStr(tm_wo.Month), tm_wo.Day, year);
                 uint16_t bw = getTextWidth (buf);
                 int16_t x = auxtime_b.x + (auxtime_b.w-bw)/2;
                 if (x < 0)
@@ -494,8 +496,9 @@ static void drawAuxTime (bool all, const time_t &t_wo, const tmElements_t &tm_wo
 
                 // Weekday, year month date
 
-                int l = snprintf (buf, sizeof(buf), _FX("%s,  "), dayShortStr(tm_wo.Wday));
-                snprintf (buf+l, sizeof(buf)-l, _FX("%d %s %2d"), year, monthShortStr(tm_wo.Month), tm_wo.Day);
+                int buf_l = snprintf (buf, sizeof(buf), "%s,  ", dayShortStr(tm_wo.Wday));
+                snprintf (buf+buf_l, sizeof(buf)-buf_l, "%d %s %2d",
+                                                                year, monthShortStr(tm_wo.Month), tm_wo.Day);
                 uint16_t bw = getTextWidth (buf);
                 int16_t x = auxtime_b.x + (auxtime_b.w-bw)/2;
                 if (x < 0)

@@ -121,7 +121,7 @@ const char *getNearestCity (const LatLong &ll, LatLong &city_ll, int *max_cl)
         // search
         KD3Node seach_city;
         ll2KD3Node (ll, &seach_city);
-        KD3Node *best_city = NULL;
+        const KD3Node *best_city = NULL;
         float best_dist = 0;
         int n_visited = 0;
         nearestKD3Node (city_root, &seach_city, 0, &best_city, &best_dist, &n_visited);

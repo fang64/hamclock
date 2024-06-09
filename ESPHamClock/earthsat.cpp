@@ -1458,12 +1458,14 @@ void updateSatPath()
     if (!sat_path)
         fatalError (_FX("No memory for satellite path"));
 
+    // decide line width
+    int lw = getPathWidth();
+
     // fill sat_path
     float period = sat->period();
     n_path = 0;
     uint16_t max_path = isSatMoon() ? 1 : MAX_PATH;             // N.B. only set the current location if Moon
     int dashed = 0;
-    uint16_t edge = 2*getSpotPathSize();                        // leave room for dot at start of path
     for (uint16_t p = 0; p < max_path; p++) {
 
         // place dashed line points off screen courtesy overMap()
@@ -1471,7 +1473,7 @@ void updateSatPath()
             sat_path[n_path] = {10000, 10000};
         } else {
             // compute next point along path
-            ll2sRaw (satlat, satlng, sat_path[n_path], edge);
+            ll2sRaw (satlat, satlng, sat_path[n_path], 2*lw);   // allow for end dot
         }
 
         // skip duplicate points
@@ -1508,22 +1510,19 @@ void drawSatPathAndFoot()
     resetWatchdog();
 
     // decide line width
-    uint16_t lw = getSpotPathSize();
-    if (lw == 0)
-        lw = tft.SCALESZ;
+    int lw = getPathWidth();
 
     // draw path
     uint16_t path_color = getMapColor(SATPATH_CSPR);
-    bool draw_start = true;
     for (int i = 1; i < n_path; i++) {
         SCoord &sp0 = sat_path[i-1];
         SCoord &sp1 = sat_path[i];
-        if (segmentSpanOkRaw(sp0,sp1,tft.SCALESZ*tft.SCALESZ)) {
-            if (draw_start) {
+        if (segmentSpanOkRaw(sp0, sp1, 2*lw)) {
+            if (i == 1) {
+                // first coord is always the current location, show only if visible
                 // N.B. set ll2s edge to accommodate this dot
                 tft.fillCircleRaw (sp0.x, sp0.y, 2*lw, path_color);
                 tft.drawCircleRaw (sp0.x, sp0.y, 2*lw, RA8875_BLACK);
-                draw_start = false;
             }
             tft.drawLineRaw (sp0.x, sp0.y, sp1.x, sp1.y, lw, path_color);
         }

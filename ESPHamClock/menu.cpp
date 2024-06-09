@@ -391,9 +391,9 @@ bool runMenu (MenuInfo &menu)
     }
 
     // reposition box if needed to avoid spillage
-    if (menu.menu_b.x + menu.menu_b.w > tft.width())
+    if (menu.menu_b.x + menu.menu_b.w >= tft.width())
         menu.menu_b.x = tft.width() - menu.menu_b.w - 2;
-    if (menu.menu_b.y + menu.menu_b.h > tft.height())
+    if (menu.menu_b.y + menu.menu_b.h >= tft.height())
         menu.menu_b.y = tft.height() - menu.menu_b.h - 2;
 
     // now we can set button positions within the menu box
