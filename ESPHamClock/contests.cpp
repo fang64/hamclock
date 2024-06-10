@@ -431,12 +431,13 @@ bool updateContests (const SBox &box)
 {
     // update if settings change or it's time
 
+    static time_t next_update;
     static bool my_show_date;
     static bool my_show_detz;
     static PlotPane my_pane = PANE_NONE;
     static bool last_ok;
 
-    if (!last_ok || my_show_date != show_date || my_show_detz != show_detz
+    if (!last_ok || myNow() > next_update || my_show_date != show_date || my_show_detz != show_detz
                  || my_pane != findPaneChoiceNow(PLOT_CH_CONTESTS)) {
 
         my_show_date = show_date;
@@ -444,6 +445,7 @@ bool updateContests (const SBox &box)
         my_pane = findPaneChoiceNow(PLOT_CH_CONTESTS);
 
         last_ok = retrieveContests (box);
+        next_update = myNow() + CONTESTS_INTERVAL;
     }
 
     if (last_ok) {

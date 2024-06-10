@@ -87,13 +87,10 @@ static NTPServer ntp_list[] = {                 // init times to 0 insures all g
 // pane auto rotation period in seconds
 #define ROTATION_INTERVAL       (getPaneRotationPeriod())
 
-/* "reverting" refers to restoring pane1 after it shows DE or DX weather.
- * pane1_reverting tells panes that can do partial updates that a full update is required.
- * pane1_revtime records when the revert will expire and is used to prevent the underlying pane from
- *   reacting to taps.
+/* "reverting" refers to restoring PANE_1 after temporarily forced to show DE or DX weather.
  */
-static bool pane1_reverting;
-static time_t pane1_revtime;
+static time_t revert_time;                      // when to resume normal pane operation
+static PlotPane revert_pane;                    // which pane is being temporarily reverted
 
 /* time of next update attempts for each pane and the maps.
  * 0 will refresh immediately.
@@ -103,6 +100,9 @@ time_t next_update[PANE_N];
 static time_t next_map;
 static time_t next_wwx;
 
+/* indicate pane must perform a fresh retrieval
+ */
+static bool fresh_update[PLOT_CH_N];
 
 // fwd local funcs
 static bool updateDRAP(const SBox &box);
@@ -166,7 +166,7 @@ time_t nextWiFiRetry (PlotChoice pc)
 }
 
 /* figure out when to next rotate the given pane.
- * rotations are spaced out to avoid swamping the server or supporting service.
+ * rotations are spaced out to avoid swamping the backend.
  */
 static time_t nextPaneRotationTime (PlotPane pp)
 {
@@ -177,7 +177,9 @@ static time_t nextPaneRotationTime (PlotPane pp)
     // then find soonest rot_time that is at least interval away from all other active panes
     for (int i = 0; i < PANE_N*PANE_N; i++) {           // all permutations
         PlotPane ppi = (PlotPane) (i % PANE_N);
-        if (ppi != pp && paneIsRotating((PlotPane)ppi)) {
+        if (ppi == pp)
+            continue;
+        if (paneIsRotating(ppi)  || (plot_ch[ppi] == PLOT_CH_SDO && isSDORotating())) {
             if ((rot_time >= next_update[ppi] && rot_time - next_update[ppi] < interval)
                               || (rot_time <= next_update[ppi] && next_update[ppi] - rot_time < interval))
                 rot_time = next_update[ppi] + interval;
@@ -202,7 +204,7 @@ time_t nextPaneUpdate (PlotChoice pc, int interval)
         int dt = next - t0;
         int at = millis()/1000+dt;
         Serial.printf (_FX("%s updates in %d sec at %d\n"), plot_names[pc], dt, at);
-    } else if (paneIsRotating(pp)) {
+    } else if (paneIsRotating(pp) || (pc == PLOT_CH_SDO && isSDORotating())) {
         // pc is in rotation
         next = nextPaneRotationTime (pp);
         int dt = next - t0;
@@ -1113,27 +1115,6 @@ static void checkBRB (time_t t)
     }
 }
 
-/* arrange to resume PANE_1 after dt millis
- */
-static void revertPane1 (uint32_t dt)
-{
-    // set next update time and note a full restore is required.
-    pane1_revtime = next_update[PANE_1] = myNow() + dt/1000;
-    pane1_reverting = true;
-
-    // a few plot types require extra processing
-    switch (plot_ch[PANE_1]) {
-    case PLOT_CH_DXCLUSTER:
-        closeDXCluster();       // reopen after revert
-        break;
-    case PLOT_CH_GIMBAL:
-        closeGimbal();          // reopen after revert
-        break;
-    default:
-        break;                  // lint
-    }
-}
-
 /* set the given pane to the given plot choice now.
  * return whether successful.
  * N.B. we might change plot_ch but we NEVER change plot_rotset here
@@ -1152,7 +1133,7 @@ bool setPlotChoice (PlotPane pp, PlotChoice pc)
     // first check a few plot types that require extra tests or processing.
     switch (pc) {
     case PLOT_CH_DXCLUSTER:
-        if (!useDXCluster() || (pp == PANE_1 && showNewDXDEWx()))    // avoid pane 1 disconnect for wx
+        if (!useDXCluster())
             return (false);
         break;
     case PLOT_CH_GIMBAL:
@@ -1194,6 +1175,7 @@ bool setPlotChoice (PlotPane pp, PlotChoice pc)
     // ok, commit choice to the given pane with immediate refresh
     plot_ch[pp] = pc;
     next_update[pp] = 0;
+    fresh_update[pc] = true;
 
     // insure DX and gimbal are off if no longer selected for display
     if (findPaneChoiceNow (PLOT_CH_DXCLUSTER) == PANE_NONE)
@@ -1220,25 +1202,39 @@ void updateWiFi(void)
     // update each pane
     for (int i = PANE_0; i < PANE_N; i++) {
 
-        const SBox &box = plot_b[i];
-        PlotChoice pc = plot_ch[i];
+        // too bad you can't iterate an enum
         PlotPane pp = (PlotPane)i;
+
+        // handy
+        const SBox &box = plot_b[pp];
+        PlotChoice pc = plot_ch[pp];
         bool new_rot_ch = false;
 
         // rotate if this pane is rotating and it's time but not if being forced
-        if (paneIsRotating(pp) && next_update[i] > 0 && t0 >= next_update[i]) {
-            setPlotChoice (pp, getNextRotationChoice(pp, plot_ch[pp]));
+        if (paneIsRotating(pp) && next_update[pp] > 0 && t0 >= next_update[pp]) {
+            pc = plot_ch[pp] = getNextRotationChoice(pp, plot_ch[pp]);
             new_rot_ch = true;
-            pc = plot_ch[pp];
+
+            // a few panes must do a complete refresh when they are freshly exposed
+            switch (pc) {
+            case PLOT_CH_MOON:
+            case PLOT_CH_SDO:
+                fresh_update[pc] = true;
+                break;
+            default:
+                break;
+            }
+
         }
 
         switch (pc) {
 
         case PLOT_CH_BC:
             if (t0 >= next_update[pp]) {
-                if (updateBandConditions (box, next_update[pp] == 0))   // in case of newDX
+                if (updateBandConditions (box, fresh_update[pc])) {
                     next_update[pp] = nextPaneUpdate (pc, BC_INTERVAL);
-                else
+                    fresh_update[pc] = false;
+                } else
                     next_update[pp] = nextWiFiRetry (PLOT_CH_BC);
             }
             break;
@@ -1290,9 +1286,9 @@ void updateWiFi(void)
 
         case PLOT_CH_MOON:
             if (t0 >= next_update[pp]) {
-                updateMoonPane (box, next_update[pp] == 0 || pane1_reverting);
+                updateMoonPane (box, fresh_update[pc]);
+                fresh_update[pc] = false;
                 next_update[pp] = nextPaneUpdate (pc, MOON_INTERVAL);
-                pane1_reverting = false;
             }
             break;
 
@@ -1344,12 +1340,11 @@ void updateWiFi(void)
 
         case PLOT_CH_SDO:
             if (t0 >= next_update[pp]) {
-                if (updateSDOPane (box, next_update[pp] == 0 || pane1_reverting)) 
-                    next_update[pp] = nextPaneUpdate (pc,
-                                    (isSDORotating() ? SDO_ROT_INTERVAL : SDO_INTERVAL));
-                else
+                if (updateSDOPane (box, fresh_update[pc])) {
+                    next_update[pp] = nextPaneUpdate (pc, isSDORotating() ? ROTATION_INTERVAL : SDO_INTERVAL);
+                    fresh_update[pc] = false;
+                } else
                     next_update[pp] = nextWiFiRetry(pc);
-                pane1_reverting = false;
             }
             break;
 
@@ -1386,9 +1381,10 @@ void updateWiFi(void)
 
         case PLOT_CH_PSK:
             if (t0 >= next_update[pp]) { 
-                if (updatePSKReporter(box, next_update[pp] == 0))       // force if scheduled
+                if (updatePSKReporter(box, fresh_update[pc])) {
                     next_update[pp] = nextPaneUpdate (pc, PSK_INTERVAL);
-                else
+                    fresh_update[pc] = false;
+                } else
                     next_update[pp] = nextWiFiRetry(pc);
             }
             break;
@@ -1404,18 +1400,20 @@ void updateWiFi(void)
 
         case PLOT_CH_POTA:
             if (t0 >= next_update[pp]) { 
-                if (updateOnTheAir(box, ONTA_POTA))
+                if (updateOnTheAir(box, ONTA_POTA, fresh_update[pc])) {
                     next_update[pp] = nextPaneUpdate (pc, ONTA_INTERVAL);
-                else
+                    fresh_update[pc] = false;
+                } else
                     next_update[pp] = nextWiFiRetry(pc);
             }
             break;
 
         case PLOT_CH_SOTA:
             if (t0 >= next_update[pp]) { 
-                if (updateOnTheAir(box, ONTA_SOTA))
+                if (updateOnTheAir(box, ONTA_SOTA, fresh_update[pc])) {
                     next_update[pp] = nextPaneUpdate (pc, ONTA_INTERVAL);
-                else
+                    fresh_update[pc] = false;
+                } else
                     next_update[pp] = nextWiFiRetry(pc);
             }
             break;
@@ -2322,19 +2320,88 @@ void initWiFiRetry()
 
     // a few more misc
     next_wwx = 0;
+    next_map = 0;
     brb_updateT = 0;
     scheduleRSSNow();
 }
 
-/* handy way to schedule a fresh plot update.
- * if moon, sdo or bc is on PANE_1 defer for a revert in progress otherwise schedule immediately.
+/* show PLOT_CH_DEWX or PLOT_CH_DXWX in pp immediately then arrange to resume normal pp operation
+ * after DXPATH_LINGER using revert_time and revert_pp.
+ */
+static void revertWXPane (PlotPane pp, PlotChoice wxpc)
+{
+    // easier to just show weather immediately without using the pane rotation system
+    if (wxpc == PLOT_CH_DEWX) {
+        (void) updateDEWX (plot_b[pp]);
+    } else if (wxpc == PLOT_CH_DXWX) {
+        (void) updateDXWX (plot_b[pp]);
+    } else {
+        fatalError ("revertWXPane with pc %d\n", (int)wxpc);
+        return;                 // lint
+    }
+
+    // record where a revert is in progress and when it will be over.
+    revert_time = next_update[pp] = myNow() + DXPATH_LINGER/1000;
+    revert_pane = pp;
+
+    // best to do a fresh update of original content when revert is over
+    fresh_update[plot_ch[pp]] = true;
+
+    // a few plot types require extra processing when shut down
+    switch (plot_ch[pp]) {
+    case PLOT_CH_DXCLUSTER:
+        closeDXCluster();       // will reopen after revert
+        break;
+    case PLOT_CH_GIMBAL:
+        closeGimbal();          // will reopen after revert
+        break;
+    default:
+        break;                  // lint
+    }
+}
+
+/* request that the given pane use fresh data, if and when it next becomes visible.
+ * for most panes:
+ *   if the pane is currently visible: fresh update immediately;
+ *   if in rotation but not visible:   it is marked for fresh update when its turn comes;
+ *   if not selected anywhere:         we do nothing.
+ * for PLOT_CH_DEWX or PLOT_CH_DXWX which are only for temporary display called reverting:
+ *   if the pane is currently visible: it will refresh immediately;
+ *   if in rotation but not visible:   immediately displayed in its pane, normal rotation after DXPATH_LINGER
+ *   if not selected anywhere:         immediately displayed in PANE_1, normal rotation after DXPATH_LINGER
  */
 void scheduleNewPlot (PlotChoice pc)
 {
-    PlotPane pp = findPaneForChoice (pc);
-    if (pp != PANE_NONE && (pp != PANE_1 || !pane1_reverting
-                                         || (pc != PLOT_CH_MOON && pc != PLOT_CH_SDO && pc != PLOT_CH_BC)))
+    PlotPane pp = findPaneChoiceNow (pc);
+    if (pp == PANE_NONE) {
+        // not currently visible ...
+        pp = findPaneForChoice (pc);
+        if (pp == PANE_NONE) {
+            // ... and not in any rotation set either
+            if (pc == PLOT_CH_DEWX || pc == PLOT_CH_DXWX) {
+                if (showNewDXDEWx()) {
+                    // force immediate WX in PANE_1, then revert after DXPATH_LINGER
+                    revertWXPane (PANE_1, pc);
+                }
+            }
+            // ignore all others
+        } else {
+            // ... but is in rotation
+            if (pc == PLOT_CH_DEWX || pc == PLOT_CH_DXWX) {
+                if (showNewDXDEWx()) {
+                    // force immediate WX in pane pp, then revert after DXPATH_LINGER
+                    revertWXPane (pp, pc);
+                }
+            } else {
+                // just mark for fresh update when it's turn comes
+                fresh_update[pc] = true;
+            }
+        } 
+    } else {
+        // currently visible: force fresh update now
         next_update[pp] = 0;
+        fresh_update[pc] = true;
+    }
 }
 
 /* called to schedule an immediate update of the given VOACAP map.
@@ -2366,38 +2433,6 @@ void scheduleFreshMap (void)
     next_map = 0;
 }
 
-/* display the current DE weather.
- * if already assigned to any pane just update now,
- * else if enabled show in PANE_1 then arrange to linger before resuming original pane choice.
- */
-void showDEWX()
-{
-    PlotPane dewx_pp = findPaneChoiceNow (PLOT_CH_DEWX);
-    if (dewx_pp != PANE_NONE)
-        next_update[dewx_pp] = 0;
-    else if (showNewDXDEWx()) {
-        // show immediately then schedule revert whether worked or not
-        (void) updateDEWX (plot_b[PANE_1]);
-        revertPane1 (DXPATH_LINGER);
-    }
-}
-
-/* display the current DX weather.
- * if already assigned to any pane just update now,
- * else if enabled show in PANE_1 then arrange to linger before resuming original pane choice.
- */
-void showDXWX()
-{
-    PlotPane dxwx_pp = findPaneChoiceNow (PLOT_CH_DXWX);
-    if (dxwx_pp != PANE_NONE)
-        next_update[dxwx_pp] = 0;
-    else if (showNewDXDEWx()) {
-        // show immediately then schedule revert whether worked or not
-        (void) updateDXWX (plot_b[PANE_1]);
-        revertPane1 (DXPATH_LINGER);
-    }
-}
-
 /* return current NTP response time list.
  * N.B. this is the real data, caller must not modify.
  */
@@ -2414,9 +2449,11 @@ time_t nextPaneRotation(PlotPane pp)
     return (next_update[pp]);
 }
 
-/* return whether pane1 taps are to be ignored because a revert is in progress.
+/* return pane for which taps are to be ignored because a revert is in progress, if any
  */
-bool ignorePane1Touch()
+PlotPane ignorePaneTouch()
 {
-    return (myNow() < pane1_revtime);
+    if (myNow() < revert_time)
+        return (revert_pane);
+    return (PANE_NONE);
 }

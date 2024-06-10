@@ -163,7 +163,6 @@ out:
 }
 
 /* display current DE weather in the given box and in NCDXF_b if up.
- * this is used by updateWiFi() for persistent display, use showDEWX() for transient display
  */
 bool updateDEWX (const SBox &box)
 {
@@ -183,7 +182,6 @@ bool updateDEWX (const SBox &box)
 }
 
 /* display current DX weather in the given box and in NCDXF_b if up.
- * this is used by updateWiFi() for persistent display, use showDXWX() for transient display
  */
 bool updateDXWX (const SBox &box)
 {

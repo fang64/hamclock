@@ -203,10 +203,6 @@ static PlotChoice askPaneChoice (PlotPane pp)
         PlotChoice pc = (PlotChoice) i;
         PlotPane pp_ch = findPaneForChoice (pc);
 
-        // do not allow cluster on pane 1 with DEDX Wx to avoid disconnect each time DX/DE wx
-        if (pp == PANE_1 && pc == PLOT_CH_DXCLUSTER && showNewDXDEWx())
-            continue;
-
         // otherwise use if not used elsewhere and available or already assigned to this pane
         if ( (pp_ch == PANE_NONE && plotChoiceIsAvailable(pc)) || pp_ch == pp || ASKP_SHOWALL) {
             // set up next menu item
@@ -370,8 +366,8 @@ void insureCountdownPaneSensible()
  */
 bool checkPlotTouch (const SCoord &s, PlotPane pp, TouchType tt)
 {
-    // ignore pane 1 taps while reverting
-    if (pp == PANE_1 && ignorePane1Touch())
+    // ignore taps in this pane while reverting
+    if (pp == ignorePaneTouch())
         return (false);
 
     // for sure not ours if not even in this box
@@ -553,15 +549,12 @@ void initPlotPanes()
     }
 
 
-    // rm any choice not available, including dx cluster in pane 1
+    // rm any choice not available
     for (int i = PANE_0; i < PANE_N; i++) {
         plot_rotset[i] &= ((1 << PLOT_CH_N) - 1);        // reset any bits too high
         for (int j = 0; j < PLOT_CH_N; j++) {
             if (plot_rotset[i] & (1 << j)) {
-                if (i == PANE_1 && j == PLOT_CH_DXCLUSTER && showNewDXDEWx()) {
-                    plot_rotset[i] &= ~(1 << j);
-                    Serial.printf (_FX("PANE: Removing %s from pane %d: not allowed\n"), plot_names[j], i);
-                } else if (!plotChoiceIsAvailable ((PlotChoice)j)) {
+                if (!plotChoiceIsAvailable ((PlotChoice)j)) {
                     plot_rotset[i] &= ~(1 << j);
                     Serial.printf (_FX("PANE: Removing %s from pane %d: not available\n"), plot_names[j],i);
                 }
@@ -941,7 +934,7 @@ int tickmarks (float min, float max, int numdiv, float ticks[])
     return (n);
 }
 
-/* return whether any pane is currently rotating to other panes
+/* return whether this pane is currently rotating to other panes
  */
 bool paneIsRotating (PlotPane pp)
 {

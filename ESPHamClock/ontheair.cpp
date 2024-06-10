@@ -91,7 +91,8 @@ typedef struct {
     PlotPane pp;                                // PANE_X for the current display
     uint8_t sortby;                             // one of ONTASort
     ScrollState ss;                             // scroll state info
-    DXSpot *spots;                       // malloced collection, smallest sort field first
+    DXSpot *spots;                              // malloced collection, smallest sort field first
+    time_t next_update;                         // when next to update
     bool ok;                                    // whether info is been updated succuessfully
 } ONTAState;
 
@@ -102,9 +103,9 @@ static const char sota_page[] = "/SOTA/sota-activators.txt";
 // N.B. must assign in same order as ONTAProgram
 static ONTAState onta_state[ONTA_N] = { 
     { pota_page, onta_names[ONTA_POTA], POTA_COLOR, ONTA_POTA, NV_ONTASPOTA,
-                PLOT_CH_POTA, PANE_NONE, ONTAS_AGE, {}, {}, 0},
+                PLOT_CH_POTA, PANE_NONE, ONTAS_AGE, {}, {}, 0, false},
     { sota_page, onta_names[ONTA_SOTA], SOTA_COLOR, ONTA_SOTA, NV_ONTASSOTA,
-                PLOT_CH_SOTA, PANE_NONE, ONTAS_AGE, {}, {}, 0},
+                PLOT_CH_SOTA, PANE_NONE, ONTAS_AGE, {}, {}, 0, false},
 };
 
 /* save this ONTA sort choice
@@ -321,7 +322,7 @@ static void runONTASortMenu (const SBox &box, ONTAState *osp)
 
         // fresh update
         saveONTASortby(osp);
-        updateOnTheAir (box, (ONTAProgram)(osp->whoami));
+        updateOnTheAir (box, (ONTAProgram)(osp->whoami), true);
 
     } else {
 
@@ -483,17 +484,18 @@ out:
 /* draw POTA or SOTA pane in box, beware thinner PANE_0.
  * return whether io ok.
  */
-bool updateOnTheAir (const SBox &box, ONTAProgram whoami)
+bool updateOnTheAir (const SBox &box, ONTAProgram whoami, bool force)
 {
     // get state of desired program
     ONTAState *osp = getONTAState (whoami);
 
-    // update if expired or change panes.
+    // update if forced, expired or change panes
     // changing panes doesn't really need new data but we must do so in order to reset the Scroller.
-    if (!osp->ok || findPaneChoiceNow(osp->pc) != osp->pp) {
+    if (force || !osp->ok || myNow() > osp->next_update || findPaneChoiceNow(osp->pc) != osp->pp) {
         osp->pp = findPaneChoiceNow(osp->pc);
         resetONTAStorage (box, osp);
         osp->ok = retrieveONTA (osp);
+        osp->next_update = myNow() + ONTA_INTERVAL;
     }
 
     // always update sortby in case user changed projection etc 

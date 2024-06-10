@@ -1029,7 +1029,7 @@ void newDX (LatLong &ll, const char grid[MAID_CHARLEN], const char *ovprefix)
 
     // show DX weather and update band conditions if showing
     scheduleNewPlot(PLOT_CH_BC);
-    showDXWX();                 // after schedules to accommodate reverts
+    scheduleNewPlot(PLOT_CH_DXWX);
 
     // persist
     NVWriteFloat (NV_DX_LAT, dx_ll.lat_d);
@@ -1109,8 +1109,8 @@ void newDE (LatLong &ll, const char grid[MAID_CHARLEN])
     scheduleNewPlot(PLOT_CH_BC);
     scheduleNewPlot(PLOT_CH_PSK);
     scheduleNewVOACAPMap(prop_map);
+    scheduleNewPlot(PLOT_CH_DEWX);
     sendDXClusterDELLGrid();
-    showDEWX();                 // after schedules to accommodate reverts
     if (setNewSatCircumstance())
         drawSatPass();
 

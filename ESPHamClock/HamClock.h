@@ -1743,7 +1743,7 @@ typedef enum {
 
 extern const char *onta_names[ONTA_N];
 
-extern bool updateOnTheAir (const SBox &box, ONTAProgram onta);
+extern bool updateOnTheAir (const SBox &box, ONTAProgram onta, bool force);
 extern bool checkOnTheAirTouch (const SCoord &s, const SBox &box, ONTAProgram onta);
 extern bool getOnTheAirSpots (DXSpot **spp, uint8_t *nspotsp, ONTAProgram onta);
 extern void drawOnTheAirSpotsOnMap (void);
@@ -1827,7 +1827,6 @@ extern void savePlotOps(void);
 extern bool drawHTTPBMP (const char *hc_url, const SBox &box, uint16_t color);
 extern int tickmarks (float min, float max, int numdiv, float ticks[]);
 extern bool paneIsRotating (PlotPane pp);
-extern bool ignorePane1Touch(void);
 extern bool enforceDXCAlone (const SBox &box, uint32_t rotset);
 extern bool enforceCDownAlone (const SBox &box, uint32_t rotset);
 extern void restoreNormPANE0(void);
@@ -2046,7 +2045,6 @@ class ScrollState {
  */
 
 #define SDO_INTERVAL     40                     // annotation update interval, secs
-#define SDO_ROT_INTERVAL 90                     // image and annotation interval when rotating, secs
 
 extern bool checkSDOTouch (const SCoord &s, const SBox &b);
 extern bool updateSDOPane (const SBox &box, bool image_too);
@@ -2604,6 +2602,7 @@ extern time_t nextWiFiRetry (const char *str);
 extern time_t nextPaneUpdate (PlotChoice pc, int interval);
 extern time_t nextRetrieval (PlotChoice pc, int interval);
 extern void scheduleFreshMap (void);
+extern PlotPane ignorePaneTouch(void);
 
 
 extern char remote_addr[16];
@@ -2659,8 +2658,6 @@ extern bool wifiMeterIsUp();
 extern bool getCurrentWX (const LatLong &ll, bool is_de, WXInfo *wip, char ynot[]);
 extern bool updateDEWX (const SBox &box);
 extern bool updateDXWX (const SBox &box);
-extern void showDXWX(void);
-extern void showDEWX(void);
 extern bool getWorldWx (const LatLong &ll, WXInfo &wi);
 extern void fetchWorldWx(void);
 extern bool drawNCDXFWx (BRB_MODE m);

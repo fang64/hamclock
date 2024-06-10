@@ -440,14 +440,14 @@ out:
 bool updatePSKReporter (const SBox &box, bool force)
 {
     // save last retrieval settings to know whether reports[] can be reused
-    static time_t last_retrieve;                        // don't update faster than PSK_INTERVAL
+    static time_t next_update;                          // don't update faster than PSK_INTERVAL
     static uint8_t my_psk_mask;                         // setting used for reports[]
     static uint32_t my_psk_bands;                       // setting used for reports[]
     static uint16_t my_psk_maxage_mins;                 // setting used for reports[]
     static bool last_ok;                                // used to force retry
 
     // just use cache if settings all match and not too old
-    if (!force && last_ok && reports && n_malloced > 0 && myNow() < last_retrieve + PSK_INTERVAL
+    if (!force && last_ok && reports && n_malloced > 0 && myNow() < next_update
                             && my_psk_mask == psk_mask && my_psk_maxage_mins == psk_maxage_mins
                             && my_psk_bands == psk_bands) {
         drawPSKPane (box);
@@ -458,7 +458,7 @@ bool updatePSKReporter (const SBox &box, bool force)
     my_psk_mask = psk_mask;
     my_psk_maxage_mins = psk_maxage_mins;
     my_psk_bands = psk_bands;
-    last_retrieve = myNow();
+    next_update = myNow() + PSK_INTERVAL;;
 
     // get fresh
     last_ok = retrievePSK();

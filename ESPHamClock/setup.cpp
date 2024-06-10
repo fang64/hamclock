@@ -529,7 +529,7 @@ static BoolPrompt bool_pr[N_BPR] = {
 
     {4, {10 , R2Y(3), 170, PR_H},  {180, R2Y(3), 150, PR_H}, false, "Rank SpcWx?", "No", "Yes", NOMATE},
 
-    {4, {400, R2Y(3), 170, PR_H},  {570, R2Y(3), 150, PR_H}, false, "New DX Wx?",  "No", "Yes", NOMATE},
+    {4, {400, R2Y(3), 170, PR_H},  {570, R2Y(3), 150, PR_H}, false, "New Wx?",  "No", "Yes", NOMATE},
 
 
     {4, {10,  R2Y(4), 170, PR_H},  {180, R2Y(4), 150, PR_H}, false, "Spot labels?",
@@ -4867,7 +4867,7 @@ bool rankSpaceWx(void)
     return (bool_pr[RANKSW_BPR].state);
 }
 
-/* return whether to automatically show new DX or DE weather in pane 1
+/* return whether to automatically show new DX or DE weather when either changes
  */
 bool showNewDXDEWx(void)
 {

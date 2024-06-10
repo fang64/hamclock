@@ -3224,12 +3224,6 @@ static bool setWiFiPane (WiFiClient &client, char line[], size_t line_len)
                 return (false);
             }
 
-            // dx cluster?
-            if (tok_pc == PLOT_CH_DXCLUSTER && pp == PANE_1 && showNewDXDEWx()) {
-                snprintf (line, line_len, _FX("%s not allowed on pane 1"), tok_copy);
-                return (false);
-            }
-
             // available?
             if (!plotChoiceIsAvailable(tok_pc)) {
                 snprintf (line, line_len, _FX("%s is not available"), tok_copy);
