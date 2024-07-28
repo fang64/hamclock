@@ -1,12 +1,16 @@
-/* handle the DX Cluster display. Only active when visible on a Pane.
+/* handle the DX Cluster display. Connects when first displayed in a pane, disconnects if none.
  *
  * Clusters:
- *   [ ] support Spider and AR
+ *   [ ] support Spider, AR and CC
  *   [ ] as of 3.03 replace show/header with cty_wt_mod-ll.txt -- too big for ESP
  *
  * WSJT-X:
  *   [ ] packet definition: https://sourceforge.net/p/wsjt/wsjtx/ci/master/tree/Network/NetworkMessage.hpp
  *   [ ] We don't actually enforce the Status ID to be WSJT-X so this may also work for, say, JTCluster.
+ *
+ * We actually keep two lists:
+ *   dx_spots: the complete raw list, not sorted; length in n_dxspots
+ *   dxwl_spots: watchlist-filterd and time-sorted for display; length in dxc_ss.n_data
  */
 
 #include "HamClock.h"
@@ -15,25 +19,29 @@
 
 // config 
 #define DXC_COLOR       RA8875_GREEN
-#define KEEPALIVE_DT    (10*60*1000U)           // send something if idle this long, millis
 #define CLRBOX_DX       10                      // dx clear control box center from left
 #define CLRBOX_DY       15                      // dy " down from top
 #define CLRBOX_R        4                       // clear box radius
 #define SPOTMRNOP       (tft.SCALESZ+4)         // raw spot marker radius when no path
-#define SUBTITLE_Y0     32                      // sub title y down from box top
-#define MAX_AGE         300000                  // max age to restore spot in list, millis
+
+// timers
+#define KEEPALIVE_DT    600                     // send something if last_spot idle this long, secs
+#define BGCHECK_DT      5000                    // background checkDXCluster period, millis
+#define MAXUSE_DT       3600                    // remove spots memory if pane not used for this long, secs
+#define MAXAGE_DT       3600                    // remove spots more than this old, secs
+static time_t last_spot;                        // last time a spot arrived
 
 // connection info
 static WiFiClient dx_client;                    // persistent TCP connection while displayed ...
 static WiFiUDP wsjtx_server;                    // or persistent UDP "connection" to WSJT-X client program
-static uint32_t last_action;                    // time of most recent spot or user activity, millis()
 static bool multi_cntn;                         // set when cluster has noticed multiple connections
-#define MAX_LCN        10                       // max lost connections per MAX_LCDT
-#define MAX_LCDT       3600                     // max lost connections period, seconds
+#define MAX_LCN         10                      // max lost connections per MAX_LCDT
+#define MAX_LCDT        3600                    // max lost connections period, seconds
 
 // spots. only kept while open.
-static DXSpot *dx_spots;                        // malloced list, oldest at [0]
-static int max_spots;                           // max dx_spots allowed
+static DXSpot *dx_spots;                        // malloced list, complete
+static int n_dxspots;                           // n spots in dx_spots
+static DXSpot *dxwl_spots;                      // malloced list, filtered for display, count in dxc_ss.n_data
 static ScrollState dxc_ss;                      // scrolling info
 
 
@@ -43,6 +51,7 @@ typedef enum {
     CT_UNKNOWN,
     CT_ARCLUSTER,
     CT_DXSPIDER,
+    CT_VE7CC,
     CT_WSJTX,
 } DXClusterType;
 static DXClusterType cl_type;
@@ -77,8 +86,8 @@ static void drawAllVisDXCSpots (const SBox &box)
     int min_i, max_i;
     if (dxc_ss.getVisIndices (min_i, max_i) > 0) {
         for (int i = min_i; i <= max_i; i++) {
-            DXSpot &spot = dx_spots[i];
-            uint16_t bg_col = onDXWatchList (spot.tx_call) ? RA8875_RED : RA8875_BLACK;
+            DXSpot &spot = dxwl_spots[i];
+            uint16_t bg_col = checkWatchListSpot (WLID_DX, spot) == WLS_HILITE ? RA8875_RED : RA8875_BLACK;
             drawSpotOnList (box, spot, dxc_ss.getDisplayRow(i), bg_col);
         }
     }
@@ -142,48 +151,93 @@ static void engageDXCRow (DXSpot &s)
     newDX (s.tx_ll, NULL, s.tx_call);
 }
 
-
-
-/* add a new spot both on map and in list, scrolling list if already full.
+/* rebuild dxwl_spots from dx_spots
  */
-static void addDXClusterSpot (const SBox &box, DXSpot &new_spot)
+static void rebuildDXWatchList(void)
 {
-    // skip if looks to be same as any previous
-    for (int i = 0; i < dxc_ss.n_data; i++) {
+    // extract qualifying spots
+    dxc_ss.n_data = 0;
+    for (int i = 0; i < n_dxspots; i++) {
         DXSpot &spot = dx_spots[i];
-        if (fabsf(new_spot.kHz-spot.kHz) < 0.1F && strcmp (new_spot.tx_call, spot.tx_call) == 0) {
-            dxcLog ("DXC: %s dup\n", new_spot.tx_call);
-            return;
+        if (checkWatchListSpot (WLID_DX, spot) != WLS_NO) {
+            dxwl_spots = (DXSpot *) realloc (dxwl_spots, (dxc_ss.n_data+1) * sizeof(DXSpot));
+            if (!dxwl_spots)
+                fatalError ("No mem for %d watch list spots", dxc_ss.n_data+1);
+            dxwl_spots[dxc_ss.n_data++] = spot;
         }
     }
 
+    // resort and scroll to newest
+    qsort (dxwl_spots, dxc_ss.n_data, sizeof(DXSpot), qsDXCSpotted);
+    dxc_ss.scrollToNewest();
+}
+
+/* add a new spot to dx_spots[] and dxwl_spots[] if it qualifies.
+ */
+static void addDXClusterSpot (DXSpot &new_spot)
+{
     // nice to insure calls are upper case
     strtoupper (new_spot.rx_call);
     strtoupper (new_spot.tx_call);
 
-    // grow or slide down over oldest if full
-    if (dxc_ss.n_data == max_spots) {
-        memmove (dx_spots, dx_spots+1, (max_spots-1) * sizeof(*dx_spots));
-        dxc_ss.n_data = max_spots - 1;
-    } else {
-        // grow dx_spots
-        dx_spots = (DXSpot *) realloc (dx_spots, (dxc_ss.n_data+1) * sizeof(DXSpot));
-        if (!dx_spots)
-            fatalError ("No memory for %d spots", dxc_ss.n_data);
+    // discard if looks to be same as any previous and remove any old spots along the way
+    time_t t0 = myNow();
+    int n_rm = 0;
+    bool dup = false;
+    for (int i = 0; i < n_dxspots; i++) {
+        DXSpot &spot = dx_spots[i];
+        if (fabsf(new_spot.kHz-spot.kHz) < 0.1F && strcmp (new_spot.tx_call, spot.tx_call) == 0) {
+            dxcLog ("DXC: %s dup\n", new_spot.tx_call);
+            dup = true;
+        }
+        if (t0 - spot.spotted > MAXAGE_DT) {
+            memmove (&dx_spots[i], &dx_spots[i+1], (n_dxspots - i - 1) * sizeof(DXSpot));
+            n_rm += 1;
+        }
     }
 
+    // resize if shrunk
+    if (n_rm > 0) {
+        dxcLog ("%d spots aged out\n", n_rm);
+        n_dxspots -= n_rm;
+        dx_spots = (DXSpot *) realloc (dx_spots, n_dxspots * sizeof(DXSpot));
+        if (!dx_spots)
+            fatalError ("No memory for %d DX spots after rm %d", n_dxspots, n_rm);
+    }
+
+    // finished if dup
+    if (dup)
+        return;
+
+    // tweak position for unique picking
+    ditherLL (new_spot.tx_ll);
+
+    // resize dx_spots for one more
+    dx_spots = (DXSpot *) realloc (dx_spots, (n_dxspots+1) * sizeof(DXSpot));
+    if (!dx_spots)
+        fatalError ("No memory for %d DX spots", n_dxspots+1);
+
     // append
-    DXSpot &list_spot = dx_spots[dxc_ss.n_data++];
-    list_spot = new_spot;
+    dx_spots[n_dxspots++] = new_spot;
 
-    // update list
-    dxc_ss.scrollToNewest();
-    drawAllVisDXCSpots(box);
+    // update if needed
+    if (n_rm > 0) {
 
-    // show on map, only label tx end
-    drawSpotPathOnMap (list_spot);
-    drawSpotLabelOnMap (list_spot, LOM_TXEND, LOM_ALL);
-    drawSpotLabelOnMap (list_spot, LOM_RXEND, LOM_JUSTDOT);
+        // rebuild entire dxwl_spots (this will automatically include new_spot if it qualifies)
+        rebuildDXWatchList();
+
+    } else if (checkWatchListSpot (WLID_DX, new_spot) != WLS_NO) {
+
+        // just append to dxwl_spots
+        dxwl_spots = (DXSpot *) realloc (dxwl_spots, (dxc_ss.n_data+1) * sizeof(DXSpot));
+        if (!dxwl_spots)
+            fatalError ("No memory for %d wl spots", dxc_ss.n_data+1);
+        dxwl_spots[dxc_ss.n_data++] = new_spot;
+
+        // must still resort and scroll to newest
+        qsort (dxwl_spots, dxc_ss.n_data, sizeof(DXSpot), qsDXCSpotted);
+        dxc_ss.scrollToNewest();
+    }
 }
 
 /* given address of pointer into a WSJT-X message, extract bool and advance pointer to next field.
@@ -280,45 +334,45 @@ static bool wsjtxIsStatusMsg (uint8_t **bpp)
     return (true);
 }
 
-/* parse and process WSJT-X message known to be Status.
- * *bpp is positioned just after ID field.
- * draw on screen in box.
- * return whether good.
+/* parse and process WSJT-X message known to be of type Status.
  */
-static bool wsjtxParseStatusMsg (const SBox &box, uint8_t **bpp)
+static void wsjtxParseStatusMsg (uint8_t *msg)
 {
     // dxcLog ("Parsing status\n");
+    uint8_t **bpp = &msg;                               // walk along msg
 
     // crack remaining fields down to grid
-    uint32_t hz = wsjtx_quint64 (bpp);                      // capture freq
-    (void) wsjtx_utf8 (bpp);                                // skip over mode
-    char *dx_call = wsjtx_utf8 (bpp);                       // capture DX call 
-    (void) wsjtx_utf8 (bpp);                                // skip over report
-    (void) wsjtx_utf8 (bpp);                                // skip over Tx mode
-    (void) wsjtx_bool (bpp);                                // skip over Tx enabled flag
-    (void) wsjtx_bool (bpp);                                // skip over transmitting flag
-    (void) wsjtx_bool (bpp);                                // skip over decoding flag
-    (void) wsjtx_quint32 (bpp);                             // skip over Rx DF -- not always correct
-    (void) wsjtx_quint32 (bpp);                             // skip over Tx DF
-    char *de_call = wsjtx_utf8 (bpp);                       // capture DE call 
-    char *de_grid = wsjtx_utf8 (bpp);                       // capture DE grid
-    char *dx_grid = wsjtx_utf8 (bpp);                       // capture DX grid
+    uint32_t hz = wsjtx_quint64 (bpp);                  // capture freq
+    (void) wsjtx_utf8 (bpp);                            // skip over mode
+    char *dx_call = wsjtx_utf8 (bpp);                   // capture DX call 
+    (void) wsjtx_utf8 (bpp);                            // skip over report
+    (void) wsjtx_utf8 (bpp);                            // skip over Tx mode
+    (void) wsjtx_bool (bpp);                            // skip over Tx enabled flag
+    (void) wsjtx_bool (bpp);                            // skip over transmitting flag
+    (void) wsjtx_bool (bpp);                            // skip over decoding flag
+    (void) wsjtx_quint32 (bpp);                         // skip over Rx DF -- not always correct
+    (void) wsjtx_quint32 (bpp);                         // skip over Tx DF
+    char *de_call = wsjtx_utf8 (bpp);                   // capture DE call 
+    char *de_grid = wsjtx_utf8 (bpp);                   // capture DE grid
+    char *dx_grid = wsjtx_utf8 (bpp);                   // capture DX grid
 
     // dxcLog ("WSJT: %7d %s %s %s %s\n", hz, de_call, de_grid, dx_call, dx_grid);
 
     // ignore if frequency is clearly bogus (which I have seen)
-    if (hz == 0)
-        return (false);
+    if (hz == 0) {
+        dxcLog ("%s invalid frequency: %u\n", de_call, hz);
+        return;
+    }
 
     // get each ll from grids
     LatLong ll_de, ll_dx;
     if (!maidenhead2ll (ll_de, de_grid)) {
         dxcLog ("%s invalid or missing DE grid: %s\n", de_call, de_grid);
-        return (false);
+        return;
     }
     if (!maidenhead2ll (ll_dx, dx_grid)) {
         dxcLog ("%s invalid or missing DX grid: %s\n", dx_call, dx_grid);
-        return (false);
+        return;
     }
 
     // looks good, create new record
@@ -336,10 +390,7 @@ static bool wsjtxParseStatusMsg (const SBox &box, uint8_t **bpp)
     new_spot.spotted = myNow();
 
     // add to list
-    addDXClusterSpot (box, new_spot);
-
-    // ok
-    return (true);
+    addDXClusterSpot (new_spot);
 }
 
 /* display the given error message and shut down the connection.
@@ -414,13 +465,45 @@ static bool checkLostConnRate()
 /* given a cluster line, set multi_cntn if it seems to be telling us it has detected multiple connections
  *   from the same call-ssid.
  * not at all sure this works everywhere.
- * Only Spiders seem to care enough to dicsonnect, AR clusters report but otherwise don't care.
+ * Only Spiders seem to care enough to dicsonnect, AR and CC clusters report but otherwise don't care.
  */
 static void detectMultiConnection (const char *line)
 {
     // first seems typical for spiders, second for AR
     if (strstr (line, "econnected") != NULL || strstr (line, "Dupe call") != NULL)
         multi_cntn = true;
+}
+
+/* send a request for recent spots such that they will arrive the same as normal
+ */
+static void requestRecentSpots (void)
+{
+    const char *msg = NULL;
+
+    if (cl_type == CT_DXSPIDER)
+        msg = "sh/mydx real 30\n";
+    else if (cl_type == CT_ARCLUSTER)
+        msg = "show/dx/30 @\n";
+    else if (cl_type == CT_VE7CC)
+        msg = "show/myfdx\n";   // always 30, does not accept a count
+
+    if (msg) {
+        dx_client.print(msg);
+        dxcLog ("> %s", msg);
+    }
+}
+
+/* free both spots lists memory
+ */
+static void resetDXMem()
+{
+    free (dx_spots);
+    dx_spots = NULL;
+    n_dxspots = 0;
+
+    free (dxwl_spots);
+    dxwl_spots = NULL;
+    dxc_ss.n_data = 0;
 }
 
 /* try to connect to the cluster.
@@ -495,7 +578,7 @@ static bool connectDXCluster (const SBox &box)
             dxcLog ("connect ok\n");
 
             // assume first question is asking for call
-            wdDelay(100);
+            wdDelay(200);
             const char *login = getDXClusterLogin();
             dxcLog ("logging in as %s\n", login);
             dx_client.println (login);
@@ -511,6 +594,8 @@ static bool connectDXCluster (const SBox &box)
                 strtolower(buf);
                 if (strstr (buf, "dx") && strstr (buf, "spider"))
                     cl_type = CT_DXSPIDER;
+                else if (strstr (buf, " cc "))
+                    cl_type = CT_VE7CC;
                 else if (strstr (buf, "ar-cluster"))
                     cl_type = CT_ARCLUSTER;
 
@@ -530,6 +615,12 @@ static bool connectDXCluster (const SBox &box)
                 dxcLog ("Cluster is Spider\n");
             if (cl_type == CT_ARCLUSTER)
                 dxcLog ("Cluster is AR\n");
+            if (cl_type == CT_VE7CC)
+                dxcLog ("Cluster is CC\n");
+
+            // really SLOW
+            if (cl_type == CT_VE7CC)
+                wdDelay(1000);
 
             // send our location
             if (!sendDXClusterDELLGrid()) {
@@ -545,10 +636,19 @@ static bool connectDXCluster (const SBox &box)
             getDXClCommands (dx_cmds, dx_on);
             for (int i = 0; i < N_DXCLCMDS; i++) {
                 if (dx_on[i] && strlen(dx_cmds[i]) > 0) {
+                    if (cl_type == CT_VE7CC)
+                        wdDelay(800);
                     dx_client.println(dx_cmds[i]);
                     dxcLog ("> %s\n", dx_cmds[i]);
                 }
             }
+
+            // reset list and view
+            resetDXMem();
+
+            // request recent spots
+            requestRecentSpots();
+            rebuildDXWatchList();
 
             // confirm still ok
             if (!dx_client) {
@@ -556,17 +656,8 @@ static bool connectDXCluster (const SBox &box)
                 if (multi_cntn)
                     showDXClusterErr (box, "Multiple logins");
                 else
-                    showDXClusterErr (box, "Login failed");
+                    showDXClusterErr (box, "Login or init failed");
                 return (false);
-            }
-
-            // restore known spots if not too old else reset list
-            if (millis() - last_action < MAX_AGE) {
-                dxc_ss.scrollToNewest();
-                drawAllVisDXCSpots(box);
-            } else {
-                dxc_ss.n_data = 0;
-                dxc_ss.top_vis = 0;
             }
 
             // all ok so far
@@ -594,16 +685,11 @@ static void showHost (const SBox &box, uint16_t c)
 
 /* send something passive just to keep the connection alive
  */
-static bool sendDXClusterHeartbeat()
+static void sendDXClusterHeartbeat()
 {
-    if (!useDXCluster() || !dx_client)
-        return (true);
-
     const char *hbcmd = "ping\n";
     dxcLog ("feeding %s", hbcmd);
     dx_client.print (hbcmd);
-
-    return (true);
 }
 
 /* send our lat/long and grid to dx_client, depending on cluster type.
@@ -613,7 +699,7 @@ static bool sendDXClusterHeartbeat()
 bool sendDXClusterDELLGrid()
 {
     // easy check
-    if (!useDXCluster() || !dx_client)
+    if (!isDXClusterConnected())
         return (false);
 
     // handy DE grid as string
@@ -626,7 +712,7 @@ bool sendDXClusterDELLGrid()
             floorf(fabsf(de_ll.lat_d)), floorf(fmodf(60*fabsf(de_ll.lat_d), 60)), de_ll.lat_d<0?'S':'N',
             floorf(fabsf(de_ll.lng_d)), floorf(fmodf(60*fabsf(de_ll.lng_d), 60)), de_ll.lng_d<0?'W':'E');
 
-    if (cl_type == CT_DXSPIDER) {
+    if (cl_type == CT_DXSPIDER || cl_type == CT_VE7CC) {
 
         char buf[100];
 
@@ -687,31 +773,17 @@ static void initDXGUI (const SBox &box)
     tft.setCursor (box.x + (box.w-tw)/2, box.y + PANETITLE_H);
     tft.print (title);
 
-    // init scroller for this box size
-    // N.B. leave n_data in order to preserve data across closes up to MAX_AGE
+    // init scroller for this box size but leave n_data
     dxc_ss.max_vis = (box.h - LISTING_Y0)/LISTING_DY;
-    dxc_ss.top_vis = 0;
-
-    // set max spots and trim n_data if already larger
-    max_spots = dxc_ss.max_vis + nMoreScrollRows();
-    if (dxc_ss.n_data > max_spots) {
-        // shrink and keep newest
-        int n_discard = dxc_ss.n_data - max_spots;
-        memmove (dx_spots, dx_spots+n_discard, max_spots * sizeof(DXSpot));
-        dxc_ss.n_data = max_spots;
-    }
+    dxc_ss.scrollToNewest();
 }
 
-/* prep the given box and connect dx_client to a dx cluster or wsjtx_server.
+/* connect dx_client to a dx cluster or wsjtx_server.
  * return whether successful.
  */
 static bool initDXCluster(const SBox &box)
 {
-    // skip if not configured
-    if (!useDXCluster())
-        return (true);              // feign success to avoid retries
-
-    // prep a fresh GUI
+    // prep box
     initDXGUI (box);
 
     // show cluster host busy
@@ -723,8 +795,8 @@ static bool initDXCluster(const SBox &box)
         // ok: show host in green
         showHost (box, RA8875_GREEN);
 
-        // reinit time
-        last_action = millis();
+        // reinit times
+        last_spot = myNow();
 
         // ok
         return (true);
@@ -744,6 +816,7 @@ static bool crackClusterSpot (char line[], DXSpot &news)
     // fresh
     memset (&news, 0, sizeof(news));
 
+    // DX de KD0AA:     18100.0  JR1FYS       FT8 LOUD in FL!                2156Z EL98
     if (sscanf (line, "DX de %11[^ :]: %f %11s", news.rx_call, &news.kHz, news.tx_call) != 3) {
         // already logged
         return (false);
@@ -767,71 +840,163 @@ static bool crackClusterSpot (char line[], DXSpot &news)
     return (ok);
 }
 
-/* called frequently to drain and process cluster connection, open if not already running.
- * return whether connection is ok.
+/* run menu to allow editing watch list
  */
-bool updateDXCluster(const SBox &box)
+static void runDXClusterMenu (const SBox &box)
 {
-    // redraw occasionally if for no other reason than to update ages
-    static uint32_t last_draw;
-    bool any_new = false;
+    // set up the MENU_TEXT field 
+    MenuText mtext;                                             // menu text prompt context
+    char wl_state[WLA_MAXLEN];                                  // wl state, menu may change
+    setupWLMenuText (WLID_DX, mtext, box, wl_state);
 
-    // open if not already
-    if (!isDXClusterConnected() && !initDXCluster(box)) {
-        // error already shown
-        return(false);
+    // only menu item is the watch list
+    #define DXCM_INDENT 3
+    MenuItem mitems[1] = {
+        mitems[0] = {MENU_TEXT, false, 1, DXCM_INDENT, wl_state, &mtext}
+    };
+
+    SBox menu_b = box;                                  // copy, not ref!
+    menu_b.x = box.x + 5;
+    menu_b.y = box.y + SUBTITLE_Y0;
+    menu_b.w = 0;
+    SBox ok_b;
+    MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 1, 1, mitems};
+    if (runMenu (menu)) {
+
+        // must recompile to update wl but runMenu already insured wl compiles ok
+        char ynot[100];
+        if (!compileWatchList (WLID_DX, mtext.text, ynot, sizeof(ynot)))
+            fatalError ("dxc failed recompling wl %s: %s", mtext.text, ynot);
+        setWatchList (WLID_DX, wl_state, mtext.text);
+
+        // restart list
+        rebuildDXWatchList();
     }
 
-    if ((cl_type == CT_DXSPIDER || cl_type == CT_ARCLUSTER) && dx_client) {
+    // always do a full update even if just to erase menu
+    scheduleNewPlot (PLOT_CH_DXCLUSTER);
 
-        // this works for both types of cluster
+    // always free the working watch list text
+    free (mtext.text);
+}
+
+/* insure cluster connection is closed
+ */
+void closeDXCluster()
+{
+    // make sure either/both connection is/are closed
+    if (dx_client) {
+        dx_client.stop();
+        dxcLog ("disconnect %s\n", dx_client ? "failed" : "ok");
+    }
+    if (wsjtx_server) {
+        wsjtx_server.stop();
+        dxcLog ("WSTJ-X disconnect %s\n", wsjtx_server ?"failed":"ok");
+    }
+
+    // reset multi flag
+    multi_cntn = false;
+}
+
+/* called often while pane is visible, fresh is set when newly so.
+ * connect if not already then show list.
+ * return whether connection is open.
+ * N.B. we never read new spots, that is done by checkDXCluster()
+ */
+bool updateDXCluster (const SBox &box, bool fresh)
+{
+    // insure connected
+    if (!isDXClusterConnected() && !initDXCluster(box)) // shows error message in box
+        return (false);
+
+    // fresh prep
+    if (fresh) {
+        initDXGUI (box);
+        showHost (box, RA8875_GREEN);
+    }
+
+    // update list, if only to show aging
+    drawAllVisDXCSpots (box);
+
+    // ok
+    return (true);
+
+}
+
+/* called often to add any new spots to list IFF connection is already open.
+ * N.B. this is purely a "background" function, no GUI.
+ * N.B. we never open the cluster connection, that is done by updateDXCluster() but we will close it
+ * if there have been no activity
+ */
+void checkDXCluster()
+{
+    // out fast if no connection
+    if (!isDXClusterConnected())
+        return;
+
+    // not crazy fast
+    static uint32_t prev_check;
+    if (!timesUp (&prev_check, BGCHECK_DT))
+        return;
+
+    // close if not selected in any pane
+    if (findPaneForChoice(PLOT_CH_DXCLUSTER) == PANE_NONE) {
+        dxcLog ("closing because no longer in any pane\n");
+        closeDXCluster();
+        return;
+    }
+
+    if ((cl_type == CT_DXSPIDER || cl_type == CT_ARCLUSTER || cl_type == CT_VE7CC) && dx_client) {
 
         // roll all pending new spots into list as fast as possible
-        char line[120];
-        while (dx_client.available() && getTCPLine (dx_client, line, sizeof(line), NULL)) {
-            // DX de KD0AA:     18100.0  JR1FYS       FT8 LOUD in FL!                2156Z EL98
-            dxcLog ("< %s\n", line);
-            detectMultiConnection (line);
 
-            // look alive
-            updateClocks(false);
+        // check status first.. fairly expensive
+        if (!wifiOk()) {
 
-            // crack
-            DXSpot new_spot;
-            if (crackClusterSpot (line, new_spot)) {
-                last_action = millis();
+            dxcLog ("bg has no network\n");
+            closeDXCluster();
 
-                // add and display unless not on exclusive watch list
-                if (showOnlyOnDXWatchList() && !onDXWatchList(new_spot.tx_call)) {
-                    dxcLog ("%s not on watch list\n", new_spot.tx_call);
-                } else {
-                    addDXClusterSpot (box, new_spot);
-                    any_new = true;
+        } else {
+
+            // don't block if nothing waiting
+            char line[120];
+            while (dx_client.available() && getTCPLine (dx_client, line, sizeof(line), NULL)) {
+                dxcLog ("< %s\n", line);
+                detectMultiConnection (line);
+
+                // look alive
+                updateClocks(false);
+
+                // any new data counts even if not valid
+                last_spot = myNow();
+
+                // crack
+                DXSpot new_spot;
+                if (crackClusterSpot (line, new_spot)) {
+
+                    // add if qualifies watch list requirements
+                    if (checkWatchListSpot (WLID_DX, new_spot) == WLS_NO)
+                        dxcLog ("%s not on watch list\n", new_spot.tx_call);
+                    else
+                        addDXClusterSpot (new_spot);
                 }
             }
-        }
 
-        // check for lost connection
-        if (!dx_client) {
-            incLostConn();
-            if (multi_cntn)
-                showDXClusterErr (box, "Multiple logins");
-            else
-                showDXClusterErr (box, "Lost connection");
-            return(false);
-        }
+            // check for no network or server closing the connection
+            if (!dx_client) {
+                dxcLog ("bg lost connection\n");
+                incLostConn();
+                closeDXCluster();
+            }
 
-        // send something if quiet for too long
-        if (millis() - last_action > KEEPALIVE_DT) {
-            last_action = millis();        // avoid banging
-            if (!sendDXClusterHeartbeat()) {
-                showDXClusterErr (box, "Heartbeat lost connection");
-                return(false);
+            // send something if spider quiet for too long
+            if (cl_type == CT_DXSPIDER && myNow() - last_spot > KEEPALIVE_DT) {
+                last_spot = myNow();        // avoid banging
+                sendDXClusterHeartbeat();
             }
         }
 
     } else if (cl_type == CT_WSJTX && wsjtx_server) {
-
 
         // drain ALL pending packets, retain most recent Status message if any
 
@@ -876,43 +1041,17 @@ bool updateDXCluster(const SBox &box)
 
         // process then free newest Status message if received
         if (sts_msg) {
-            uint8_t *bp = sts_msg;
-            if (wsjtxParseStatusMsg (box, &bp))
-                any_new = true;
+            wsjtxParseStatusMsg (sts_msg);
             free (sts_msg);
+
+            // any new data counts even if invalid
+            last_spot = myNow();
         }
 
         // clean up
         if (any_msg)
             free (any_msg);
     }
-
-    // just update ages occasionally if nothing new
-    if (any_new)
-        last_draw = millis();
-    else if (timesUp (&last_draw, 1000))
-        drawAllVisDXCSpots (box);
-
-    // didn't break
-    return (true);
-}
-
-/* insure cluster connection is closed
- */
-void closeDXCluster()
-{
-    // make sure either/both connection is/are closed
-    if (dx_client) {
-        dx_client.stop();
-        dxcLog ("disconnect %s\n", dx_client ? "failed" : "ok");
-    }
-    if (wsjtx_server) {
-        wsjtx_server.stop();
-        dxcLog ("WSTJ-X disconnect %s\n", wsjtx_server ?"failed":"ok");
-    }
-
-    // reset multi flag
-    multi_cntn = false;
 }
 
 /* determine and engage a dx cluster pane touch.
@@ -939,25 +1078,30 @@ bool checkDXClusterTouch (const SCoord &s, const SBox &box)
 
         // clear control?
         if (s.x < box.x + CLRBOX_DX+2*CLRBOX_R) {
-            dxc_ss.n_data = 0;
+            dxcLog ("User erased list of %d spots, %d qualified\n", n_dxspots, dxc_ss.n_data);
+            resetDXMem();
             initDXGUI(box);
             showHost (box, RA8875_GREEN);
             return (true);
         }
 
-        // none of those, so we shut down and return indicating user can choose another pane
-        closeDXCluster();             // insure disconnected
-        last_action = millis();       // in case op wants to come back soon
+        // none of those, so we return indicating user can choose another pane
         return (false);
 
     }
 
-    // not in title so engage a tapped row, if defined
+    // check tapping host to edit watch list
+    if (s.y < box.y + LISTING_Y0) {
+        runDXClusterMenu (box);
+        return (true);
+    }
+
+    // everything else below may be a tapped spot
     int vis_row = (s.y - (box.y + LISTING_Y0)) / LISTING_DY;
     int spot_row;
-    if (dxc_ss.findDataIndex (vis_row, spot_row) && dx_spots[spot_row].tx_call[0] != '\0'
-                                                            && isDXClusterConnected())
-        engageDXCRow (dx_spots[spot_row]);
+    if (dxc_ss.findDataIndex (vis_row, spot_row)
+                        && dxwl_spots[spot_row].tx_call[0] != '\0' && isDXClusterConnected())
+        engageDXCRow (dxwl_spots[spot_row]);
 
     // ours 
     return (true);
@@ -971,30 +1115,30 @@ bool getDXClusterSpots (DXSpot **spp, uint8_t *nspotsp)
 {
     if (useDXCluster()) {
         *spp = dx_spots;
-        *nspotsp = dxc_ss.n_data;
+        *nspotsp = n_dxspots;
         return (true);
     }
 
     return (false);
 }
 
-/* draw all path and spots on map, as desired
+/* draw all qualiying paths and spots on map, as desired
  */
 void drawDXClusterSpotsOnMap ()
 {
-    // skip if we are neither configured nor up.
-    if (!useDXCluster() || findPaneForChoice(PLOT_CH_DXCLUSTER) == PANE_NONE)
+    // skip if we are not running
+    if (!isDXClusterConnected())
         return;
 
     // draw all paths then labels
     for (int i = 0; i < dxc_ss.n_data; i++) {
-        DXSpot &si = dx_spots[i];
+        DXSpot &si = dxwl_spots[i];
         drawSpotPathOnMap (si);
     }
     for (int i = 0; i < dxc_ss.n_data; i++) {
-        DXSpot &si = dx_spots[i];
-        drawSpotLabelOnMap (si, LOM_TXEND, LOM_ALL);
-        drawSpotLabelOnMap (si, LOM_RXEND, LOM_JUSTDOT);
+        DXSpot &si = dxwl_spots[i];
+        drawSpotLabelOnMap (si, LOME_TXEND, LOMD_ALL);
+        drawSpotLabelOnMap (si, LOME_RXEND, LOMD_JUSTDOT);
     }
 }
 
@@ -1007,14 +1151,20 @@ bool isDXClusterConnected()
 
 /* find closest spot and location on either end to given ll, if any.
  */
-bool getClosestSpot (const LatLong &ll, DXSpot *sp, LatLong *llp)
-{
-    return (getClosestSpot (dx_spots, dxc_ss.n_data, ll, sp, llp));
-}
-
-/* find closest spot and location on either end to given ll, if any.
- */
 bool getClosestDXCluster (const LatLong &ll, DXSpot *sp, LatLong *llp)
 {
-    return (getClosestSpot (dx_spots, dxc_ss.n_data, ll, sp, llp));
+    return (isDXClusterConnected() && getClosestSpot (dxwl_spots, dxc_ss.n_data, ll, sp, llp));
+}
+
+/* remove all spots memory if unused for some time
+ */
+void cleanDXCluster()
+{
+    if (dx_spots || dxwl_spots) {
+        static time_t last_used;
+        if (findPaneForChoice(PLOT_CH_DXCLUSTER) != PANE_NONE)
+            last_used = myNow();
+        else if (myNow() - last_used > MAXUSE_DT)
+            resetDXMem();
+    }
 }

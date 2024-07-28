@@ -10,7 +10,7 @@
 #define MM_COLOR    RA8875_WHITE        // min/max triangle color
 
 // handy conversion of RSSI to graphics x
-#define RSSI_X(R)   ((uint16_t)(rssi_b.x + rssi_b.w*((R) - WN_MIN_DB)/(WN_MAX_DB-WN_MIN_DB)))
+#define RSSI_X(R)   ((uint16_t)(rssi_b.x + rssi_b.w*(CLAMPF((R),WN_MIN_DB,WN_MAX_DB) - WN_MIN_DB)/(WN_MAX_DB-WN_MIN_DB)))
 
 // state
 static bool wifi_meter_up;              // whether visible now
@@ -88,10 +88,9 @@ bool readWiFiRSSI(int &rssi)
 int runWiFiMeter(bool warn, bool &ignore_on)
 {
     // prep
-    Serial.printf ("WiFiM @ %u start Ignore %s\n", millis()/1000U, ignore_on ? "on" : "off");
+    Serial.printf ("WiFiM: start with ignore %s\n", ignore_on ? "on" : "off");
     wifi_meter_up = true;
     eraseScreen();
-    closeDXCluster();
     closeGimbal();
 
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
@@ -149,7 +148,7 @@ int runWiFiMeter(bool warn, bool &ignore_on)
     reset_b.y = y + ignore_b.h + 10;
     reset_b.w = 100;
     reset_b.h = 35;
-    drawStringInBox ("Reset", reset_b, ignore_on, RA8875_GREEN);
+    drawStringInBox ("Reset", reset_b, false, RA8875_GREEN);
 
     // signal strength scale
     SBox rssi_b;
@@ -197,6 +196,7 @@ int runWiFiMeter(bool warn, bool &ignore_on)
         // erase real-time marker and value
         drawCMarker (rssi_b.y+rssi_b.h, prev_rssi_x, RA8875_BLACK);
         tft.fillRect (rssi_b.x + rssi_b.w/2 - 20, rssi_b.y + rssi_b.h + 2*WN_TRIS + 1, 40, 30, RA8875_BLACK);
+
         // read and update
         if (readWiFiRSSI(rssi)) {
 
@@ -213,7 +213,6 @@ int runWiFiMeter(bool warn, bool &ignore_on)
             }
 
             // show current
-            rssi = CLAMPF (rssi, WN_MIN_DB, WN_MAX_DB);
             uint16_t rssi_x = RSSI_X(rssi);
             drawCMarker (rssi_b.y+rssi_b.h, rssi_x, getWiFiMeterColor (rssi_b,rssi_x));
             tft.setCursor (rssi_b.x + rssi_b.w/2 - 20, rssi_b.y + rssi_b.h + 2*WN_TRIS + 25);
@@ -222,33 +221,38 @@ int runWiFiMeter(bool warn, bool &ignore_on)
             prev_rssi_x = rssi_x;
 
             // log occassionally
-            if (timesUp (&log_t, 1000))
-                Serial.printf ("WiFiM @ %u %d\n", log_t/1000U, rssi);
+            if (timesUp (&log_t, 5000))
+                Serial.printf ("WiFiM: %d\n", rssi);
         }
+
+        // update BME and brightness
+        readBME280();
+        followBrightness();
 
         // check touch
         SCoord tap;
         TouchType tt = readCalTouchWS (tap);
         if (tt != TT_NONE) {
 
-            // update BME and brightness, that's all if tap restores full brightness
-            readBME280();
-            followBrightness();
+            // bale if tap restores full brightness
             if (brightnessOn())
                 continue;
 
             // check controls
             if (inBox (tap, dismiss_b)) {
-                Serial.printf ("WiFiM @ %u Resume\n", millis()/1000U);
+                Serial.printf ("WiFiM: Resume\n");
                 done = true;
             } else if (inBox (tap, ignore_b)) {
                 ignore_on = !ignore_on;
                 drawStringInBox ("Ignore", ignore_b, ignore_on, RA8875_GREEN);
                 if (ignore_on) {
-                    Serial.printf ("WiFiM @ %u Ignore\n", millis()/1000U);
+                    Serial.printf ("WiFiM: Ignore\n");
                     done = true;
                 }
             } else if (inBox (tap, reset_b)) {
+                drawStringInBox ("Reset", reset_b, true, RA8875_GREEN);
+                wdDelay (300);
+                drawStringInBox ("Reset", reset_b, false, RA8875_GREEN);
                 rssi_min = rssi_max = 0;
                 int rssi;
                 (void) readWiFiRSSI(rssi);
@@ -266,9 +270,4 @@ int runWiFiMeter(bool warn, bool &ignore_on)
 
     return (rssi);
 
-}
-
-bool wifiMeterIsUp()
-{
-    return (wifi_meter_up);
 }

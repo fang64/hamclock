@@ -4,6 +4,7 @@
 #include "HamClock.h"
 
 #define SDO_IMG_INTERVAL        1800            // image update interval, seconds
+#define SDO_COLOR               RA8875_MAGENTA  // just for error messages
 
 typedef enum {
     SDOT_COMP,
@@ -16,48 +17,59 @@ typedef enum {
     SDOT_N
 } SDOImgType;
 
-typedef struct {
-    const char menu_name[12];
-    const char file_name[28];
-} SDOName;
+static const char *sdo_menu[SDOT_N] = {
+    "Composite",
+    "Magnetogram",
+    "6173A",
+    "131A",
+    "193A",
+    "211A",
+    "304A",
+};
 
-#define SDO_COLOR       RA8875_MAGENTA          // just for error messages
+static const char *sdo_url[SDOT_N] = {
+    "https://sdo.gsfc.nasa.gov/assets/img/latest/mpeg/latest_1024_211193171.mp4",
+    "https://sdo.gsfc.nasa.gov/assets/img/latest/mpeg/latest_1024_HMIB.mp4",
+    "https://sdo.gsfc.nasa.gov/assets/img/latest/mpeg/latest_1024_HMIIC.mp4",
+    "https://sdo.gsfc.nasa.gov/assets/img/latest/mpeg/latest_1024_0131.mp4",
+    "https://sdo.gsfc.nasa.gov/assets/img/latest/mpeg/latest_1024_0193.mp4",
+    "https://sdo.gsfc.nasa.gov/assets/img/latest/mpeg/latest_1024_0211.mp4",
+    "https://sdo.gsfc.nasa.gov/assets/img/latest/mpeg/latest_1024_0304.mp4",
+};
 
-// N.B. files must match order in SDOImgType
-// N.B. file names depend on build size
-static const SDOName sdo_names[SDOT_N] = {
+static const char *sdo_file[SDOT_N] = {
     #if defined(_CLOCK_1600x960) 
-        {"Composite",   "/SDO/f_211_193_171_340.bmp"},
-        {"Magnetogram", "/SDO/latest_340_HMIB.bmp"},
-        {"6173A",       "/SDO/latest_340_HMIIC.bmp"},
-        {"131A",        "/SDO/f_131_340.bmp"},
-        {"193A",        "/SDO/f_193_340.bmp"},
-        {"211A",        "/SDO/f_211_340.bmp"},
-        {"304A",        "/SDO/f_304_340.bmp"},
+        "f_211_193_171_340.bmp",
+        "latest_340_HMIB.bmp",
+        "latest_340_HMIIC.bmp",
+        "f_131_340.bmp",
+        "f_193_340.bmp",
+        "f_211_340.bmp",
+        "f_304_340.bmp",
     #elif defined(_CLOCK_2400x1440)
-        {"Composite",   "/SDO/f_211_193_171_510.bmp"},
-        {"Magnetogram", "/SDO/latest_510_HMIB.bmp"},
-        {"6173A",       "/SDO/latest_510_HMIIC.bmp"},
-        {"131A",        "/SDO/f_131_510.bmp"},
-        {"193A",        "/SDO/f_193_510.bmp"},
-        {"211A",        "/SDO/f_211_510.bmp"},
-        {"304A",        "/SDO/f_304_510.bmp"},
+        "f_211_193_171_510.bmp",
+        "latest_510_HMIB.bmp",
+        "latest_510_HMIIC.bmp",
+        "f_131_510.bmp",
+        "f_193_510.bmp",
+        "f_211_510.bmp",
+        "f_304_510.bmp",
     #elif defined(_CLOCK_3200x1920)
-        {"Composite",   "/SDO/f_211_193_171_680.bmp"},
-        {"Magnetogram", "/SDO/latest_680_HMIB.bmp"},
-        {"6173A",       "/SDO/latest_680_HMIIC.bmp"},
-        {"131A",        "/SDO/f_131_680.bmp"},
-        {"193A",        "/SDO/f_193_680.bmp"},
-        {"211A",        "/SDO/f_211_680.bmp"},
-        {"304A",        "/SDO/f_304_680.bmp"},
+        "f_211_193_171_680.bmp",
+        "latest_680_HMIB.bmp",
+        "latest_680_HMIIC.bmp",
+        "f_131_680.bmp",
+        "f_193_680.bmp",
+        "f_211_680.bmp",
+        "f_304_680.bmp",
     #else
-        {"Composite",   "/SDO/f_211_193_171_170.bmp"},
-        {"Magnetogram", "/SDO/latest_170_HMIB.bmp"},
-        {"6173A",       "/SDO/latest_170_HMIIC.bmp"},
-        {"131A",        "/SDO/f_131_170.bmp"},
-        {"193A",        "/SDO/f_193_170.bmp"},
-        {"211A",        "/SDO/f_211_170.bmp"},
-        {"304A",        "/SDO/f_304_170.bmp"},
+        "f_211_193_171_170.bmp",
+        "latest_170_HMIB.bmp",
+        "latest_170_HMIIC.bmp",
+        "f_131_170.bmp",
+        "f_193_170.bmp",
+        "f_211_170.bmp",
+        "f_304_170.bmp",
     #endif
 };
 
@@ -89,16 +101,97 @@ static void loadSDOChoice (void)
     }
 }
 
-/* download and render sdo_choice.
+/* render sdo_choice, downloading fresh if not found or stale.
+ * use plotMessage if error.
  * return whether ok.
  */
 static bool drawSDOImage (const SBox &box)
 {
     // get corresponding file name
-    const char *fn = sdo_names[sdo_choice].file_name;;
+    const char *fn = sdo_file[sdo_choice];
 
-    // show file
-    return (drawHTTPBMP (fn, box, SDO_COLOR));
+    // check local file first
+    bool need_fresh = true;             // assume true until proven otherwise
+    char local_path[1000];
+    snprintf (local_path, sizeof(local_path), "%s/%s", our_dir.c_str(), fn);
+    struct stat sbuf;
+    if (stat (local_path, &sbuf) == 0)
+        need_fresh = myNow() > sbuf.st_mtime + SDO_IMG_INTERVAL;
+
+    // assume download bad until proven otherwise
+    bool ok = !need_fresh;
+
+    // download if time to refresh
+    if (need_fresh) {
+        char url[1000];
+        snprintf (url, sizeof(url), "/SDO/%s", fn);
+
+        WiFiClient client;
+        Serial.println (url);
+        if (wifiOk() && client.connect(backend_host, backend_port)) {
+            updateClocks(false);
+        
+            // query web page
+            httpHCGET (client, backend_host, url);
+        
+            // skip response header
+            if (!httpSkipHeader (client)) {
+                plotMessage (box, SDO_COLOR, "SDO header short");
+                goto out;
+            }
+
+            // create local
+            FILE *fp = fopen (local_path, "w");
+            if (!fp) {
+                plotMessage (box, SDO_COLOR, "can not create local SDO image");
+                goto out;
+            }
+            if (chown (local_path, getuid(), getgid()) < 0)     // friendly
+                Serial.printf ("chown(%s,%d,%d): %s\n", local_path, getuid(), getgid(), strerror(errno));
+
+            // copy to local
+            char c;
+            while (getTCPChar (client, &c)) {
+                if (fputc (c, fp) == EOF) {
+                    plotMessage (box, SDO_COLOR, "can not save SDO image");
+                    goto out;
+                }
+            }
+
+            // finished with fp
+            fclose (fp);
+
+            // got something
+            Serial.printf ("saved local %s\n", fn);
+            ok = true;
+
+        } else {
+            plotMessage (box, SDO_COLOR, "SDO connection failed");
+        }
+
+      out:
+        client.stop();
+    }
+
+    // display local file
+    if (ok) {
+        Serial.printf ("reading local %s\n", fn);
+        FILE *fp = fopen (local_path, "r");
+        if (!fp) {
+            plotMessage (box, SDO_COLOR, "local SDO file is missing");
+            ok = false;
+        } else {
+            GenReader gr(fp);
+            char ynot[256];
+            if (!install24BMP (gr, box, ynot, sizeof(ynot))) {
+                plotMessage (box, SDO_COLOR, ynot);
+                ok = false;
+            }
+            fclose (fp);
+        }
+    }
+
+    return (ok);
 }
 
 /* return whether sdo image is rotating
@@ -110,95 +203,62 @@ bool isSDORotating(void)
 }
 
 
-/* update SDO pane info for sure and possibly image also.
+/* update SDO pane
  */
-bool updateSDOPane (const SBox &box, bool image_too)
+bool updateSDOPane (const SBox &box)
 {
     resetWatchdog();
 
-    // update and force if rotating
+    // advance choice if rotating
     if (isSDORotating()) {
         sdo_choice = (sdo_choice + 1) % SDOT_N;
         saveSDOChoice();
-        image_too = true;
     }
 
-    // current user's time
-    static time_t prev_img;
-    time_t t0 = nowWO();
 
-    // keep the strings so we can erase them exactly next time; using rectangles cuts chits from solar disk
-    static char az_str[10];
-    static char el_str[10];
-    static char rs_str[10];
-    static char rt_str[10];
-
-    // start fresh image if requested or old else just erase previous info
-
-    bool ok;
-    if (image_too || labs (t0-prev_img) > SDO_IMG_INTERVAL) {
-
-        // full draw
-        ok = drawSDOImage(box);
-
-        // record time if ok
-        if (ok)
-            prev_img = t0;
-
-    } else {
-
-        // pane image not drawn so erase previous individual stats
-        selectFontStyle (LIGHT_FONT, FAST_FONT);
-        tft.setTextColor (RA8875_BLACK);
-        tft.setCursor (box.x+1, box.y+2);
-        tft.print (az_str);
-        tft.setCursor (box.x+box.w-getTextWidth(el_str)-1, box.y+2);
-        tft.print (el_str);
-        tft.setCursor (box.x+1, box.y+box.h-10);
-        tft.print (rs_str);
-        tft.setCursor (box.x+box.w-getTextWidth(rt_str)-1, box.y+box.h-10);
-        tft.print (rt_str);
-
-        // always ok
-        ok = true;
-    }
+    // draw image
+    bool ok = drawSDOImage(box);
 
     // draw info if ok, layout similar to moon
     if (ok) {
+
+        // current user's time
+        time_t t0 = nowWO();
 
         // fresh info at user's effective time
         getSolarCir (t0, de_ll, solar_cir);
 
         // draw corners, similar to moon
 
+        char str[128];
         selectFontStyle (LIGHT_FONT, FAST_FONT);
         tft.setTextColor (DE_COLOR);
 
-        snprintf (az_str, sizeof(az_str), "Az:%.0f", rad2deg(solar_cir.az));
+        snprintf (str, sizeof(str), "Az:%.0f", rad2deg(solar_cir.az));
         tft.setCursor (box.x+1, box.y+2);
-        tft.print (az_str);
+        tft.print (str);
 
-        snprintf (el_str, sizeof(el_str), "El:%.0f", rad2deg(solar_cir.el));
-        tft.setCursor (box.x+box.w-getTextWidth(el_str)-1, box.y+2);
-        tft.print (el_str);
+        snprintf (str, sizeof(str), "El:%.0f", rad2deg(solar_cir.el));
+        tft.setCursor (box.x+box.w-getTextWidth(str)-1, box.y+2);
+        tft.print (str);
 
         // show which ever rise or set event comes next
         time_t rise, set;
         getSolarRS (t0, de_ll, &rise, &set);
         if (rise > t0 && (set < t0 || rise - t0 < set - t0))
-            snprintf (rs_str, sizeof(rs_str), "R@%02d:%02d", hour(rise+de_tz.tz_secs),
+            snprintf (str, sizeof(str), "R@%02d:%02d", hour(rise+de_tz.tz_secs),
                                                               minute (rise+de_tz.tz_secs));
         else if (set > t0 && (rise < t0 || set - t0 < rise - t0))
-            snprintf (rs_str, sizeof(rs_str), "S@%02d:%02d", hour(set+de_tz.tz_secs),
+            snprintf (str, sizeof(str), "S@%02d:%02d", hour(set+de_tz.tz_secs),
                                                               minute (set+de_tz.tz_secs));
         else
-            strcpy (rs_str, "No R/S");
+            strcpy (str, "No R/S");
         tft.setCursor (box.x+1, box.y+box.h-10);
-        tft.print (rs_str);
+        tft.print (str);
 
-        snprintf (rt_str, sizeof(rt_str), "%.0fm/s", solar_cir.vel);;
-        tft.setCursor (box.x+box.w-getTextWidth(rt_str)-1, box.y+box.h-10);
-        tft.print (rt_str);
+        snprintf (str, sizeof(str), "%.0fm/s", solar_cir.vel);;
+        tft.setCursor (box.x+box.w-getTextWidth(str)-1, box.y+box.h-10);
+        tft.print (str);
     }
 
     return (ok);
@@ -208,36 +268,7 @@ bool updateSDOPane (const SBox &box, bool image_too)
  */
 static void showSDOmovie (void)
 {
-    const char *url = NULL;
-
-    switch ((SDOImgType)sdo_choice) {
-    case SDOT_COMP:
-        url = "https://sdo.gsfc.nasa.gov/assets/img/latest/mpeg/latest_1024_211193171.mp4";
-        break;
-    case SDOT_HMIB:
-        url = "https://sdo.gsfc.nasa.gov/assets/img/latest/mpeg/latest_1024_HMIB.mp4";
-        break;
-    case SDOT_HMIIC:
-        url = "https://sdo.gsfc.nasa.gov/assets/img/latest/mpeg/latest_1024_HMIIC.mp4";
-        break;
-    case SDOT_131:
-        url = "https://sdo.gsfc.nasa.gov/assets/img/latest/mpeg/latest_1024_0131.mp4";
-        break;
-    case SDOT_193:
-        url = "https://sdo.gsfc.nasa.gov/assets/img/latest/mpeg/latest_1024_0193.mp4";
-        break;
-    case SDOT_211:
-        url = "https://sdo.gsfc.nasa.gov/assets/img/latest/mpeg/latest_1024_0211.mp4";
-        break;
-    case SDOT_304:
-        url = "https://sdo.gsfc.nasa.gov/assets/img/latest/mpeg/latest_1024_0304.mp4";
-        break;
-    case SDOT_N:
-        break;
-    }
-
-    if (url)
-        openURL (url);
+    openURL (sdo_url[sdo_choice]);
 }
 
 /* check for our touch in the given pane box.
@@ -270,7 +301,7 @@ bool checkSDOTouch (const SCoord &s, const SBox &box)
 
     // set first SDOT_N to name collection
     for (int i = 0; i < SDOT_N; i++) {
-        mitems[i] = {MENU_1OFN, !sdo_rotating && i == sdo_choice, 1, SM_INDENT, sdo_names[i].menu_name};
+        mitems[i] = {MENU_1OFN, !sdo_rotating && i == sdo_choice, 1, SM_INDENT, sdo_menu[i]};
     }
 
     // set whether rotating
@@ -295,7 +326,7 @@ bool checkSDOTouch (const SCoord &s, const SBox &box)
     menu_b.w = 0;               // shrink wrap
     SBox ok_b;
 
-    MenuInfo menu = {menu_b, ok_b, true, false, 1, SDOM_NMENU, mitems};
+    MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 1, SDOM_NMENU, mitems};
     bool ok = runMenu (menu);
 
     // change to new option unless cancelled
@@ -322,7 +353,7 @@ bool checkSDOTouch (const SCoord &s, const SBox &box)
 
         // gray line must 1) fix hole in pane 2) show grayline then 3) fix map on return
         if (mitems[SDOM_GRAYLINE].set) {
-            updateSDOPane (box, true);
+            updateSDOPane (box);
             plotGrayline();
             initEarthMap();
             refresh_pane = false;

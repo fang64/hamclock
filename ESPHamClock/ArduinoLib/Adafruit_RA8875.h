@@ -41,15 +41,6 @@ struct fb_var_screeninfo {
 extern const GFXfont Courier_Prime_Sans6pt7b;
 
 
-#ifndef RGB565
-#define RGB565(R,G,B)   ((((uint16_t)(R) & 0xF8) << 8) | (((uint16_t)(G) & 0xFC) << 3) | ((uint16_t)(B) >> 3))
-#endif
-
-#define RGB565_R(c)     (255*(((c) & 0xF800) >> 11)/((1<<5)-1))
-#define RGB565_G(c)     (255*(((c) & 0x07E0) >> 5)/((1<<6)-1))
-#define RGB565_B(c)     (255*((c) & 0x001F)/((1<<5)-1))
-
-
 
 #if defined(B_AND_W)
 // this only works for 32 bit framebuffer
@@ -84,13 +75,15 @@ typedef uint16_t fbpix_t;
 #define RGB16TOFBPIX(x) x
 #define FBPIXTORGB16(x) x
 #define FBPIXTORGB32(x) RGB1632(x)
-#else
+#define RGB32TOFBPIX(x) RGB565( (((x)>>16)&0xff), (((x)>>8)&0xff), ((x)&0xff) )
+#else   // 32 bpp
 typedef uint32_t fbpix_t;
 #define BYTESPFBPIX     4
 #define BITSPFBPIX      32
 #define RGB16TOFBPIX(x) RGB1632(x)
 #define FBPIXTORGB16(x) RGB3216(x)
 #define FBPIXTORGB32(x) x
+#define RGB32TOFBPIX(x) x
 #endif
 
 // basic background refresh interval, usecs
@@ -204,6 +197,11 @@ class Adafruit_RA8875 {
 
         // very fast pixel access
         bool getRawPix(uint8_t *rgb24, int bytes);
+
+        // control whether to display gray
+        void setGrayDisplay (GrayDpy_t g) {
+            gray_type = g;
+        };
 
     protected:
 
@@ -353,6 +351,9 @@ class Adafruit_RA8875 {
             int16_t tx = x0; x0 = x1; x1 = tx;
             int16_t ty = y0; y0 = y1; y1 = ty;
         }
+
+        // set whether to display gray
+        GrayDpy_t gray_type;
 
 };
 

@@ -60,16 +60,20 @@ class WiFiClient {
 	void flush(void){};
 	IPAddress remoteIP(void);
 
+        // non-standard
+        bool readArray (char buf[], int n);
+
     private:
 
 	int socket;
-  	uint8_t peek[4096];             // read-ahead buffer
+  	uint8_t peek[4096*10];          // read-ahead buffer
   	int n_peek;                     // n useful values in peek[]
         int next_peek;                  // next peek[] index to use
-
+        bool eof;                       // set when read encounters eof
 
         int connect_to (int sockfd, struct sockaddr *serv_addr, int addrlen, int to_ms);
         int tout (int to_ms, int fd);
+        bool pending(int ms);
 
 };
 

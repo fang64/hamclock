@@ -18,14 +18,24 @@ time_t usr_datetime;
 #define WWX_INTERVAL    (2300)                  // polling interval, secs
 
 // ADIF pane
-#define ADIF_INTERVAL   30                      // polling interval, secs
+#define ADIF_INTERVAL   2                       // polling interval, secs
+
+// DX Cluster update
+#define DXC_INTERVAL    1                       // update interval, secs
+
+// env sensor
+#define ENV_INTERVAL    20                      // update interval, secs
+
+// SDO own rotation period when panes are not rotating
+#define SDO_INTERVAL    60                      // update interval, secs
+
 
 // band conditions and voacap map, models change each hour
 #define BC_INTERVAL     (2400)                  // polling interval, secs
 #define VOACAP_INTERVAL (2500)                  // polling interval, secs
 uint16_t bc_powers[] = {1, 5, 10, 50, 100, 500, 1000};
 const int n_bc_powers = NARRAY(bc_powers);
-static const char bc_page[] PROGMEM = "/fetchBandConditions.pl";
+static const char bc_page[] = "/fetchBandConditions.pl";
 static time_t bc_time;                          // nowWO() when bc_matrix was loaded
 static time_t map_time;                         // nowWO() when map was loaded
 BandCdtnMatrix bc_matrix;                       // percentage reliability for each band
@@ -58,12 +68,8 @@ const char *findBCModeName (uint8_t value)      // find name given value, else N
 }
 
 // geolocation web page
-static const char locip_page[] PROGMEM = "/fetchIPGeoloc.pl";
+static const char locip_page[] = "/fetchIPGeoloc.pl";
 
-
-// weather displays
-#define DEWX_INTERVAL   (1700)                  // polling interval, secs
-#define DXWX_INTERVAL   (1600)                  // polling interval, secs
 
 // moon display
 #define MOON_INTERVAL   50                      // annotation update interval, secs
@@ -71,12 +77,12 @@ static const char locip_page[] PROGMEM = "/fetchIPGeoloc.pl";
 
 // list of default NTP servers unless user has set their own
 static NTPServer ntp_list[] = {                 // init times to 0 insures all get tried initially
-    {"time.google.com", 0},
-    {"time.apple.com", 0},
-    {"pool.ntp.org", 0},
-    {"europe.pool.ntp.org", 0},
-    {"asia.pool.ntp.org", 0},
-    {"time.nist.gov", 0},
+    {"time.google.com",     NTP_TOO_LONG},
+    {"time.apple.com",      NTP_TOO_LONG},
+    {"pool.ntp.org",        NTP_TOO_LONG},
+    {"europe.pool.ntp.org", NTP_TOO_LONG},
+    {"asia.pool.ntp.org",   NTP_TOO_LONG},
+    {"time.nist.gov",       NTP_TOO_LONG},
 };
 #define N_NTP NARRAY(ntp_list)                  // number of possible servers
 
@@ -92,30 +98,15 @@ static NTPServer ntp_list[] = {                 // init times to 0 insures all g
 static time_t revert_time;                      // when to resume normal pane operation
 static PlotPane revert_pane;                    // which pane is being temporarily reverted
 
-/* time of next update attempts for each pane and the maps.
+/* rotation time control.
  * 0 will refresh immediately.
  * reset all in initWiFiRetry()
  */
-time_t next_update[PANE_N];
-static time_t next_map;
-static time_t next_wwx;
-
-/* indicate pane must perform a fresh retrieval
- */
-static bool fresh_update[PLOT_CH_N];
-
-// fwd local funcs
-static bool updateDRAP(const SBox &box);
-static bool updateKp(const SBox &box);
-static bool updateXRay(const SBox &box);
-static bool updateSunSpots(const SBox &box);
-static bool updateSolarFlux(const SBox &box);
-static bool updateBzBt(const SBox &box);
-static bool updateBandConditions(const SBox &box, bool force);
-static bool updateNOAASWx(const SBox &box);
-static bool updateSolarWind(const SBox &box);
-static bool updateAurora(const SBox &box);
-static uint32_t crackBE32 (uint8_t bp[]);
+static time_t next_rotation[PANE_N];            // next pane rotation
+time_t next_update[PANE_N];                     // next function call
+static time_t next_map;                         // next map check
+static time_t next_wwx;                         // next world weather check
+static bool fresh_redraw[PLOT_CH_N];            // whether full pane redraw is required
 
 
 /* return absolute difference in two time_t regardless of time_t implementation is signed or unsigned.
@@ -150,7 +141,8 @@ time_t nextWiFiRetry (const char *str)
 {
     time_t next_try = nextWiFiRetry();
     int dt = next_try - myNow();
-    Serial.printf (_FX("Next %s retry in %d sec at %ld\n"), str, dt, next_try);
+    int nm = millis()/1000+dt;
+    Serial.printf ("Next %s retry in %d sec at %d\n", str, dt, nm);
     return (next_try);
 }
 
@@ -158,80 +150,62 @@ time_t nextWiFiRetry (const char *str)
  */
 time_t nextWiFiRetry (PlotChoice pc)
 {
-    time_t next_try = nextWiFiRetry();
-    int dt = next_try - myNow();
-    int nm = millis()/1000+dt;
-    Serial.printf (_FX("Next %s retry in %d sec at %d\n"), plot_names[pc], dt, nm);
-    return (next_try);
-}
-
-/* figure out when to next rotate the given pane.
- * rotations are spaced out to avoid swamping the backend.
- */
-static time_t nextPaneRotationTime (PlotPane pp)
-{
-    // start with standard rotation interval
-    int interval = ROTATION_INTERVAL;
-    time_t rot_time = myNow() + interval;
-
-    // then find soonest rot_time that is at least interval away from all other active panes
-    for (int i = 0; i < PANE_N*PANE_N; i++) {           // all permutations
-        PlotPane ppi = (PlotPane) (i % PANE_N);
-        if (ppi == pp)
-            continue;
-        if (paneIsRotating(ppi)  || (plot_ch[ppi] == PLOT_CH_SDO && isSDORotating())) {
-            if ((rot_time >= next_update[ppi] && rot_time - next_update[ppi] < interval)
-                              || (rot_time <= next_update[ppi] && next_update[ppi] - rot_time < interval))
-                rot_time = next_update[ppi] + interval;
-        }
-    }
-
-    return (rot_time);
+    return (nextWiFiRetry (plot_names[pc]));
 }
 
 /* given a plot choice return time of its next update.
- * if choice is in play and rotating use pane rotation duration else the given interval.
+ * if choice is in play and rotating use pane rotation time else the given interval.
  */
-time_t nextPaneUpdate (PlotChoice pc, int interval)
+static time_t nextPaneUpdate (PlotChoice pc, int interval)
 {
     PlotPane pp = findPaneForChoice (pc);
-    time_t t0 = myNow();
-    time_t next;
+    if (pp == PANE_NONE)
+        fatalError ("nextPaneUpdate %s PANE_NONE", plot_names[pc]);
 
-    if (pp == PANE_NONE) {
-        // pc not in play: use interval
-        next = t0 + interval;
-        int dt = next - t0;
-        int at = millis()/1000+dt;
-        Serial.printf (_FX("%s updates in %d sec at %d\n"), plot_names[pc], dt, at);
-    } else if (paneIsRotating(pp) || (pc == PLOT_CH_SDO && isSDORotating())) {
-        // pc is in rotation
-        next = nextPaneRotationTime (pp);
-        int dt = next - t0;
-        int at = millis()/1000+dt;
-        if (pc == plot_ch[pp])
-            Serial.printf (_FX("Pane %d now showing %s updates in %d sec at %d\n"), pp,plot_names[pc],dt,at);
-        else
-            Serial.printf (_FX("Pane %d hiding %s updates in %d sec at %d\n"), pp, plot_names[pc], dt, at);
-    } else {
-        // pc is alone in a pane
-        next = t0 + interval;
-        int dt = next - t0;
-        int at = millis()/1000+dt;
-        Serial.printf (_FX("Pane %d now showing %s updates in %d sec at %d\n"), pp, plot_names[pc], dt, at);
-    }
+    time_t t0 = myNow();
+    time_t next = t0 + interval;
+    int dt = next - t0;
+    int at = millis()/1000+dt;
+    Serial.printf ("Pane %d now showing %s updates in %d sec at %d\n", pp, plot_names[pc], dt, at);
 
     return (next);
 }
 
-/* return the next time of routine download.
+/* return time of next rotation for pane pp or brb_next_update if pp == PANE_NONE.
  */
-time_t nextRetrieval (PlotChoice pc, int interval)
+time_t nextRotation (PlotPane pp)
 {
-    time_t next_update = myNow() + interval;
-    int nm = millis()/1000 + interval;
-    Serial.printf (_FX("%s data now good for %d sec at %d\n"), plot_names[pc], interval, nm);
-    return (next_update);
+    // find latest of all currently scheduled rotations
+    time_t latest_rot = 0;
+    for (int i = 0; i < PANE_N; i++)
+        if ((isPaneRotating(pp) || isSpecialPaneRotating(pp)) && next_rotation[i] > latest_rot)
+            latest_rot = next_rotation[i];
+    if (BRBIsRotating() && brb_next_update > latest_rot)
+        latest_rot = brb_next_update;
+
+    // bring up to present if all old
+    time_t t0 = myNow();
+    if (latest_rot < t0)
+        latest_rot = t0;
+
+    // next rotation follows
+    time_t next_rot;
+    if (pp == PANE_NONE) {
+        next_rot = brb_next_update = latest_rot + ROTATION_INTERVAL;
+        int dt = next_rot - t0;
+        int at = millis()/1000+dt;
+        if (BRBIsRotating())
+            Serial.printf ("BRB: next rotation in %d sec at %d\n", dt, at);
+        else
+            Serial.printf ("BRB: next update in %d sec at %d\n", dt, at);
+    } else {
+        next_rot = next_rotation[pp] = latest_rot + ROTATION_INTERVAL;
+        int dt = next_rot - t0;
+        int at = millis()/1000+dt;
+        Serial.printf ("Pane %d now %s next rotation in %d sec at %d\n", pp, plot_names[plot_ch[pp]], dt, at);
+    }
+
+    return (next_rot);
 }
 
 
@@ -250,10 +224,10 @@ static void geolocateIP (const char *ip)
     if (wifiOk() && iploc_client.connect(backend_host, backend_port)) {
 
         // create proper query
-        strcpy_P (llline, locip_page);
+        strcpy (llline, locip_page);
         size_t l = sizeof(locip_page) - 1;              // not EOS
-        if (ip)
-            l += snprintf (llline+l, sizeof(llline)-l, _FX("?IP=%s"), ip);
+        if (ip)                                         // else locip_page will use client IP
+            l += snprintf (llline+l, sizeof(llline)-l, "?IP=%s", ip);
         Serial.println(llline);
 
         // send
@@ -285,9 +259,9 @@ out:
     if (nlines == 4) {
         // ok
 
-        tftMsg (true, 0, _FX("IP %s geolocation"), ipline+3);
-        tftMsg (true, 0, _FX("  by %s"), credline+7);
-        tftMsg (true, 0, _FX("  %.2f%c %.2f%c"), fabsf(lat), lat < 0 ? 'S' : 'N',
+        tftMsg (true, 0, "IP %s geolocation", ipline+3);
+        tftMsg (true, 0, "  by %s", credline+7);
+        tftMsg (true, 0, "  %.2f%c %.2f%c", fabsf(lat), lat < 0 ? 'S' : 'N',
                                 fabsf(lng), lng < 0 ? 'W' : 'E');
 
         de_ll.lat_d = lat;
@@ -304,23 +278,32 @@ out:
         // trouble, error message if 1 line
 
         if (nlines == 1) {
-            tftMsg (true, 0, _FX("IP geolocation err:"));
-            tftMsg (true, 1000, _FX("  %s"), llline);
+            tftMsg (true, 0, "IP geolocation err:");
+            tftMsg (true, 1000, "  %s", llline);
         } else
-            tftMsg (true, 1000, _FX("IP geolocation failed"));
+            tftMsg (true, 1000, "IP geolocation failed");
     }
 
     iploc_client.stop();
-    printFreeHeap (F("geolocateIP"));
 }
 
-/* search ntp_list for the fastest so far, or rotate if all bad.
- * N.B. always return one of ntp_list, never NULL
+/* return best ntp server.
+ * if user has set their own then always return that one;
+ * else search ntp_list for the fastest so far, if all look bad then just roll through.
+ * N.B. never return NULL
  */
-static NTPServer *findBestNTP()
+NTPServer *findBestNTP()
 {
+    static NTPServer user_server;
     static uint8_t prev_fixed;
 
+    // user's first
+    if (useLocalNTPHost()) {
+        user_server.server = getLocalNTPHost();
+        return (&user_server);
+    }
+
+    // else look through ntp_list
     NTPServer *best_ntp = &ntp_list[0];
     int rsp_min = ntp_list[0].rsp_time;
 
@@ -331,10 +314,13 @@ static NTPServer *findBestNTP()
             rsp_min = np->rsp_time;
         }
     }
+
+    // if nothing good there just roll through
     if (rsp_min == NTP_TOO_LONG) {
         prev_fixed = (prev_fixed+1) % N_NTP;
         best_ntp = &ntp_list[prev_fixed];
     }
+
     return (best_ntp);
 }
 
@@ -348,7 +334,7 @@ static void initWiFi (bool verbose)
     static const char dots[] = ".........................................";
 
     // probable mac when only localhost -- used to detect LAN but no WLAN
-    const char *mac_lh = _FX("FF:FF:FF:FF:FF:FF");
+    const char *mac_lh = "FF:FF:FF:FF:FF:FF";
 
 
     // begin
@@ -366,20 +352,20 @@ static void initWiFi (bool verbose)
     uint16_t ndots = 0;                                 // progress counter
     char mac[30];
     strcpy (mac, WiFi.macAddress().c_str());
-    tftMsg (verbose, 0, _FX("MAC addr: %s"), mac);
+    tftMsg (verbose, 0, "MAC addr: %s", mac);
 
     // wait for connection
     if (myssid)
         tftMsg (verbose, 0, "\r");                      // init overwrite
     do {
         if (myssid)
-            tftMsg (verbose, 0, _FX("Connecting to %s %.*s\r"), myssid, ndots, dots);
-        Serial.printf (_FX("Trying network %d\n"), ndots);
+            tftMsg (verbose, 0, "Connecting to %s %.*s\r", myssid, ndots, dots);
+        Serial.printf ("Trying network %d\n", ndots);
         if (timesUp(&t0,timeout) || ndots == (sizeof(dots)-1)) {
             if (myssid)
-                tftMsg (verbose, 1000, _FX("WiFi failed -- signal? credentials?"));
+                tftMsg (verbose, 1000, "WiFi failed -- signal? credentials?");
             else
-                tftMsg (verbose, 1000, _FX("Network connection attempt failed"));
+                tftMsg (verbose, 1000, "Network connection attempt failed");
             return;
         }
 
@@ -401,29 +387,26 @@ static void initWiFi (bool verbose)
         (void)newVersionIsAvailable (line, sizeof(line));
 
         IPAddress ip = WiFi.localIP();
-        tftMsg (verbose, 0, _FX("Local IP: %d.%d.%d.%d"), ip[0], ip[1], ip[2], ip[3]);
-        tftMsg (verbose, 0, _FX("Public IP: %s"), remote_addr);
+        tftMsg (verbose, 0, "Local IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+        tftMsg (verbose, 0, "Public IP: %s", remote_addr);
         ip = WiFi.subnetMask();
-        tftMsg (verbose, 0, _FX("Mask: %d.%d.%d.%d"), ip[0], ip[1], ip[2], ip[3]);
+        tftMsg (verbose, 0, "Mask: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
         ip = WiFi.gatewayIP();
-        tftMsg (verbose, 0, _FX("GW: %d.%d.%d.%d"), ip[0], ip[1], ip[2], ip[3]);
+        tftMsg (verbose, 0, "GW: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
         ip = WiFi.dnsIP();
-        tftMsg (verbose, 0, _FX("DNS: %d.%d.%d.%d"), ip[0], ip[1], ip[2], ip[3]);
+        tftMsg (verbose, 0, "DNS: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
 
         int rssi;
         if (readWiFiRSSI(rssi)) {
-            tftMsg (verbose, 0, _FX("Signal strength: %d dBm"), rssi);
-            tftMsg (verbose, 0, _FX("Channel: %d"), WiFi.channel());
+            tftMsg (verbose, 0, "Signal strength: %d dBm", rssi);
+            tftMsg (verbose, 0, "Channel: %d", WiFi.channel());
         }
 
-        tftMsg (verbose, 0, _FX("S/N: %u"), ESP.getChipId());
+        tftMsg (verbose, 0, "S/N: %u", ESP.getChipId());
     }
 
-    // retrieve cities
-    readCities();
-
     // log server's idea of our IP
-    Serial.printf (_FX("Remote_Addr: %s\n"), remote_addr);
+    Serial.printf ("Remote_Addr: %s\n", remote_addr);
 }
 
 /* call exactly once to init wifi, maps and maybe time and location.
@@ -431,21 +414,22 @@ static void initWiFi (bool verbose)
  */
 void initSys()
 {
+    // insure core_map is defined -- N.B. before initWiFi calls sendUserAgent()
+    initCoreMaps();
+
     // start/check WLAN
     initWiFi(true);
 
     // start web servers
     initWebServer();
-#if defined (_IS_UNIX)
     initLiveWeb(true);
-#endif
 
     // init location if desired
     if (useGeoIP() || init_iploc || init_locip) {
         if (WiFi.status() == WL_CONNECTED)
             geolocateIP (init_locip);
         else
-            tftMsg (true, 0, _FX("no network for geo IP"));
+            tftMsg (true, 0, "no network for geo IP");
     } else if (useGPSDLoc()) {
         LatLong ll;
         if (getGPSDLatLong(&ll)) {
@@ -461,58 +445,57 @@ void initSys()
             // de_tz.tz_secs = getTZ (de_ll);
             // NVWriteInt32(NV_DE_TZ, de_tz.tz_secs);
 
-            tftMsg (true, 0, _FX("GPSD: %.2f%c %.2f%c"),
+            tftMsg (true, 0, "GPSD: %.2f%c %.2f%c",
                                 fabsf(de_ll.lat_d), de_ll.lat_d < 0 ? 'S' : 'N',
                                 fabsf(de_ll.lng_d), de_ll.lng_d < 0 ? 'W' : 'E');
 
         } else
-            tftMsg (true, 1000, _FX("GPSD: no Lat/Long"));
+            tftMsg (true, 1000, "GPSD: no Lat/Long");
     }
 
 
     // skip box
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
-    drawStringInBox (_FX("Skip"), skip_b, false, RA8875_WHITE);
+    drawStringInBox ("Skip", skip_b, false, RA8875_WHITE);
     bool skipped_here = false;
 
 
     // init time service as desired
     if (useGPSDTime()) {
-        if (getGPSDUTC(&gpsd_server)) {
-            tftMsg (true, 0, _FX("GPSD: time ok"));
-            initTime();
-        } else
-            tftMsg (true, 1000, _FX("GPSD: no time"));
+        if (getGPSDUTC())
+            tftMsg (true, 0, "GPSD: time ok");
+        else
+            tftMsg (true, 1000, "GPSD: no time");
 
     } else if (useOSTime()) {
-        tftMsg (true, 0, _FX("Time from OS"));
+        tftMsg (true, 0, "Time from OS");
 
     } else if (WiFi.status() == WL_CONNECTED) {
 
         if (useLocalNTPHost()) {
 
             // test user choice
-            const char *local_ntp = getLocalNTPHost();
-            tftMsg (true, 0, _FX("NTP test %s ...\r"), local_ntp);
-            if (getNTPUTC(&ntp_server))
-                tftMsg (true, 0, _FX("NTP %s: ok\r"), local_ntp);
+            NTPServer *user_ntp = findBestNTP();        // will always return user's ntp
+            if (getNTPUTC(user_ntp))
+                tftMsg (true, 0, "NTP %s: %d ms\r", user_ntp->server, user_ntp->rsp_time);
             else
-                tftMsg (true, 0, _FX("NTP %s: fail\r"), local_ntp);
+                tftMsg (true, 0, "NTP %s: fail\r", user_ntp->server);
+
         } else {
 
             // try all the NTP servers to find the fastest (with sneaky way out)
             SCoord s;
             drainTouch();
-            tftMsg (true, 0, _FX("Finding best NTP ..."));
+            tftMsg (true, 0, "Finding best NTP ...");
             NTPServer *best_ntp = NULL;
             for (int i = 0; i < N_NTP; i++) {
                 NTPServer *np = &ntp_list[i];
 
                 // measure the next. N.B. assumes we stay in sync
-                if (getNTPUTC(&ntp_server) == 0)
-                    tftMsg (true, 0, _FX("%s: err\r"), np->server);
+                if (getNTPUTC(np) == 0)
+                    tftMsg (true, 0, "%s: err\r", np->server);
                 else {
-                    tftMsg (true, 0, _FX("%s: %d ms\r"), np->server, np->rsp_time);
+                    tftMsg (true, 0, "%s: %d ms\r", np->server, np->rsp_time);
                     if (!best_ntp || np->rsp_time < best_ntp->rsp_time)
                         best_ntp = np;
                 }
@@ -520,8 +503,8 @@ void initSys()
                 // cancel scan if found at least one good and tapped or typed
                 if (best_ntp && (skip_skip || tft.getChar(NULL,NULL)
                                    || (readCalTouchWS(s) != TT_NONE && inBox (s, skip_b)))) {
-                    drawStringInBox (_FX("Skip"), skip_b, true, RA8875_WHITE);
-                    Serial.printf (_FX("NTP search cancelled with %s\n"), best_ntp->server);
+                    drawStringInBox ("Skip", skip_b, true, RA8875_WHITE);
+                    Serial.printf ("NTP search cancelled with %s\n", best_ntp->server);
                     skipped_here = true;
                     break;
                 }
@@ -529,20 +512,20 @@ void initSys()
             if (!skip_skip)
                 wdDelay(800); // linger to show last time
             if (best_ntp)
-                tftMsg (true, 0, _FX("Best NTP: %s %d ms\r"), best_ntp->server, best_ntp->rsp_time);
+                tftMsg (true, 0, "Best NTP: %s %d ms\r", best_ntp->server, best_ntp->rsp_time);
             else
-                tftMsg (true, 0, _FX("No NTP\r"));
+                tftMsg (true, 0, "No NTP\r");
             drainTouch();
         }
         tftMsg (true, 0, NULL);   // next row
 
-        // go
-        initTime();
-
     } else {
 
-        tftMsg (true, 0, _FX("No time"));
+        tftMsg (true, 0, "No time");
     }
+
+    // go
+    initTime();
 
     // track from user's time if set
     if (usr_datetime > 0)
@@ -571,37 +554,38 @@ void initSys()
         NVWriteUInt8 (NV_BCMODE, bc_modevalue);
     }
 
-    // insure core_map is defined
-    initCoreMaps();
-
     // offer time to peruse unless alreay opted to skip
     if (!skipped_here) {
         #define     TO_DS 50                                // timeout delay, decaseconds
-        drawStringInBox (_FX("Skip"), skip_b, false, RA8875_WHITE);
+        drawStringInBox ("Skip", skip_b, false, RA8875_WHITE);
         uint8_t s_left = TO_DS/10;                          // seconds remaining
         uint32_t t0 = millis();
         drainTouch();
         for (uint8_t ds_left = TO_DS; !skip_skip && ds_left > 0; --ds_left) {
             SCoord s;
             if (tft.getChar(NULL,NULL) || (readCalTouchWS(s) != TT_NONE && inBox(s, skip_b))) {
-                drawStringInBox (_FX("Skip"), skip_b, true, RA8875_WHITE);
+                drawStringInBox ("Skip", skip_b, true, RA8875_WHITE);
                 break;
             }
             if ((TO_DS - (millis() - t0)/100)/10 < s_left) {
                 // just printing every ds_left/10 is too slow due to overhead
-                tftMsg (true, 0, _FX("Ready ... %d\r"), s_left--);
+                tftMsg (true, 0, "Ready ... %d\r", s_left--);
             }
             wdDelay(100);
         }
     }
 }
 
-/* check if time to update background map
+/* check if time to update background map, either rotating or stale
  */
 void checkBGMap(void)
 {
-    // local effective time
-    int now_time = nowWO();
+    // for sure update if later than next_map; there are other reasons too
+    bool time_to_refresh = myNow() > next_map;
+
+    // check for rotating, but not if just scheduled
+    if (next_map != 0 && time_to_refresh && mapIsRotating())
+        rotateNextMap();
 
     // note whether BC is up
     PlotPane bc_pp = findPaneChoiceNow (PLOT_CH_BC);
@@ -610,8 +594,8 @@ void checkBGMap(void)
     // check VOACAP first
     if (prop_map.active) {
 
-        // update if time or to stay in sync with BC or it's beee over an hour
-        if (myNow()>next_map || (bc_up && tdiff(map_time,bc_time)>=3600) || tdiff(now_time,map_time)>=3600) {
+        // update if time or to stay in sync with BC or it's been over an hour
+        if (time_to_refresh || (bc_up && tdiff(map_time,bc_time)>=3600) || tdiff(nowWO(),map_time)>=3600) {
 
             // show busy if BC up
             if (bc_up)
@@ -620,8 +604,8 @@ void checkBGMap(void)
             // update prop map, schedule next
             bool ok = installFreshMaps();
             if (ok) {
-                next_map = myNow() + VOACAP_INTERVAL;           // schedule normal refresh
-                map_time = now_time;                            // map is now current
+                next_map = nextMapUpdate(VOACAP_INTERVAL);      // schedule normal refresh
+                map_time = nowWO();                             // map is now current
                 initEarthMap();                                 // restart fresh
 
                 // sync DRAP plot too if in use
@@ -639,23 +623,24 @@ void checkBGMap(void)
                 plotBandConditions (plot_b[bc_pp], ok ? 0 : -1, NULL, NULL);
 
             time_t dt = next_map - myNow();
-            Serial.printf (_FX("Next VOACAP map check in %ld s at %ld\n"), dt, millis()/1000+dt);
+            Serial.printf ("Next VOACAP map check in %ld s at %ld\n", dt, millis()/1000+dt);
         }
 
     } else if (core_map != CM_NONE) {
 
-        if (myNow() > next_map || tdiff(now_time,map_time)>=3600) {
+        // update if time or it's been over an hour
+        if (time_to_refresh || tdiff(nowWO(),map_time)>=3600) {
 
             // update map, schedule next
             bool ok = installFreshMaps();
             if (ok) {
                 // schedule next refresh
                 if (core_map == CM_DRAP)
-                    next_map = myNow() + DRAPMAP_INTERVAL;
+                    next_map = nextMapUpdate(DRAPMAP_INTERVAL);
                 else if (core_map == CM_MUF_RT)
-                    next_map = myNow() + MUF_RT_INTERVAL;
+                    next_map = nextMapUpdate(MUF_RT_INTERVAL);
                 else
-                    next_map = myNow() + OTHER_MAPS_INTERVAL;
+                    next_map = nextMapUpdate(OTHER_MAPS_INTERVAL);
 
                 // update corresponding world wx data
                 if (core_map == CM_WX) {
@@ -664,27 +649,29 @@ void checkBGMap(void)
                 }
 
                 // note time of map
-                map_time = now_time;                            // map is now current
+                map_time = nowWO();                             // map is now current
 
                 // start
                 initEarthMap();
 
-            } else
+            } else {
                 next_map = nextWiFiRetry(coremap_names[core_map]); // schedule retry
+                map_time = nowWO()+10;                          // avoid immediate retry
+            }
 
             // insure BC band is off
             if (bc_up)
                 plotBandConditions (plot_b[bc_pp], 0, NULL, NULL);
 
             time_t dt = next_map - myNow();
-            Serial.printf (_FX("Next %s map check in %ld s at %ld\n"), coremap_names[core_map],
+            Serial.printf ("Next %s map check in %ld s at %ld\n", coremap_names[core_map],
                                         dt, millis()/1000+dt);
         }
 
     } else {
 
         // eh??
-        fatalError (_FX("no map"));
+        fatalError ("no map");
 
     }
 }
@@ -696,7 +683,7 @@ char *xrayLevel (char *buf, const SpaceWeather_t &xray)
     if (!xray.value_ok)
         strcpy (buf, "Err");
     else if (xray.value < 1e-8)
-        strcpy (buf, _FX("A0.0"));
+        strcpy (buf, "A0.0");
     else {
         static const char levels[] = "ABCMX";
         int power = floorf(log10f(xray.value));
@@ -704,7 +691,7 @@ char *xrayLevel (char *buf, const SpaceWeather_t &xray)
             power = -4;
         float mantissa = xray.value*powf(10.0F,-power);
         char alevel = levels[8+power];
-        snprintf (buf, 10, _FX("%c%.1f"), alevel, mantissa);
+        snprintf (buf, 10, "%c%.1f", alevel, mantissa);
     }
     return (buf);
 }
@@ -722,16 +709,12 @@ static bool retrieveBandConditions (char *config)
     // init data unknown
     bc_matrix.ok = false;
 
-    // build query -- muck about because of PROGMEM
-    const size_t bc_page_len = sizeof(bc_page) - 1;
-    const size_t qsize = bc_page_len+200;
-    StackMalloc query_mem (qsize);
-    char *query = (char *) query_mem.getMem();
+    // build query for now
     time_t t = nowWO();
-    strcpy_P (query, bc_page);
-    snprintf (query+bc_page_len, qsize-bc_page_len,
-        _FX("?YEAR=%d&MONTH=%d&RXLAT=%.3f&RXLNG=%.3f&TXLAT=%.3f&TXLNG=%.3f&UTC=%d&PATH=%d&POW=%d&MODE=%d&TOA=%.1f"),
-        year(t), month(t), dx_ll.lat_d, dx_ll.lng_d, de_ll.lat_d, de_ll.lng_d,
+    char query[sizeof(bc_page) + 200];
+    snprintf (query, sizeof(query),
+        "%s?YEAR=%d&MONTH=%d&RXLAT=%.3f&RXLNG=%.3f&TXLAT=%.3f&TXLNG=%.3f&UTC=%d&PATH=%d&POW=%d&MODE=%d&TOA=%.1f",
+        bc_page, year(t), month(t), dx_ll.lat_d, dx_ll.lng_d, de_ll.lat_d, de_ll.lng_d,
         hour(t), show_lp, bc_power, bc_modevalue, bc_toa);
 
     Serial.println (query);
@@ -752,14 +735,14 @@ static bool retrieveBandConditions (char *config)
             Serial.println (F("BC: No response"));
             goto out;
         }
-        // Serial.printf (_FX("BC response: %s\n"), buf);
+        // Serial.printf ("BC response: %s\n", buf);
 
         // next line is configuration summary, save if interested
         if (!getTCPLine (bc_client, buf, sizeof(buf), NULL)) {
             Serial.println (F("BC: No config"));
             goto out;
         }
-        // Serial.printf (_FX("BC config: %s\n"), buf);
+        // Serial.printf ("BC config: %s\n", buf);
         if (config)
             strcpy (config, buf);
 
@@ -777,16 +760,16 @@ static bool retrieveBandConditions (char *config)
 
             // read next row
             if (!getTCPLine (bc_client, buf, sizeof(buf), NULL)) {
-                Serial.printf (_FX("BC: fail row %d"), r);
+                Serial.printf ("BC: fail row %d", r);
                 goto out;
             }
 
             // crack row, skipping 60 m
             int utc_hr;
-            if (sscanf(buf, _FX("%d %f,%*f,%f,%f,%f,%f,%f,%f,%f"), &utc_hr,
+            if (sscanf(buf, "%d %f,%*f,%f,%f,%f,%f,%f,%f,%f", &utc_hr,
                         &rel[0], &rel[1], &rel[2], &rel[3], &rel[4], &rel[5], &rel[6], &rel[7])
                             != BMTRX_COLS + 1) {
-                Serial.printf (_FX("BC: bad matrix line: %s\n"), buf);
+                Serial.printf ("BC: bad matrix line: %s\n", buf);
                 goto out;
             }
 
@@ -819,218 +802,21 @@ out:
     return (ok);
 }
 
-/* check for tap at s known to be within BandConditions box b:
- *    tapping left-half band toggles REF map, right-half toggles TOA map
- *    tapping timeline toggles bc_utc_tl;
- *    tapping power offers power menu;
- *    tapping TOA offers take-off menu;
- *    tapping SP/LP toggles.
- * return whether tap was useful for us.
- * N.B. coordinate tap positions with plotBandConditions()
+/* convert an array of 4 big-endian network-order bytes into a uint32_t
  */
-bool checkBCTouch (const SCoord &s, const SBox &b)
+static uint32_t crackBE32 (uint8_t bp[])
 {
-    // not ours if not in our box or tapped titled or data not valid
-    if (!inBox (s, b) || s.y < b.y+PANETITLE_H || !bc_matrix.ok)
-        return (false);
+    union {
+        uint32_t be;
+        uint8_t ba[4];
+    } be4;
 
-    // tap area for power cycle
-    SBox power_b;
-    power_b.x = b.x + 5;
-    power_b.y = b.y + 13*b.h/14;
-    power_b.w = b.w/5;
-    power_b.h = b.h/12;
-    // drawSBox (power_b, RA8875_RED);     // RBF
+    be4.ba[3] = bp[0];
+    be4.ba[2] = bp[1];
+    be4.ba[1] = bp[2];
+    be4.ba[0] = bp[3];
 
-    // tap area for mode choice
-    SBox mode_b;
-    mode_b.x = power_b.x + power_b.w + 1;
-    mode_b.y = power_b.y;
-    mode_b.w = b.w/6;
-    mode_b.h = power_b.h;
-    // drawSBox (mode_b, RA8875_RED);      // RBF
-
-    // tap area for TOA
-    SBox toa_b;
-    toa_b.x = mode_b.x + mode_b.w + 1;
-    toa_b.y = mode_b.y;
-    toa_b.w = b.w/5;
-    toa_b.h = mode_b.h;
-    // drawSBox (toa_b, RA8875_RED);       // RBF
-
-    // tap area for SP/LP
-    SBox splp_b;
-    splp_b.x = toa_b.x + toa_b.w + 1;
-    splp_b.y = toa_b.y;
-    splp_b.w = b.w/6;
-    splp_b.h = toa_b.h;
-    // drawSBox (splp_b, RA8875_RED);      // RBF
-
-    // tap area for timeline strip
-    SBox tl_b;
-    tl_b.x = b.x + 1;
-    tl_b.y = b.y + 12*b.h/14;
-    tl_b.w = b.w - 2;
-    tl_b.h = b.h/12;
-    // drawSBox (tl_b, RA8875_WHITE);      // RBF
-
-    if (inBox (s, power_b)) {
-
-        // build menu of available power choices
-        MenuItem mitems[n_bc_powers];
-        char labels[n_bc_powers][20];
-        for (int i = 0; i < n_bc_powers; i++) {
-            MenuItem &mi = mitems[i];
-            mi.type = MENU_1OFN;
-            mi.set = bc_power == bc_powers[i];
-            mi.group = 1;
-            mi.indent = 5;
-            mi.label = labels[i];
-            snprintf (labels[i], sizeof(labels[i]), _FX("%d watt%s"), bc_powers[i],
-                                bc_powers[i] > 1 ? "s" : ""); 
-        };
-
-        SBox menu_b;
-        menu_b.x = power_b.x;
-        menu_b.y = b.y + b.h/4;
-        menu_b.w = 0;           // shrink to fit
-
-        // run menu, find selection
-        SBox ok_b;
-        MenuInfo menu = {menu_b, ok_b, true, false, 1, NARRAY(mitems), mitems};
-        uint16_t new_power = bc_power;
-        if (runMenu (menu)) {
-            for (int i = 0; i < n_bc_powers; i++) {
-                if (menu.items[i].set) {
-                    new_power = bc_powers[i];
-                    break;
-                }
-            }
-        }
-
-        // always redo BC if nothing else to erase menu but only update voacap if power changed
-        bool power_changed = new_power != bc_power;
-        if (power_changed) {
-            bc_power = new_power;
-            NVWriteUInt16 (NV_BCPOWER, bc_power);
-            scheduleNewVOACAPMap(prop_map);
-        }
-        (void) updateBandConditions (b, power_changed);
-
-    } else if (inBox (s, mode_b)) {
-
-        // show menu of available mode choices
-        MenuItem mitems[N_BCMODES];
-        for (int i = 0; i < N_BCMODES; i++)
-            mitems[i] = {MENU_1OFN, bc_modevalue == bc_modes[i].value, 1, 5, bc_modes[i].name};
-
-        SBox menu_b;
-        menu_b.x = mode_b.x;
-        menu_b.y = b.y + b.h/3;
-        menu_b.w = 0;           // shrink to fit
-
-        // run menu, find selection
-        SBox ok_b;
-        MenuInfo menu = {menu_b, ok_b, true, false, 1, N_BCMODES, mitems};
-        uint16_t new_modevalue = bc_modevalue;
-        if (runMenu (menu)) {
-            for (int i = 0; i < N_BCMODES; i++) {
-                if (menu.items[i].set) {
-                    new_modevalue = bc_modes[i].value;
-                    break;
-                }
-            }
-        }
-
-        // always redo BC if nothing else to erase menu but only update voacap if mode changed
-        bool mode_changed = new_modevalue != bc_modevalue;
-        if (mode_changed) {
-            bc_modevalue = new_modevalue;
-            NVWriteUInt8 (NV_BCMODE, bc_modevalue);
-            scheduleNewVOACAPMap(prop_map);
-        }
-        (void) updateBandConditions (b, mode_changed);
-
-    } else if (inBox (s, toa_b)) {
-
-        // show menu of available TOA choices
-        // N.B. line display width can only accommodate 1 character
-        MenuItem mitems[3];
-        mitems[0] = {MENU_1OFN, bc_toa <= 1,              1, 5, ">1 deg"};
-        mitems[1] = {MENU_1OFN, bc_toa > 1 && bc_toa < 9, 1, 5, ">3 degs"};
-        mitems[2] = {MENU_1OFN, bc_toa >= 9,              1, 5, ">9 degs"};
-
-        SBox menu_b;
-        menu_b.x = toa_b.x;
-        menu_b.y = b.y + b.h/2;
-        menu_b.w = 0;           // shrink to fit
-
-        // run menu, find selection
-        SBox ok_b;
-        MenuInfo menu = {menu_b, ok_b, true, false, 1, NARRAY(mitems), mitems};
-        float new_toa = bc_toa;
-        if (runMenu (menu)) {
-            for (int i = 0; i < NARRAY(mitems); i++) {
-                if (menu.items[i].set) {
-                    new_toa = atof (mitems[i].label+1);
-                    break;
-                }
-            }
-        }
-
-        // always redo BC if nothing else to erase menu but only update voacap if mode changed
-        bool toa_changed = new_toa != bc_toa;
-        if (toa_changed) {
-            bc_toa = new_toa;
-            NVWriteFloat (NV_BCTOA, bc_toa);
-            scheduleNewVOACAPMap(prop_map);
-        }
-        (void) updateBandConditions (b, toa_changed);
-
-    } else if (inBox (s, splp_b)) {
-
-        // toggle short/long path -- update DX info too
-        show_lp = !show_lp;
-        NVWriteUInt8 (NV_LP, show_lp);
-        scheduleNewVOACAPMap(prop_map);
-        drawDXInfo ();
-        (void) updateBandConditions (b, true);
-    
-    } else if (inBox (s, tl_b)) {
-
-        // toggle bc_utc_tl and redraw
-        bc_utc_tl = !bc_utc_tl;
-        NVWriteUInt8 (NV_BC_UTCTIMELINE, bc_utc_tl);
-        plotBandConditions (b, 0, NULL, NULL);
-
-    } else {
-
-        // check tapping a row in the table. if so toggle band and type.
-
-        PropMapSetting new_prop_map = prop_map;
-        PropMapBand tap_band = (PropMapBand) ((b.y + b.h - 20 - s.y) / ((b.h - 47)/BMTRX_COLS));
-        PropMapType tap_type = s.x < b.x + b.w/2 ? PROPTYPE_REL : PROPTYPE_TOA;
-        if (prop_map.active && tap_band == prop_map.band && tap_type == prop_map.type) {
-            // tapped same prop map, turn off active VOACAP selection
-            new_prop_map.active = false;
-        } else if (tap_band >= 0 && tap_band < PROPBAND_N) {
-            // tapped a different VOACAP selection
-            new_prop_map.active = true;
-            new_prop_map.band = tap_band;
-            new_prop_map.type = tap_type;
-        }
-
-        // update
-        scheduleNewVOACAPMap(new_prop_map);
-        if (!new_prop_map.active) {
-            scheduleNewCoreMap (core_map);
-            plotBandConditions (b, 0, NULL, NULL);  // indicate no longer active
-        }
-
-    }
-
-    // ours just because tap was below title
-    return (true);
+    return (be4.be);
 }
 
 /* keep the NCDXF_b up to date.
@@ -1042,7 +828,7 @@ static void checkBRB (time_t t)
     updateBeacons (false);
 
     // see if it's time to rotate
-    if (t > brb_updateT) {
+    if (t > brb_next_update) {
 
         // move brb_mode to next rotset if rotating
         if (BRBIsRotating()) {
@@ -1050,37 +836,22 @@ static void checkBRB (time_t t)
                 int next_mode = (brb_mode + i) % BRB_N;
                 if (brb_rotset & (1 << next_mode)) {
                     brb_mode = next_mode;
-                    Serial.printf (_FX("BRB: rotating to mode \"%s\"\n"), brb_names[brb_mode]);
+                    Serial.printf ("BRB: rotating to mode \"%s\"\n", brb_names[brb_mode]);
                     break;
                 }
             }
         }
 
         // update brb_mode
-        if (!drawNCDXFBox()) {
+        if (drawNCDXFBox()) {
 
-            // trouble: retry
-            brb_updateT = nextWiFiRetry("BRB");
+            brb_next_update = nextRotation(PANE_NONE);
 
         } else {
 
-            // ok: sync rotation with next soonest rotating pane if any, else use standard pane rotation
-            time_t next_rotT = 0;
-            for (int i = 0; i < PANE_N; i++) {
-                if (paneIsRotating((PlotPane)i)) {
-                    if (!next_rotT || next_update[i] < next_rotT)
-                        next_rotT = next_update[i];
-                }
-            }
-            if (next_rotT)
-                brb_updateT = next_rotT;
-            else
-                brb_updateT = t + ROTATION_INTERVAL;
+            // trouble
+            brb_next_update = nextWiFiRetry("BRB");
         }
-
-        int dt = brb_updateT - myNow();
-        int nm = millis()/1000+dt;
-        Serial.printf (_FX("BRB: Next pane update in %d sec at %d\n"), dt, nm);
 
     } else {
 
@@ -1174,12 +945,10 @@ bool setPlotChoice (PlotPane pp, PlotChoice pc)
 
     // ok, commit choice to the given pane with immediate refresh
     plot_ch[pp] = pc;
+    fresh_redraw[pc] = true;
     next_update[pp] = 0;
-    fresh_update[pc] = true;
 
-    // insure DX and gimbal are off if no longer selected for display
-    if (findPaneChoiceNow (PLOT_CH_DXCLUSTER) == PANE_NONE)
-        closeDXCluster();
+    // insure gimbal off if no longer selected for display
     if (findPaneChoiceNow (PLOT_CH_GIMBAL) == PANE_NONE)
         closeGimbal();
 
@@ -1190,291 +959,14 @@ bool setPlotChoice (PlotPane pp, PlotChoice pc)
     return (true);
 }
 
-/* check if it is time to update any info via wifi.
- * proceed even if no wifi to allow subsystems to update.
- */
-void updateWiFi(void)
-{
-
-    // time now
-    time_t t0 = myNow();
-
-    // update each pane
-    for (int i = PANE_0; i < PANE_N; i++) {
-
-        // too bad you can't iterate an enum
-        PlotPane pp = (PlotPane)i;
-
-        // handy
-        const SBox &box = plot_b[pp];
-        PlotChoice pc = plot_ch[pp];
-        bool new_rot_ch = false;
-
-        // rotate if this pane is rotating and it's time but not if being forced
-        if (paneIsRotating(pp) && next_update[pp] > 0 && t0 >= next_update[pp]) {
-            pc = plot_ch[pp] = getNextRotationChoice(pp, plot_ch[pp]);
-            new_rot_ch = true;
-
-            // a few panes must do a complete refresh when they are freshly exposed
-            switch (pc) {
-            case PLOT_CH_MOON:
-            case PLOT_CH_SDO:
-                fresh_update[pc] = true;
-                break;
-            default:
-                break;
-            }
-
-        }
-
-        switch (pc) {
-
-        case PLOT_CH_BC:
-            if (t0 >= next_update[pp]) {
-                if (updateBandConditions (box, fresh_update[pc])) {
-                    next_update[pp] = nextPaneUpdate (pc, BC_INTERVAL);
-                    fresh_update[pc] = false;
-                } else
-                    next_update[pp] = nextWiFiRetry (PLOT_CH_BC);
-            }
-            break;
-
-        case PLOT_CH_DEWX:
-            if (t0 >= next_update[pp]) {
-                if (updateDEWX(box))
-                    next_update[pp] = nextPaneUpdate (pc, DEWX_INTERVAL);
-                else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_DXCLUSTER:
-            if (t0 >= next_update[pp]) {
-                if (updateDXCluster(box))
-                    next_update[pp] = 0;   // constant poll
-                else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_DXWX:
-            if (t0 >= next_update[pp]) {
-                if (updateDXWX(box))
-                    next_update[pp] = nextPaneUpdate (pc, DXWX_INTERVAL);
-                else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_FLUX:
-            if (t0 >= next_update[pp]) {
-                if (updateSolarFlux(box))
-                    next_update[pp] = nextPaneUpdate (pc, SFLUX_INTERVAL);
-                else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_KP:
-            if (t0 >= next_update[pp]) {
-                if (updateKp(box))
-                    next_update[pp] = nextPaneUpdate (pc, KP_INTERVAL);
-                else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_MOON:
-            if (t0 >= next_update[pp]) {
-                updateMoonPane (box, fresh_update[pc]);
-                fresh_update[pc] = false;
-                next_update[pp] = nextPaneUpdate (pc, MOON_INTERVAL);
-            }
-            break;
-
-        case PLOT_CH_NOAASPW:
-            if (t0 >= next_update[pp]) {
-                if (updateNOAASWx(box))
-                    next_update[pp] = nextPaneUpdate (pc, NOAASPW_INTERVAL);
-                else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_SSN:
-            if (t0 >= next_update[pp]) {
-                if (updateSunSpots(box))
-                    next_update[pp] = nextPaneUpdate (pc, SSN_INTERVAL);
-                else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_XRAY:
-            if (t0 >= next_update[pp]) {
-                if (updateXRay(box))
-                    next_update[pp] = nextPaneUpdate (pc, XRAY_INTERVAL);
-                else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_GIMBAL:
-            if (t0 >= next_update[pp]) {
-                updateGimbal(box);
-                next_update[pp] = 0;                // constant poll
-            }
-            break;
-
-        case PLOT_CH_TEMPERATURE:               // fallthru
-        case PLOT_CH_PRESSURE:                  // fallthru
-        case PLOT_CH_HUMIDITY:                  // fallthru
-        case PLOT_CH_DEWPOINT:
-            if (t0 >= next_update[pp]) {
-                drawOneBME280Pane (box, pc);
-                next_update[pp] = nextPaneUpdate (pc, ROTATION_INTERVAL);
-            } else if (newBME280data()) {
-                drawOneBME280Pane (box, pc);
-            }
-            break;
-
-        case PLOT_CH_SDO:
-            if (t0 >= next_update[pp]) {
-                if (updateSDOPane (box, fresh_update[pc])) {
-                    next_update[pp] = nextPaneUpdate (pc, isSDORotating() ? ROTATION_INTERVAL : SDO_INTERVAL);
-                    fresh_update[pc] = false;
-                } else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_SOLWIND:
-            if (t0 >= next_update[pp]) {
-                if (updateSolarWind(box))
-                    next_update[pp] = nextPaneUpdate (pc, SWIND_INTERVAL);
-                else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_DRAP:
-            if (t0 >= next_update[pp]) {
-                if (updateDRAP(box))
-                    next_update[pp] = nextPaneUpdate (pc, DRAPPLOT_INTERVAL);
-                else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_COUNTDOWN:
-            // handled by stopwatch system
-            break;
-
-        case PLOT_CH_CONTESTS:
-            if (t0 >= next_update[pp]) {
-                if (updateContests(box))
-                    next_update[pp] = nextPaneUpdate (pc, CONTESTS_INTERVAL);
-                else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_PSK:
-            if (t0 >= next_update[pp]) { 
-                if (updatePSKReporter(box, fresh_update[pc])) {
-                    next_update[pp] = nextPaneUpdate (pc, PSK_INTERVAL);
-                    fresh_update[pc] = false;
-                } else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_BZBT:
-            if (t0 >= next_update[pp]) { 
-                if (updateBzBt(box))
-                    next_update[pp] = nextPaneUpdate (pc, BZBT_INTERVAL);
-                else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_POTA:
-            if (t0 >= next_update[pp]) { 
-                if (updateOnTheAir(box, ONTA_POTA, fresh_update[pc])) {
-                    next_update[pp] = nextPaneUpdate (pc, ONTA_INTERVAL);
-                    fresh_update[pc] = false;
-                } else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_SOTA:
-            if (t0 >= next_update[pp]) { 
-                if (updateOnTheAir(box, ONTA_SOTA, fresh_update[pc])) {
-                    next_update[pp] = nextPaneUpdate (pc, ONTA_INTERVAL);
-                    fresh_update[pc] = false;
-                } else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_ADIF:
-            if (t0 >= next_update[pp]) {
-                updateADIF (box);
-                next_update[pp] = nextPaneUpdate (pc, ADIF_INTERVAL);
-            }
-            break;
-
-        case PLOT_CH_AURORA:
-            if (t0 >= next_update[pp]) { 
-                if (updateAurora(box))
-                    next_update[pp] = nextPaneUpdate (pc, AURORA_INTERVAL);
-                else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_N:
-            break;              // lint
-        }
-
-        // show immediately this is a new rotating pane
-        if (new_rot_ch)
-            showRotatingBorder ();
-    }
-
-    // freshen ADIF memory usage
-    checkADIF();
-
-    // freshen NCDXF_b
-    checkBRB(t0);
-
-    // freshen RSS
-    checkRSS();
-
-    // freshen world weather table unless wx map is doing it
-    if (t0 >= next_wwx) {
-        if (!prop_map.active && core_map == CM_WX)
-            next_map = 0;                       // this causes checkMap() to call fetchWorldWx()
-        else
-            fetchWorldWx();
-        next_wwx = myNow() + WWX_INTERVAL;
-    }
-
-    // maps are checked after each full earth draw -- see drawMoreEarth()
-
-    // check for server commands
-    checkWebServer(false);
-}
-
 
 /* NTP time server query.
- * returns UNIX time and server used if ok, or 0 if trouble.
+ * returns UNIX time if ok, or 0 if trouble.
  * for good NTP packet description try
  *   http://www.cisco.com
  *      /c/en/us/about/press/internet-protocol-journal/back-issues/table-contents-58/154-ntp.html
  */
-time_t getNTPUTC(const char **server)
+time_t getNTPUTC (NTPServer *ntp)
 {
     // NTP contents packet
     static const uint8_t timeReqA[] = { 0xE3, 0x00, 0x06, 0xEC };
@@ -1491,16 +983,6 @@ time_t getNTPUTC(const char **server)
         return (0);
     }
 
-    // decide on server: user's else fastest 
-    NTPServer *ntp_use = &ntp_list[0];                          // a place for rsp_time if useLocal
-    const char *ntp_server;
-    if (useLocalNTPHost()) {
-        ntp_server = getLocalNTPHost();
-    } else {
-        ntp_use = findBestNTP();
-        ntp_server = ntp_use->server;
-    }
-
     // NTP buffer and timers
     uint8_t  buf[48];
     uint32_t tx_ms, rx_ms;
@@ -1511,13 +993,13 @@ time_t getNTPUTC(const char **server)
     memcpy(&buf[12], timeReqB, sizeof(timeReqB));
 
     // send
-    Serial.printf(_FX("NTP: Issuing request to %s\n"), ntp_server);
-    ntp_udp.beginPacket (ntp_server, 123);                      // NTP uses port 123
+    Serial.printf("NTP: Issuing request to %s\n", ntp->server);
+    ntp_udp.beginPacket (ntp->server, 123);                     // NTP uses port 123
     ntp_udp.write(buf, sizeof(buf));
     tx_ms = millis();                                           // record when packet sent
     if (!ntp_udp.endPacket()) {
         Serial.println (F("NTP: UDP write failed"));
-        ntp_use->rsp_time = NTP_TOO_LONG;                       // force different choice next time
+        ntp->rsp_time = NTP_TOO_LONG;                           // force different choice next time
         ntp_udp.stop();
         return (0UL);
     }
@@ -1527,10 +1009,10 @@ time_t getNTPUTC(const char **server)
     // Serial.print(F("NTP: Awaiting response ... "));
     memset(buf, 0, sizeof(buf));
     uint32_t t0 = millis();
-    while (!ntp_udp.parsePacket()) {
+    while (ntp_udp.parsePacket() == 0) {
         if (timesUp (&t0, NTP_TOO_LONG)) {
             Serial.println(F("NTP: UDP timed out"));
-            ntp_use->rsp_time = NTP_TOO_LONG;                   // force different choice next time
+            ntp->rsp_time = NTP_TOO_LONG;                       // force different choice next time
             ntp_udp.stop();
             return (0UL);
         }
@@ -1539,22 +1021,21 @@ time_t getNTPUTC(const char **server)
     rx_ms = millis();                                           // record when packet arrived
 
     // record response time
-    ntp_use->rsp_time = rx_ms - tx_ms;
-    Serial.printf (_FX("NTP: %s replied after %d ms\n"), ntp_server, ntp_use->rsp_time);
+    ntp->rsp_time = rx_ms - tx_ms;
+    // Serial.printf ("NTP: %s replied after %d ms\n", ntp->server, ntp->rsp_time);
 
     // read response
     if (ntp_udp.read (buf, sizeof(buf)) != sizeof(buf)) {
         Serial.println (F("NTP: UDP read failed"));
-        ntp_use->rsp_time = NTP_TOO_LONG;                       // force different choice next time
+        ntp->rsp_time = NTP_TOO_LONG;                           // force different choice next time
         ntp_udp.stop();
         return (0UL);
     }
-    Serial.printf (_FX("NTP: received 48 from %s\n"), ntp_udp.remoteIP().toString().c_str());
 
     // only accept server responses which are mode 4
     uint8_t mode = buf[0] & 0x7;
     if (mode != 4) {                                            // insure server packet
-        Serial.printf (_FX("NTP: RX mode must be 4 but it is %d\n"), mode);
+        Serial.printf ("NTP: RX mode must be 4 but it is %d\n", mode);
         ntp_udp.stop();
         return (0UL);
     }
@@ -1562,7 +1043,7 @@ time_t getNTPUTC(const char **server)
     // crack and advance to next whole second
     time_t unix_s = crackBE32 (&buf[40]) - 2208988800UL;        // packet transmit time - (1970 - 1900)
     if ((uint32_t)unix_s > 0x7FFFFFFFUL) {                      // sanity check beyond unsigned value
-        Serial.printf (_FX("NTP: crazy large UNIX time: %ld\n"), unix_s);
+        Serial.printf ("NTP: crazy large UNIX time: %ld\n", unix_s);
         ntp_udp.stop();
         return (0UL);
     }
@@ -1580,14 +1061,12 @@ time_t getNTPUTC(const char **server)
 
     // one more sanity check
     if (unix_s < 1577836800L) {          // Jan 1 2020
-        Serial.printf (_FX("NTP: crazy small UNIX time: %ld\n"), unix_s);
+        Serial.printf ("NTP: crazy small UNIX time: %ld\n", unix_s);
         ntp_udp.stop();
         return (0UL);
     }
 
     ntp_udp.stop();
-    *server = ntp_server;
-    printFreeHeap (F("NTP"));
     return (unix_s);
 }
 
@@ -1600,6 +1079,10 @@ bool getTCPChar (WiFiClient &client, char *cp)
     if (!client.available()) {
         uint32_t t0 = millis();
         while (!client.available()) {
+            if (!client) {
+                // Serial.print (F("getTCPChar EOF\n"));
+                return (false);
+            }
             if (!client.connected()) {
                 // Serial.print (F("getTCPChar disconnect\n"));
                 return (false);
@@ -1647,10 +1130,8 @@ void sendUserAgent (WiFiClient &client)
             else if (fs)
                 dpy_mode = 2;
         #endif
-        #if defined(_IS_UNIX)
-            #if defined(_WEB_ONLY)
-                dpy_mode = 5;
-            #endif
+        #if defined(_WEB_ONLY)
+            dpy_mode = 5;
         #endif
 
         // encode stopwatch if on else as per map_proj
@@ -1666,7 +1147,7 @@ void sendUserAgent (WiFiClient &client)
             case MAPP_AZIMUTHAL: main_page = 1; break;
             case MAPP_AZIM1:     main_page = 5; break;
             case MAPP_ROB:       main_page = 6; break;
-            default: fatalError(_FX("sendUserAgent() map_proj %d"), map_proj);
+            default: fatalError("sendUserAgent() map_proj %d", map_proj);
             }
             break;
         case SWD_MAIN:
@@ -1685,7 +1166,8 @@ void sendUserAgent (WiFiClient &client)
         time_t a_utct;
         bool a_utc;
         uint16_t a_hr, a_mn;
-        getDailyAlarmState (a_ds, a_hr, a_mn);
+        bool alarm_utc;
+        getDailyAlarmState (a_ds, a_hr, a_mn, alarm_utc);
         char a_str[100];
         getOneTimeAlarmState (a_os, a_utct, a_utc, a_str, sizeof(a_str));
         int alarms = 0;
@@ -1701,15 +1183,16 @@ void sendUserAgent (WiFiClient &client)
         // V3.07: added PANE_0
         int plotops[PANE_N];
         for (int i = 0; i < PANE_N; i++)
-            plotops[i] = paneIsRotating((PlotPane)i) ? 100+(int)plot_ch[i] : (int)plot_ch[i];
+            plotops[i] = isPaneRotating((PlotPane)i) ? 100+(int)plot_ch[i] : (int)plot_ch[i];
 
-        // prefix map style with N if not showing night
-        char map_style[NV_COREMAPSTYLE_LEN+1];
-        (void) getMapStyle(map_style);
-        if (!night_on) {
-            memmove (map_style+1, map_style, sizeof(map_style)-1);
-            map_style[0] = 'N';
-        }
+        // prefix map style with N unless showing night and/or R if in a rotation set
+        char map_style[NV_COREMAPSTYLE_LEN+2];
+        char *mp = map_style;
+        if (!night_on)
+            *mp++ = 'N';
+        if (mapIsRotating())
+            *mp++ = 'R';
+        (void) getMapStyle(mp);
 
         // kx3 baud else gpio on/off
         int gpio = getKX3Baud();
@@ -1798,6 +1281,13 @@ void sendUserAgent (WiFiClient &client)
         else if (useOSTime())
             ntp = 2;                                    // added in 3.05
 
+        // active watch lists
+        int wl = 0;
+        for (int i = 0; i < WLID_N; i++) {
+            if (getWatchListState ((WatchListId)i, NULL) != WLA_OFF)
+                wl |= (1 << i);
+        }
+
         // panzoom
         bool pz = pan_zoom.zoom != MIN_ZOOM || pan_zoom.pan_x != 0 || pan_zoom.pan_y != 0;
 
@@ -1824,12 +1314,14 @@ void sendUserAgent (WiFiClient &client)
             call_fg, call_bg, !clockTimeOk(), // default clock 0 == ok
 
             // new for LV7:
-            scrollTopToBottom(), nMoreScrollRows(), rankSpaceWx(), showNewDXDEWx(), getPaneRotationPeriod(),
-            pw_file != NULL, n_roweb>0, pz, plotops[PANE_0], screenIsLocked(), showPIP(),
-            0, 0, 0, 0);
+            scrollTopToBottom(),
+            0, // nMoreSroll rm V4.04
+            rankSpaceWx(), showNewDXDEWx(), getPaneRotationPeriod(), pw_file != NULL, n_roweb>0, pz,
+            plotops[PANE_0], screenIsLocked(), showPIP(), (int)getGrayDisplay(), wl,
+            0, 0);
 
     } else {
-        snprintf (ua, sizeof(ua), _FX("User-Agent: %s/%s (id %u up %lld) crc %d\r\n"),
+        snprintf (ua, sizeof(ua), "User-Agent: %s/%s (id %u up %lld) crc %d\r\n",
             platform, hc_version, ESP.getChipId(), (long long)getUptime(NULL,NULL,NULL,NULL), flash_crc_ok);
     }
 
@@ -1842,30 +1334,21 @@ void sendUserAgent (WiFiClient &client)
  */
 static void httpGET (WiFiClient &client, const char *server, const char *page)
 {
-
-    FWIFIPR (client, F("GET ")); client.print(page); FWIFIPRLN (client, F(" HTTP/1.0"));
-    FWIFIPR (client, F("Host: ")); client.println (server);
+    client.print ("GET "); client.print (page); client.print (" HTTP/1.0\r\n");
+    client.print ("Host: "); client.println (server);
     sendUserAgent (client);
-    FWIFIPRLN (client, F("Connection: close\r\n"));
-
+    client.print ("Connection: close\r\n\r\n");
 }
 
 /* issue an HTTP Get to a /ham/HamClock page named in ram
  */
 void httpHCGET (WiFiClient &client, const char *server, const char *hc_page)
 {
-    static const char hc[] PROGMEM = "/ham/HamClock";
+    static const char hc[] = "/ham/HamClock";
     StackMalloc full_mem(strlen(hc_page) + sizeof(hc));         // sizeof includes the EOS
     char *full_hc_page = (char *) full_mem.getMem();
-    snprintf (full_hc_page, full_mem.getSize(), "%s%s", _FX_helper(hc), hc_page);
+    snprintf (full_hc_page, full_mem.getSize(), "%s%s", hc, hc_page);
     httpGET (client, server, full_hc_page);
-}
-
-/* issue an HTTP Get to a /ham/HamClock page named in PROGMEM
- */
-void httpHCPGET (WiFiClient &client, const char *server, const char *hc_page_progmem)
-{
-    httpHCGET (client, server, _FX_helper(hc_page_progmem));
 }
 
 /* skip the given wifi client stream ahead to just after the first blank line, return whether ok.
@@ -1902,7 +1385,7 @@ bool httpSkipHeader (WiFiClient &client, const char *header, char *value, int va
  */
 bool httpSkipHeader (WiFiClient &client)
 {
-    return (httpSkipHeader (client, _FX("Remote_Addr: "), remote_addr, sizeof(remote_addr)));
+    return (httpSkipHeader (client, "Remote_Addr: ", remote_addr, sizeof(remote_addr)));
 }
 
 /* retrieve and plot latest and predicted DRAP indices, return whether io ok
@@ -1917,10 +1400,10 @@ static bool updateDRAP (const SBox &box)
     if (ok) {
 
         if (!drap.data_ok) {
-            plotMessage (box, DRAPPLOT_COLOR, _FX("DRAP data invalid"));
+            plotMessage (box, DRAPPLOT_COLOR, "DRAP data invalid");
         } else {
             // plot
-            plotXY (box, drap.x, drap.y, DRAPDATA_NPTS, _FX("Hours"), _FX("DRAP, max MHz"), DRAPPLOT_COLOR,
+            plotXY (box, drap.x, drap.y, DRAPDATA_NPTS, "Hours", _FX("DRAP, max MHz"), DRAPPLOT_COLOR,
                                                             0, 0, drap.y[DRAPDATA_NPTS-1]);
         }
 
@@ -1929,7 +1412,7 @@ static bool updateDRAP (const SBox &box)
             drawSpaceStats(RA8875_BLACK);
 
     } else {
-        plotMessage (box, DRAPPLOT_COLOR, _FX("DRAP connection failed"));
+        plotMessage (box, DRAPPLOT_COLOR, "DRAP connection failed");
     }
 
     // done
@@ -1950,7 +1433,7 @@ static bool updateKp(const SBox &box)
     if (ok) {
 
         if (!kp.data_ok) {
-            plotMessage (box, KP_COLOR, _FX("Kp data invalid"));
+            plotMessage (box, KP_COLOR, "Kp data invalid");
         } else {
             // plot
             plotXY (box, kp.x, kp.p, KP_NV, "Days", "Planetary Kp", KP_COLOR, 0, 9, space_wx[SPCWX_KP].value);
@@ -1961,7 +1444,7 @@ static bool updateKp(const SBox &box)
             drawSpaceStats(RA8875_BLACK);
 
     } else {
-        plotMessage (box, KP_COLOR, _FX("Kp connection failed"));
+        plotMessage (box, KP_COLOR, "Kp connection failed");
     }
 
     // done
@@ -1995,7 +1478,7 @@ static bool updateXRay(const SBox &box)
             drawSpaceStats(RA8875_BLACK);
 
     } else {
-        plotMessage (box, XRAY_LCOLOR, _FX("X-Ray connection failed"));
+        plotMessage (box, XRAY_LCOLOR, "X-Ray connection failed");
     }
 
     // done
@@ -2028,7 +1511,7 @@ static bool updateSunSpots (const SBox &box)
             drawSpaceStats(RA8875_BLACK);
 
     } else {
-        plotMessage (box, SSN_COLOR, _FX("SSN connection failed"));
+        plotMessage (box, SSN_COLOR, "SSN connection failed");
     }
 
     // done
@@ -2041,7 +1524,7 @@ static bool updateSolarFlux(const SBox &box)
 {
     SolarFluxData sf;
 
-    bool ok = retrievSolarFlux(sf);
+    bool ok = retrieveSolarFlux(sf);
 
     updateClocks(false);
 
@@ -2058,7 +1541,7 @@ static bool updateSolarFlux(const SBox &box)
             drawSpaceStats(RA8875_BLACK);
 
     } else {
-        plotMessage (box, SFLUX_COLOR, _FX("Flux connection failed"));
+        plotMessage (box, SFLUX_COLOR, "Flux connection failed");
     }
 
     // done
@@ -2085,7 +1568,7 @@ static bool updateSolarWind(const SBox &box)
             drawSpaceStats(RA8875_BLACK);
 
     } else {
-        plotMessage (box, SWIND_COLOR, _FX("Sol Wind connection failed"));
+        plotMessage (box, SWIND_COLOR, "Sol Wind connection failed");
     }
 
     // done
@@ -2139,7 +1622,7 @@ static bool updateBzBt (const SBox &box)
 
     } else {
 
-        plotMessage (box, BZBT_BZCOLOR, _FX("BzBt update error"));
+        plotMessage (box, BZBT_BZCOLOR, "BzBt update error");
     }
 
     // done
@@ -2181,7 +1664,7 @@ static bool updateBandConditions(const SBox &box, bool force)
 
     } else {
 
-        plotMessage (box, RA8875_RED, _FX("No VOACAP data"));
+        plotMessage (box, RA8875_RED, "No VOACAP data");
 
         // if problem persists more than an hour, this prevents the tdiff's above from being true every time
         map_time = bc_time = nowWO() - 1000;
@@ -2226,11 +1709,499 @@ static bool updateAurora (const SBox &box)
 
     } else {
 
-        plotMessage (box, AURORA_COLOR, _FX("Aurora error"));
+        plotMessage (box, AURORA_COLOR, "Aurora error");
     }
 
     // done
     return (ok);
+}
+
+/* check for tap at s known to be within BandConditions box b:
+ *    tapping left-half band toggles REF map, right-half toggles TOA map
+ *    tapping timeline toggles bc_utc_tl;
+ *    tapping power offers power menu;
+ *    tapping TOA offers take-off menu;
+ *    tapping SP/LP toggles.
+ * return whether tap was useful for us.
+ * N.B. coordinate tap positions with plotBandConditions()
+ */
+bool checkBCTouch (const SCoord &s, const SBox &b)
+{
+    // not ours if not in our box or tapped titled or data not valid
+    if (!inBox (s, b) || s.y < b.y+PANETITLE_H || !bc_matrix.ok)
+        return (false);
+
+    // tap area for power cycle
+    SBox power_b;
+    power_b.x = b.x + 5;
+    power_b.y = b.y + 13*b.h/14;
+    power_b.w = b.w/5;
+    power_b.h = b.h/12;
+    // drawSBox (power_b, RA8875_RED);     // RBF
+
+    // tap area for mode choice
+    SBox mode_b;
+    mode_b.x = power_b.x + power_b.w + 1;
+    mode_b.y = power_b.y;
+    mode_b.w = b.w/6;
+    mode_b.h = power_b.h;
+    // drawSBox (mode_b, RA8875_RED);      // RBF
+
+    // tap area for TOA
+    SBox toa_b;
+    toa_b.x = mode_b.x + mode_b.w + 1;
+    toa_b.y = mode_b.y;
+    toa_b.w = b.w/5;
+    toa_b.h = mode_b.h;
+    // drawSBox (toa_b, RA8875_RED);       // RBF
+
+    // tap area for SP/LP
+    SBox splp_b;
+    splp_b.x = toa_b.x + toa_b.w + 1;
+    splp_b.y = toa_b.y;
+    splp_b.w = b.w/6;
+    splp_b.h = toa_b.h;
+    // drawSBox (splp_b, RA8875_RED);      // RBF
+
+    // tap area for timeline strip
+    SBox tl_b;
+    tl_b.x = b.x + 1;
+    tl_b.y = b.y + 12*b.h/14;
+    tl_b.w = b.w - 2;
+    tl_b.h = b.h/12;
+    // drawSBox (tl_b, RA8875_WHITE);      // RBF
+
+    if (inBox (s, power_b)) {
+
+        // build menu of available power choices
+        MenuItem mitems[n_bc_powers];
+        char labels[n_bc_powers][20];
+        for (int i = 0; i < n_bc_powers; i++) {
+            MenuItem &mi = mitems[i];
+            mi.type = MENU_1OFN;
+            mi.set = bc_power == bc_powers[i];
+            mi.group = 1;
+            mi.indent = 5;
+            mi.label = labels[i];
+            snprintf (labels[i], sizeof(labels[i]), "%d watt%s", bc_powers[i],
+                                bc_powers[i] > 1 ? "s" : ""); 
+        };
+
+        SBox menu_b;
+        menu_b.x = power_b.x;
+        menu_b.y = b.y + b.h/4;
+        menu_b.w = 0;           // shrink to fit
+
+        // run menu, find selection
+        SBox ok_b;
+        MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_NOCANCEL, 1, NARRAY(mitems), mitems};
+        uint16_t new_power = bc_power;
+        if (runMenu (menu)) {
+            for (int i = 0; i < n_bc_powers; i++) {
+                if (menu.items[i].set) {
+                    new_power = bc_powers[i];
+                    break;
+                }
+            }
+        }
+
+        // always redo BC if nothing else to erase menu but only update voacap if power changed
+        bool power_changed = new_power != bc_power;
+        if (power_changed) {
+            bc_power = new_power;
+            NVWriteUInt16 (NV_BCPOWER, bc_power);
+            scheduleNewVOACAPMap(prop_map);
+        }
+        (void) updateBandConditions (b, power_changed);
+
+    } else if (inBox (s, mode_b)) {
+
+        // show menu of available mode choices
+        MenuItem mitems[N_BCMODES];
+        for (int i = 0; i < N_BCMODES; i++)
+            mitems[i] = {MENU_1OFN, bc_modevalue == bc_modes[i].value, 1, 5, bc_modes[i].name};
+
+        SBox menu_b;
+        menu_b.x = mode_b.x;
+        menu_b.y = b.y + b.h/3;
+        menu_b.w = 0;           // shrink to fit
+
+        // run menu, find selection
+        SBox ok_b;
+        MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_NOCANCEL, 1, N_BCMODES, mitems};
+        uint16_t new_modevalue = bc_modevalue;
+        if (runMenu (menu)) {
+            for (int i = 0; i < N_BCMODES; i++) {
+                if (menu.items[i].set) {
+                    new_modevalue = bc_modes[i].value;
+                    break;
+                }
+            }
+        }
+
+        // always redo BC if nothing else to erase menu but only update voacap if mode changed
+        bool mode_changed = new_modevalue != bc_modevalue;
+        if (mode_changed) {
+            bc_modevalue = new_modevalue;
+            NVWriteUInt8 (NV_BCMODE, bc_modevalue);
+            scheduleNewVOACAPMap(prop_map);
+        }
+        (void) updateBandConditions (b, mode_changed);
+
+    } else if (inBox (s, toa_b)) {
+
+        // show menu of available TOA choices
+        // N.B. line display width can only accommodate 1 character
+        MenuItem mitems[3];
+        mitems[0] = {MENU_1OFN, bc_toa <= 1,              1, 5, ">1 deg"};
+        mitems[1] = {MENU_1OFN, bc_toa > 1 && bc_toa < 9, 1, 5, ">3 degs"};
+        mitems[2] = {MENU_1OFN, bc_toa >= 9,              1, 5, ">9 degs"};
+
+        SBox menu_b;
+        menu_b.x = toa_b.x;
+        menu_b.y = b.y + b.h/2;
+        menu_b.w = 0;           // shrink to fit
+
+        // run menu, find selection
+        SBox ok_b;
+        MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_NOCANCEL, 1, NARRAY(mitems), mitems};
+        float new_toa = bc_toa;
+        if (runMenu (menu)) {
+            for (int i = 0; i < NARRAY(mitems); i++) {
+                if (menu.items[i].set) {
+                    new_toa = atof (mitems[i].label+1);
+                    break;
+                }
+            }
+        }
+
+        // always redo BC if nothing else to erase menu but only update voacap if mode changed
+        bool toa_changed = new_toa != bc_toa;
+        if (toa_changed) {
+            bc_toa = new_toa;
+            NVWriteFloat (NV_BCTOA, bc_toa);
+            scheduleNewVOACAPMap(prop_map);
+        }
+        (void) updateBandConditions (b, toa_changed);
+
+    } else if (inBox (s, splp_b)) {
+
+        // toggle short/long path -- update DX info too
+        show_lp = !show_lp;
+        NVWriteUInt8 (NV_LP, show_lp);
+        scheduleNewVOACAPMap(prop_map);
+        drawDXInfo ();
+        (void) updateBandConditions (b, true);
+    
+    } else if (inBox (s, tl_b)) {
+
+        // toggle bc_utc_tl and redraw
+        bc_utc_tl = !bc_utc_tl;
+        NVWriteUInt8 (NV_BC_UTCTIMELINE, bc_utc_tl);
+        plotBandConditions (b, 0, NULL, NULL);
+
+    } else {
+
+        // check tapping a row in the table. if so toggle band and type.
+
+        PropMapSetting new_prop_map = prop_map;
+        PropMapBand tap_band = (PropMapBand) ((b.y + b.h - 20 - s.y) / ((b.h - 47)/BMTRX_COLS));
+        PropMapType tap_type = s.x < b.x + b.w/2 ? PROPTYPE_REL : PROPTYPE_TOA;
+        if (prop_map.active && tap_band == prop_map.band && tap_type == prop_map.type) {
+            // tapped same prop map, turn off active VOACAP selection
+            new_prop_map.active = false;
+        } else if (tap_band >= 0 && tap_band < PROPBAND_N) {
+            // tapped a different VOACAP selection
+            new_prop_map.active = true;
+            new_prop_map.band = tap_band;
+            new_prop_map.type = tap_type;
+        }
+
+        // update
+        scheduleNewVOACAPMap(new_prop_map);
+        if (!new_prop_map.active) {
+            scheduleNewCoreMap (core_map);
+            plotBandConditions (b, 0, NULL, NULL);  // indicate no longer active
+        }
+        logMapRotSet();
+
+    }
+
+    // ours just because tap was below title
+    return (true);
+}
+
+/* check if it is time to update any info via wifi.
+ * proceed even if no wifi to allow subsystems to update.
+ */
+void updateWiFi(void)
+{
+
+    // time now
+    time_t t0 = myNow();
+
+    // update each pane
+    for (int i = PANE_0; i < PANE_N; i++) {
+
+        // too bad you can't iterate an enum
+        PlotPane pp = (PlotPane)i;
+
+        // handy
+        const SBox &box = plot_b[pp];
+        PlotChoice pc = plot_ch[pp];
+
+        // rotate if this pane is rotating and it's time
+        if ((isPaneRotating(pp) || isSpecialPaneRotating(pp)) && t0 >= next_rotation[pp]) {
+
+            pc = plot_ch[pp] = getNextRotationChoice(pp, plot_ch[pp]);
+            next_rotation[pp] = nextRotation(pp);
+            showRotatingBorder ();
+
+            // if a choice needs fresh_redraw when newly exposed set it here
+            if (pc == PLOT_CH_DXCLUSTER) fresh_redraw[PLOT_CH_DXCLUSTER] = true;
+            if (pc == PLOT_CH_ADIF)      fresh_redraw[PLOT_CH_ADIF] = true;
+
+            // go now
+            next_update[pp] = 0;
+        }
+
+
+        switch (pc) {
+
+        case PLOT_CH_BC:
+            if (t0 >= next_update[pp]) {
+                if (updateBandConditions (box, fresh_redraw[pc])) {
+                    next_update[pp] = nextPaneUpdate (pc, BC_INTERVAL);
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry (PLOT_CH_BC);
+            }
+            break;
+
+        case PLOT_CH_DEWX:
+            if (t0 >= next_update[pp]) {
+                if (updateDEWX(box))
+                    next_update[pp] = nextPaneUpdate (pc, DEWX_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_DXCLUSTER:
+            if (t0 >= next_update[pp]) {
+                if (updateDXCluster (box, fresh_redraw[pc])) {
+                    next_update[pp] = myNow() + DXC_INTERVAL;   // very fast
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry (PLOT_CH_DXCLUSTER);
+            }
+            break;
+
+        case PLOT_CH_DXWX:
+            if (t0 >= next_update[pp]) {
+                if (updateDXWX(box))
+                    next_update[pp] = nextPaneUpdate (pc, DXWX_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_FLUX:
+            if (t0 >= next_update[pp]) {
+                if (updateSolarFlux(box))
+                    next_update[pp] = nextPaneUpdate (pc, SFLUX_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_KP:
+            if (t0 >= next_update[pp]) {
+                if (updateKp(box))
+                    next_update[pp] = nextPaneUpdate (pc, KP_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_MOON:
+            if (t0 >= next_update[pp]) {
+                updateMoonPane (box);           // all local -- can't fail ;-)
+                next_update[pp] = nextPaneUpdate (pc, MOON_INTERVAL);
+            }
+            break;
+
+        case PLOT_CH_NOAASPW:
+            if (t0 >= next_update[pp]) {
+                if (updateNOAASWx(box))
+                    next_update[pp] = nextPaneUpdate (pc, NOAASPW_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_SSN:
+            if (t0 >= next_update[pp]) {
+                if (updateSunSpots(box))
+                    next_update[pp] = nextPaneUpdate (pc, SSN_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_XRAY:
+            if (t0 >= next_update[pp]) {
+                if (updateXRay(box))
+                    next_update[pp] = nextPaneUpdate (pc, XRAY_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_GIMBAL:
+            if (t0 >= next_update[pp]) {
+                updateGimbal(box);
+                next_update[pp] = 0;            // constant poll
+            }
+            break;
+
+        case PLOT_CH_TEMPERATURE:               // fallthru
+        case PLOT_CH_PRESSURE:                  // fallthru
+        case PLOT_CH_HUMIDITY:                  // fallthru
+        case PLOT_CH_DEWPOINT:
+            if (t0 >= next_update[pp]) {
+                drawOneBME280Pane (box, pc);
+                next_update[pp] = nextPaneUpdate (pc, ENV_INTERVAL);
+            } else if (newBME280data()) {
+                drawOneBME280Pane (box, pc);
+            }
+            break;
+
+        case PLOT_CH_SDO:
+            if (t0 >= next_update[pp]) {
+                if (updateSDOPane (box))        // knows how to rotate on its own
+                    next_update[pp] = nextPaneUpdate (pc, SDO_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_SOLWIND:
+            if (t0 >= next_update[pp]) {
+                if (updateSolarWind(box))
+                    next_update[pp] = nextPaneUpdate (pc, SWIND_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_DRAP:
+            if (t0 >= next_update[pp]) {
+                if (updateDRAP(box))
+                    next_update[pp] = nextPaneUpdate (pc, DRAPPLOT_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_COUNTDOWN:
+            // handled by stopwatch system
+            break;
+
+        case PLOT_CH_CONTESTS:
+            if (t0 >= next_update[pp]) {
+                if (updateContests(box))
+                    next_update[pp] = nextPaneUpdate (pc, CONTESTS_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_PSK:
+            if (t0 >= next_update[pp]) {
+                if (updatePSKReporter(box, fresh_redraw[pc])) {
+                    next_update[pp] = nextPaneUpdate (pc, PSK_INTERVAL);
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_BZBT:
+            if (t0 >= next_update[pp]) {
+                if (updateBzBt(box))
+                    next_update[pp] = nextPaneUpdate (pc, BZBT_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_POTA:
+            if (t0 >= next_update[pp]) {
+                if (updateOnTheAir(box, ONTA_POTA, fresh_redraw[pc])) {
+                    next_update[pp] = nextPaneUpdate (pc, ONTA_INTERVAL);
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_SOTA:
+            if (t0 >= next_update[pp]) {
+                if (updateOnTheAir(box, ONTA_SOTA, fresh_redraw[pc])) {
+                    next_update[pp] = nextPaneUpdate (pc, ONTA_INTERVAL);
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_ADIF:
+            if (t0 >= next_update[pp]) {
+                updateADIF (box, fresh_redraw[pc]);
+                next_update[pp] = nextPaneUpdate (pc, ADIF_INTERVAL);
+                fresh_redraw[pc] = false;
+            }
+            break;
+
+        case PLOT_CH_AURORA:
+            if (t0 >= next_update[pp]) {
+                if (updateAurora(box))
+                    next_update[pp] = nextPaneUpdate (pc, AURORA_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_N:
+            break;              // lint
+        }
+
+    }
+
+    // freshen memory usage
+    cleanADIF();
+    cleanDXCluster();
+
+    // freshen NCDXF_b
+    checkBRB(t0);
+
+    // freshen RSS
+    checkRSS();
+
+    // freshen world weather table unless wx map is doing it
+    if (t0 >= next_wwx) {
+        if (!prop_map.active && core_map == CM_WX)
+            next_map = 0;                               // this causes checkMap() to call fetchWorldWx()
+        else
+            fetchWorldWx();
+        next_wwx = myNow() + WWX_INTERVAL;
+    }
+
+    // maps are checked after each full earth draw -- see drawMoreEarth()
+
+    // check for server commands
+    checkWebServer(false);
 }
 
 /* get next line from client in line[] then return true, else nothing and return false.
@@ -2262,23 +2233,6 @@ bool getTCPLine (WiFiClient &client, char line[], uint16_t line_len, uint16_t *l
         } else if (i < line_len)
             line[i++] = c;
     }
-}
-
-/* convert an array of 4 big-endian network-order bytes into a uint32_t
- */
-static uint32_t crackBE32 (uint8_t bp[])
-{
-    union {
-        uint32_t be;
-        uint8_t ba[4];
-    } be4;
-
-    be4.ba[3] = bp[0];
-    be4.ba[2] = bp[1];
-    be4.ba[1] = bp[2];
-    be4.ba[0] = bp[3];
-
-    return (be4.be);
 }
 
 /* it is MUCH faster to print F() strings in a String than using them directly.
@@ -2315,13 +2269,14 @@ bool wifiOk()
  */
 void initWiFiRetry()
 {
-    // this addresses the panes
+    // freshen all
     memset (next_update, 0, sizeof(next_update));
+    memset (fresh_redraw, 1, sizeof(fresh_redraw));     // works ok even if bools aren't bytes
 
     // a few more misc
     next_wwx = 0;
     next_map = 0;
-    brb_updateT = 0;
+    brb_next_update = 0;
     scheduleRSSNow();
 }
 
@@ -2344,14 +2299,11 @@ static void revertWXPane (PlotPane pp, PlotChoice wxpc)
     revert_time = next_update[pp] = myNow() + DXPATH_LINGER/1000;
     revert_pane = pp;
 
-    // best to do a fresh update of original content when revert is over
-    fresh_update[plot_ch[pp]] = true;
+    // best to do a fresh redraw of original content when revert is over
+    fresh_redraw[plot_ch[pp]] = true;
 
     // a few plot types require extra processing when shut down
     switch (plot_ch[pp]) {
-    case PLOT_CH_DXCLUSTER:
-        closeDXCluster();       // will reopen after revert
-        break;
     case PLOT_CH_GIMBAL:
         closeGimbal();          // will reopen after revert
         break;
@@ -2393,37 +2345,55 @@ void scheduleNewPlot (PlotChoice pc)
                     revertWXPane (pp, pc);
                 }
             } else {
-                // just mark for fresh update when it's turn comes
-                fresh_update[pc] = true;
+                // just mark for fresh redraw when it's turn comes
+                fresh_redraw[pc] = true;
             }
         } 
     } else {
-        // currently visible: force fresh update now
+        // currently visible: force fresh redraw now
+        fresh_redraw[pc] = true;
         next_update[pp] = 0;
-        fresh_update[pc] = true;
     }
 }
 
 /* called to schedule an immediate update of the given VOACAP map.
  * leave core_map unchanged to use later if VOACAP turned off.
  */
-void scheduleNewVOACAPMap(PropMapSetting &pm)
+void scheduleNewVOACAPMap (PropMapSetting &pm)
 {
     bool active_changed = prop_map.active != pm.active;
     prop_map = pm;
     if (prop_map.active || active_changed)
         next_map = 0;
+
+    // update rotation set
+    if (prop_map.active)
+        map_rotset |= PROPMAP_ROT_BIT;
+    else
+        map_rotset &= ~PROPMAP_ROT_BIT;
+
+    // persist
+    saveMapRotSet();
 }
 
-/* called to schedule an immediate update of the give core map, unless being turned off
- * turns off any VOACAP map.
+/* called to schedule an immediate update of the give core map.
+ * always turns off any VOACAP map.
  */
-void scheduleNewCoreMap(CoreMaps cm)
+void scheduleNewCoreMap (CoreMaps cm)
 {
+    if (cm == CM_NONE)
+        fatalError ("Bug! setting no core map");
+
     prop_map.active = false;
     core_map = cm;
-    if (cm != CM_NONE)
-        next_map = 0;
+    next_map = 0;
+
+    // update rotation set
+    map_rotset |= (1 << cm);
+    map_rotset &= ~PROPMAP_ROT_BIT;
+
+    // persist
+    saveMapRotSet();
 }
 
 /* schedule a refresh of the current map
@@ -2446,7 +2416,7 @@ int getNTPServers (const NTPServer **listp)
  */
 time_t nextPaneRotation(PlotPane pp)
 {
-    return (next_update[pp]);
+    return (next_rotation[pp]);
 }
 
 /* return pane for which taps are to be ignored because a revert is in progress, if any

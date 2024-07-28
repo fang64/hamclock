@@ -14,8 +14,8 @@ class ESPhttpUpdate ESPhttpUpdate;
 
 
 // approximate number of lines generated when running unzip and make, used for progress meter.
-#define N_UNZIP_LINES   145
-#define N_MAKE_LINES    103
+#define N_UNZIP_LINES   148
+#define N_MAKE_LINES    109
 
 
 ESPhttpUpdate::ESPhttpUpdate()
@@ -260,11 +260,11 @@ t_httpUpdate_return ESPhttpUpdate::update(WiFiClient &client, const char *url)
         srand (time(NULL));
         snprintf (tmp_dir, sizeof(tmp_dir), "/tmp/HamClock-tmp-%010d.d", rand());
         printf ("OTA: creating %s\n", tmp_dir);
-	if (!runCommand (false, 1, 5, 1, "mkdir %s", tmp_dir))
+	if (!runCommand (false, 1, 2, 1, "mkdir %s", tmp_dir))
 	    return (HTTP_UPDATE_FAILED);
 
 	// download url into tmp_dir naming it zip_file
-	if (!runCommand (false, 5, 10, 1, "curl --max-time 10 --retry 2 --silent --show-error --output '%s/%s' '%s'",
+	if (!runCommand (false, 2, 8, 1, "curl --max-time 10 --retry 2 --silent --show-error --output '%s/%s' '%s'",
                                                                 tmp_dir, zip_file, url)) {
             cleanupDir (tmp_dir);
 	    return (HTTP_UPDATE_FAILED);
@@ -286,7 +286,7 @@ t_httpUpdate_return ESPhttpUpdate::update(WiFiClient &client, const char *url)
         printf ("OTA: zip will create dir %s\n", make_dir);
 
 	// explode
-	if (!runCommand (false, 10, 15, N_UNZIP_LINES, "cd %s && unzip %s", tmp_dir, zip_file)) {
+	if (!runCommand (false, 8, 12, N_UNZIP_LINES, "cd %s && unzip %s", tmp_dir, zip_file)) {
             cleanupDir (tmp_dir);
 	    return (HTTP_UPDATE_FAILED);
         }
@@ -294,9 +294,9 @@ t_httpUpdate_return ESPhttpUpdate::update(WiFiClient &client, const char *url)
 	// within the new source tree, make the same target we were made with
         printf ("OTA: making %s\n", our_make);
     #ifdef _IS_FREEBSD
-	if (!runCommand (false, 15, 95, N_MAKE_LINES, "cd %s/%s && gmake -j 3 %s",tmp_dir,make_dir,our_make)) {
+	if (!runCommand (false, 12, 99, N_MAKE_LINES, "cd %s/%s && gmake -j 3 %s",tmp_dir,make_dir,our_make)) {
     #else
-	if (!runCommand (false, 15, 95, N_MAKE_LINES, "cd %s/%s && make -j 3 %s",tmp_dir,make_dir,our_make)) {
+	if (!runCommand (false, 12, 99, N_MAKE_LINES, "cd %s/%s && make -j 3 %s",tmp_dir,make_dir,our_make)) {
     #endif
             cleanupDir (tmp_dir);
 	    return (HTTP_UPDATE_FAILED);
@@ -310,7 +310,7 @@ t_httpUpdate_return ESPhttpUpdate::update(WiFiClient &client, const char *url)
 	}
 
         // replace current program file with new one, we already think we can remove it if we are euid
-	if (!runCommand (true, 95, 99, 1, "rm -f %s && mv %s/%s/%s %s", our_path,
+	if (!runCommand (true, 99, 99, 1, "rm -f %s && mv %s/%s/%s %s", our_path,
                                                 tmp_dir, make_dir, our_make, our_path)) {
             cleanupDir (tmp_dir);
 	    return (HTTP_UPDATE_FAILED);

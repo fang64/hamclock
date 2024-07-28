@@ -189,16 +189,14 @@ static bool getGPSDSomething(bool (*lookf)(const char *buf, void *arg), void *ar
         return (look_ok);
 }
 
-/* return time and server used from GPSD if available, else return 0
+/* return time from GPSD if available, else return 0
  */
-time_t getGPSDUTC(const char **server)
+time_t getGPSDUTC(void)
 {
         time_t gpsd_time;
 
-        if (getGPSDSomething (lookforTime, &gpsd_time)) {
-            *server = getGPSDHost();
+        if (getGPSDSomething (lookforTime, &gpsd_time))
             return (gpsd_time);
-        }
 
         return (0);
 }

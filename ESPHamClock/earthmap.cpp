@@ -58,6 +58,7 @@ bool mapmenu_pending;
 #define ML_NLINES       12                      // allow this many lines in box
 #define ML_MAXCHARS     9                       // max chars wide
 #define ML_INDENT       2                       // nominal indentation
+#define CDOT_R          4                       // city dot radius
 
 
 // establish GRIDC and GRIDC00
@@ -66,11 +67,10 @@ static void getGridColorCache()
     // get base color
     GRIDC = getMapColor(GRID_CSPR);
 
-    // same hue and sat but different brightness
+    // hi contrast
     uint8_t h, s, v;
     RGB565_2_HSV (GRIDC, &h, &s, &v);
-    v = v > 128 ? v - 128 : v + 80;
-    GRIDC00 = HSV_2_RGB565 (h, s, v);
+    GRIDC00 = v < 128 ? RA8875_WHITE : RA8875_BLACK;
 }
 
 /* erase the DE symbol by restoring map contents.
@@ -260,7 +260,6 @@ static void drawMaidGridKey()
     if (mapgrid_choice != MAPGRID_MAID || map_proj != MAPP_MERCATOR)
         return;
 
-    resetWatchdog();
 
     // keep right stripe above RSS and map scale, if on
     uint16_t right_h = map_b.h;
@@ -308,7 +307,6 @@ static void drawMaidGridKey()
  */
 static void restoreMap (SBox &box)
 {
-    resetWatchdog();
     for (uint16_t dy = 0; dy < box.h; dy++)
         for (uint16_t dx = 0; dx < box.w; dx++)
             drawMapCoord (box.x+dx, box.y+dy);
@@ -364,7 +362,7 @@ static void drawMapPopup(void)
     SBox ok_b;
 
     // go
-    MenuInfo menu = {menu_b, ok_b, true, false, 1, n_menu, mitems};
+    MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 1, n_menu, mitems};
     if (runMenu (menu)) {
 
 
@@ -563,7 +561,6 @@ static void drawTropicsGrid()
  */
 static void drawMapGrid()
 {
-    resetWatchdog();
 
     switch ((MapGridStyle)mapgrid_choice) {
 
@@ -608,7 +605,7 @@ static void drawMapGrid()
 /* drawMouseLoc() helper to show age in nice units.
  * update ty by dy for each row used.
  */
-static void drawMLAge (time_t t, uint16_t tx, int dy, uint16_t &ty)
+static void drawML_Age (time_t t, uint16_t tx, int dy, uint16_t &ty)
 {
     // get age in seconds but never negative
     time_t n = myNow();
@@ -623,7 +620,7 @@ static void drawMLAge (time_t t, uint16_t tx, int dy, uint16_t &ty)
 /* drawMouseLoc() helper to show DE distance and bearing to given location.
  * update ty by dy for each row used.
  */
-static void drawMLDB (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
+static void drawML_DB (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 {
     // get distance and bearing to spot location
     float dist, bearing;
@@ -654,7 +651,7 @@ static void drawMLDB (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 /* drawMouseLoc() helper to show weather at the given location,
  * update ty by dy for each row used.
  */
-static void drawMLWX (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
+static void drawML_WX (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 {
     WXInfo wi;
     if (getWorldWx (ll, wi)) {
@@ -685,7 +682,7 @@ static void drawMLWX (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 /* drawMouseLoc() helper to show local mean time.
  * update ty by dy for each row used.
  */
-static void drawMLLMT (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
+static void drawML_LMT (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 {
     time_t t = myNow() + getTZ(ll);
     tft.setCursor (tx, ty += dy);
@@ -695,7 +692,7 @@ static void drawMLLMT (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 /* drawMouseLoc() helper to show frequency.
  * update ty by dy for each row used.
  */
-static void drawMLFreq (long hz, uint16_t tx, int dy, uint16_t &ty)
+static void drawML_Freq (long hz, uint16_t tx, int dy, uint16_t &ty)
 {
     tft.setCursor (tx, ty += dy);
     if (hz < 30000000L)
@@ -704,85 +701,111 @@ static void drawMLFreq (long hz, uint16_t tx, int dy, uint16_t &ty)
         tft.printf ("MHz %5ld", hz/1000000L);
 }
 
+/* drawMouseLoc() helper for looking up city.
+ * if city is wanted, found and over map: change ll, ms and names_w IN PLACE and draw dot and name
+ * N.B. we assume the city name background is already erased
+ */
+static bool drawML_City (LatLong &ll, SCoord &ms, const SBox &info_b, uint16_t &names_w, uint16_t names_y)
+{
+    // skip if not wanted
+    if (!names_on)
+        return (false);
+
+    // get city info if one is near
+    LatLong city_ll;
+    SCoord city_ms;
+    int max_cl;
+    const char *city = getNearestCity (ll, city_ll, &max_cl);
+    if (city) {
+        // update caller unless not over map
+        ll2s (city_ll, city_ms, CDOT_R);
+        if (overMap (city_ms)) {
+            // still have to check whether over the info box
+            uint16_t min_x = info_b.x + info_b.w + CDOT_R;
+            uint16_t min_y = info_b.y + info_b.h + CDOT_R;
+            if (city_ms.x > min_x || city_ms.y > min_y) {
+                // ok! pass back new location and max name width
+                ll = city_ll;
+                ms = city_ms;
+                names_w = max_cl * 6;           // * font width
+                // dot
+                tft.fillCircle (city_ms.x, city_ms.y, CDOT_R, RA8875_RED);
+                // name, assuming background is already erased
+                uint16_t c_w = getTextWidth (city);
+                tft.setCursor (map_b.x + (map_b.w-c_w)/2, names_y + 3);
+                tft.print(city);
+            } else {
+                city = NULL;
+            }
+        }
+    }
+
+    return (city != NULL);
+}
+
 /* draw local information about the current cursor position over the world map.
  * called after every map draw so we only have to erase parts of azm outside the hemispheres.
  */
 static void drawMouseLoc()
 {
-    resetWatchdog();
-
-    // draw just below map View button
+    // position box just below map View button which itself moves depending whenther showing maindenhead grid
     uint16_t tx = view_btn_b.x;                         // current text x coord
     uint16_t ty = view_btn_b.y + view_btn_b.h;          // current text y coord
+    SBox mouseinfo_b = {tx, ty, (uint16_t)(view_btn_b.w-1), ML_LINEDY*ML_NLINES+1};
 
-    // size and location of names bar
+    // then set size and location of the city names bar at same y
     const uint16_t names_y = view_btn_b.y;
     const uint16_t names_h = 14;
+    static uint16_t names_w = 500;                      // might be updated via getNearestCity()
+    uint16_t names_x = map_b.x + (map_b.w-names_w)/2;   // centered also "
 
-    // get current mouse location and whether over HamClock window at all.
-    SCoord ms;
-    bool over_window = tft.getMouse(&ms.x, &ms.y);
+    // persistent flag whether city was draw last time
+    static bool was_city;
 
-    // get corresponding map location, if any
-    LatLong ll;
-    bool overmap = over_window && s2ll (ms, ll);
+    // get current mouse location and corresponding map location, if over map
+    SCoord ms;                                          // mouse loc but may change to city loc
+    LatLong ll;                                         // "
+    bool overmap = tft.getMouse(&ms.x, &ms.y) && s2ll (ms, ll);
 
-    // prep for text
-    selectFontStyle (LIGHT_FONT, FAST_FONT);
-    tft.setTextColor (RA8875_WHITE);
-
-    // must draw the current zones before erasing menu in case it falls underneath the menu
-    int cqzone_n = 0, ituzone_n = 0;
+    // must draw the zones lines before erasing menu in case they fall underneath the menu
     if (overmap) {
-        // N.B. call find even if not drawing here so we still get number for listing
-        if (findZoneNumber (ZONE_CQ, ms, &cqzone_n) && mapgrid_choice == MAPGRID_CQZONES)
+        int cqzone_n = 0, ituzone_n = 0;
+        if (mapgrid_choice == MAPGRID_CQZONES && findZoneNumber (ZONE_CQ, ms, &cqzone_n))
             drawZone (ZONE_CQ, GRIDC00, cqzone_n);
-        if (findZoneNumber (ZONE_ITU, ms, &ituzone_n) && mapgrid_choice == MAPGRID_ITUZONES)
+        if (mapgrid_choice == MAPGRID_ITUZONES && findZoneNumber (ZONE_ITU, ms, &ituzone_n))
             drawZone (ZONE_ITU, GRIDC00, ituzone_n);
     }
 
-    // erase any previous city
-    static int max_cl;
-    if (max_cl) {
-        uint16_t max_cw = max_cl * 6 + 20;          // font w + margin
-        tft.fillRect (map_b.x + (map_b.w-max_cw)/2, names_y, max_cw, names_h, RA8875_BLACK);
-        max_cl = 0;
+    // erase any previous city then reset was_city as flag for next time
+    if (was_city) {
+        tft.fillRect (names_x, names_y, names_w, names_h, RA8875_BLACK);
+        was_city = NULL;
     }
 
     // erase menu area if going to show new data or clean up for azm not over hemispheres
     static bool was_overmap;
     if (overmap || (map_proj != MAPP_MERCATOR && was_overmap))
-        tft.fillRect (tx, ty, view_btn_b.w-1, ML_LINEDY*ML_NLINES+1, RA8875_BLACK);
+        fillSBox (mouseinfo_b, RA8875_BLACK);
     was_overmap = overmap;
 
     // that's it if mouse is not over map
     if (!overmap)
         return;
 
-    // show city if interested
-    const char *city = NULL;
-    LatLong city_ll;
-    if (names_on) {
-        city = getNearestCity (ll, city_ll, &max_cl);
-        if (city) {
-            // background is already erased
-            SCoord s;
-            ll2s (city_ll, s, 4);
-            if (s.x) {                          // might not be visible if mercator is zoomed
-                tft.fillCircle (s.x, s.y, 4, RA8875_RED);
-                uint16_t cw = getTextWidth (city);
-                tft.setCursor (map_b.x + (map_b.w-cw)/2, names_y + 3);
-                tft.print(city);
-            }
-        }
-    }
 
 
-    // draw menu content PSK else DX Cluster else default, fields shown left and right justified
+    // draw spot info in menu table.
+    // N.B. show city dot and name only if no spot to avoid appearance of fake association.
+
+
+    // prep for text
+    selectFontStyle (LIGHT_FONT, FAST_FONT);
+    tft.setTextColor (RA8875_WHITE);
 
     DXSpot dx_s;
     LatLong dxc_ll;
-    if (getClosestPSK (ll, &dx_s)) {
+    bool of_de;
+    if (getClosestPSK (ll, &dx_s, of_de)) {
 
         // PSK, WSPR or RBN spot
 
@@ -818,20 +841,20 @@ static void drawMouseLoc()
         tft.printf (buf);
 
         // show freq
-        drawMLFreq (1000*dx_s.kHz, tx+ML_INDENT, ML_LINEDY, ty);
+        drawML_Freq (1000*dx_s.kHz, tx+ML_INDENT, ML_LINEDY, ty);
 
         // show age
-        drawMLAge (dx_s.spotted, tx+ML_INDENT, ML_LINEDY, ty);
+        drawML_Age (dx_s.spotted, tx+ML_INDENT, ML_LINEDY, ty);
 
         // show snr
         tft.setCursor (tx+ML_INDENT, ty += ML_LINEDY);
         tft.printf ("SNR %5.0f", dx_s.snr);
 
         // show distance and bearing
-        drawMLDB (dx_s.tx_ll, tx+ML_INDENT, ML_LINEDY, ty);
+        drawML_DB (of_de ? dx_s.rx_ll : dx_s.tx_ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // show weather
-        drawMLWX (dx_s.tx_ll, tx+ML_INDENT, ML_LINEDY, ty);
+        drawML_WX (of_de ? dx_s.rx_ll : dx_s.tx_ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // border in band color
         tft.drawRect (view_btn_b.x, view_btn_b.y + view_btn_b.h, view_btn_b.w-1, ML_LINEDY*ML_NLINES+1,
@@ -877,19 +900,19 @@ static void drawMouseLoc()
             ty += ML_LINEDY;
 
         // show freq
-        drawMLFreq (dx_s.kHz*1000, tx+ML_INDENT, ML_LINEDY, ty);
+        drawML_Freq (dx_s.kHz*1000, tx+ML_INDENT, ML_LINEDY, ty);
 
         // show spot age
-        drawMLAge (dx_s.spotted, tx+ML_INDENT, ML_LINEDY, ty);
+        drawML_Age (dx_s.spotted, tx+ML_INDENT, ML_LINEDY, ty);
 
         // show local time
-        drawMLLMT (dxc_ll, tx+ML_INDENT, ML_LINEDY, ty);
+        drawML_LMT (dxc_ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // show distance and bearing
-        drawMLDB (dxc_ll, tx+ML_INDENT, ML_LINEDY, ty);
+        drawML_DB (dxc_ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // show weather
-        drawMLWX (dxc_ll, tx+ML_INDENT, ML_LINEDY, ty);
+        drawML_WX (dxc_ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // border in band color
         tft.drawRect (view_btn_b.x, view_btn_b.y + view_btn_b.h, view_btn_b.w-1, ML_LINEDY*ML_NLINES+1,
@@ -898,6 +921,9 @@ static void drawMouseLoc()
     } else {
 
         // arbitrary cursor location, not a spot
+
+        // move ll to city and draw if interested
+        was_city = drawML_City (ll, ms, mouseinfo_b, names_w, names_y);
 
         // adjust for text 
         ty += 1;
@@ -914,12 +940,16 @@ static void drawMouseLoc()
         tft.setCursor (tx+ML_INDENT, ty += ML_LINEDY);
         tft.printf ("Grid %4.4s", maid);
 
-        // zones
-        if (cqzone_n) {
+        // cq zone
+        int cqzone_n = 0;
+        if (mapgrid_choice == MAPGRID_CQZONES && findZoneNumber (ZONE_CQ, ms, &cqzone_n)) {
             tft.setCursor (tx+ML_INDENT, ty += ML_LINEDY);
             tft.printf (_FX("CQ  %5d"), cqzone_n);
         }
-        if (ituzone_n) {
+
+        // itu zone
+        int ituzone_n = 0;
+        if (mapgrid_choice == MAPGRID_ITUZONES && findZoneNumber (ZONE_ITU, ms, &ituzone_n)) {
             tft.setCursor (tx+ML_INDENT, ty += ML_LINEDY);
             tft.printf (_FX("ITU %5d"), ituzone_n);
         }
@@ -927,20 +957,20 @@ static void drawMouseLoc()
         // prefix, else blank
         tft.setCursor (tx+ML_INDENT, ty += ML_LINEDY);
         char prefix[MAX_PREF_LEN+1];
-        if (ll2Prefix (city ? city_ll : ll, prefix))
+        if (ll2Prefix (ll, prefix))
             tft.printf ("Pfx %5s", prefix);
 
         // blank so wx is on same rows on all formats
         ty += ML_LINEDY;
 
         // show local time
-        drawMLLMT (ll, tx+ML_INDENT, ML_LINEDY, ty);
+        drawML_LMT (ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // show distance and bearing
-        drawMLDB (ll, tx+ML_INDENT, ML_LINEDY, ty);
+        drawML_DB (ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // show weather
-        drawMLWX (ll, tx+ML_INDENT, ML_LINEDY, ty);
+        drawML_WX (ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // border
         tft.drawRect (view_btn_b.x, view_btn_b.y + view_btn_b.h, view_btn_b.w-1, ML_LINEDY*ML_NLINES+1,
@@ -1033,7 +1063,6 @@ static void updateCircumstances()
  */
 static void drawMapMenuButton()
 {
-    resetWatchdog();
 
     if (mapgrid_choice == MAPGRID_MAID && map_proj == MAPP_MERCATOR)
         view_btn_b.y = map_b.y + MH_TR_H;
@@ -1057,7 +1086,6 @@ static void drawMapMenuButton()
  */
 void eraseRSSBox ()
 {
-    resetWatchdog();
 
     // drap scale will move if up so erase where it is
     if (mapScaleIsUp())
@@ -1113,13 +1141,13 @@ static void drawMapMenu()
     #define SEC_INDENT 8
     MenuItem mitems[MI_N] = {
         {MENU_LABEL, false, 0, PRI_INDENT, "Style:"},
-            {MENU_1OFN, false, 1, SEC_INDENT, coremap_names[CM_COUNTRIES]},
-            {MENU_1OFN, false, 1, SEC_INDENT, coremap_names[CM_TERRAIN]},
-            {MENU_1OFN, false, 1, SEC_INDENT, coremap_names[CM_DRAP]},
-            {MENU_1OFN, false, 1, SEC_INDENT, coremap_names[CM_MUF_V]},
-            {MENU_1OFN, false, 1, SEC_INDENT, coremap_names[CM_MUF_RT]},
-            {MENU_1OFN, false, 1, SEC_INDENT, coremap_names[CM_AURORA]},
-            {MENU_1OFN, false, 1, SEC_INDENT, coremap_names[CM_WX]},
+            {MENU_AL1OFN, (map_rotset & (1<<CM_COUNTRIES)) != 0, 1, SEC_INDENT, coremap_names[CM_COUNTRIES]},
+            {MENU_AL1OFN, (map_rotset & (1<<CM_TERRAIN)) != 0,   1, SEC_INDENT, coremap_names[CM_TERRAIN]},
+            {MENU_AL1OFN, (map_rotset & (1<<CM_DRAP)) != 0,      1, SEC_INDENT, coremap_names[CM_DRAP]},
+            {MENU_AL1OFN, (map_rotset & (1<<CM_MUF_V)) != 0,     1, SEC_INDENT, coremap_names[CM_MUF_V]},
+            {MENU_AL1OFN, (map_rotset & (1<<CM_MUF_RT)) != 0,    1, SEC_INDENT, coremap_names[CM_MUF_RT]},
+            {MENU_AL1OFN, (map_rotset & (1<<CM_AURORA)) != 0,    1, SEC_INDENT, coremap_names[CM_AURORA]},
+            {MENU_AL1OFN, (map_rotset & (1<<CM_WX)) != 0,        1, SEC_INDENT, coremap_names[CM_WX]},
             {MENU_IGNORE, false, 1, SEC_INDENT, NULL},     // MI_STY_PRP: see below
         {MENU_LABEL, false, 0, PRI_INDENT, "Grid:"},
             {MENU_1OFN, false, 2, SEC_INDENT, "None"},
@@ -1141,23 +1169,13 @@ static void drawMapMenu()
 
     // init selections with current states
 
-    // if showing a propmap list in menu as selected else core map
-    StackMalloc propband_mem (NV_COREMAPSTYLE_LEN);
-    char *propband = (char *) propband_mem.getMem();     // N.B. must be persistent for lifetime of runMenu()
-    if (prop_map.active) {
-        // add propmap item to menu selected, leaving others all unselected
-        mitems[MI_STY_PRP].type = MENU_1OFN;
+    // if propmap is in rotation add to menu
+    char propband[NV_COREMAPSTYLE_LEN];                 // N.B. must be persistent for lifetime of runMenu()
+    if (map_rotset & PROPMAP_ROT_BIT) {
+        // add propmap item to menu selected
+        mitems[MI_STY_PRP].type = MENU_AL1OFN;
         mitems[MI_STY_PRP].set = true;
-        mitems[MI_STY_PRP].label = getMapStyle (propband);
-    } else {
-        // select current map, leave MI_STY_PRP as ignored
-        mitems[MI_STR_CRY].set = core_map == CM_COUNTRIES;
-        mitems[MI_STY_TER].set = core_map == CM_TERRAIN;
-        mitems[MI_STY_DRA].set = core_map == CM_DRAP;
-        mitems[MI_STY_MUF].set = core_map == CM_MUF_V;
-        mitems[MI_STY_MRT].set = core_map == CM_MUF_RT;
-        mitems[MI_STY_AUR].set = core_map == CM_AURORA;
-        mitems[MI_STY_WXX].set = core_map == CM_WX;
+        mitems[MI_STY_PRP].label = getPropMapStyle (propband);
     }
 
     mitems[MI_GRD_NON].set = mapgrid_choice == MAPGRID_OFF;
@@ -1185,30 +1203,48 @@ static void drawMapMenu()
 
     // run menu
     SBox ok_b;
-    MenuInfo menu = {menu_b, ok_b, true, false, 1, MI_N, mitems};
+    MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 1, MI_N, mitems};
     bool menu_ok = runMenu (menu);
 
     bool full_redraw = false;
     if (menu_ok) {
 
-        resetWatchdog();
 
-        // schedule a new map if style changed
-        bool prop_turned_off = prop_map.active && !mitems[MI_STY_PRP].set;
-        if (mitems[MI_STR_CRY].set && (prop_turned_off || core_map != CM_COUNTRIES))
+        // build new map_rotset
+        uint16_t prev_rotset = map_rotset;
+        map_rotset = 0;
+        if (mitems[MI_STR_CRY].set)
             scheduleNewCoreMap (CM_COUNTRIES);
-        else if (mitems[MI_STY_TER].set && (prop_turned_off || core_map != CM_TERRAIN))
+        if (mitems[MI_STY_TER].set)
             scheduleNewCoreMap (CM_TERRAIN);
-        else if (mitems[MI_STY_DRA].set && (prop_turned_off || core_map != CM_DRAP))
+        if (mitems[MI_STY_DRA].set)
             scheduleNewCoreMap (CM_DRAP);
-        else if (mitems[MI_STY_MUF].set && (prop_turned_off || core_map != CM_MUF_V))
+        if (mitems[MI_STY_MUF].set)
             scheduleNewCoreMap (CM_MUF_V);
-        else if (mitems[MI_STY_MRT].set && (prop_turned_off || core_map != CM_MUF_RT))
+        if (mitems[MI_STY_MRT].set)
             scheduleNewCoreMap (CM_MUF_RT);
-        else if (mitems[MI_STY_AUR].set && (prop_turned_off || core_map != CM_AURORA))
+        if (mitems[MI_STY_AUR].set)
             scheduleNewCoreMap (CM_AURORA);
-        else if (mitems[MI_STY_WXX].set && (prop_turned_off || core_map != CM_WX))
+        if (mitems[MI_STY_WXX].set)
             scheduleNewCoreMap (CM_WX);
+        prop_map.active = mitems[MI_STY_PRP].set;
+        scheduleNewVOACAPMap (prop_map);
+
+        // check for changes and confirm core_map
+        if (map_rotset != prev_rotset) {
+            // pick one and do full refresh if core_map no longer selected
+            if (!(map_rotset & (1<<core_map))) {
+                for (int i = 0; i < CM_N; i++) {
+                    if (map_rotset & (1<<i)) {
+                        core_map = (CoreMaps)i;
+                        break;
+                    }
+                }
+                full_redraw = true;
+            }
+            saveMapRotSet();
+            logMapRotSet();
+        }
 
         // check for different grid
         if (mitems[MI_GRD_NON].set && mapgrid_choice != MAPGRID_OFF) {
@@ -1310,7 +1346,6 @@ static void drawMapMenu()
  */
 void initEarthMap()
 {
-    resetWatchdog();
 
     // completely erase map
     fillSBox (map_b, RA8875_BLACK);
@@ -1361,7 +1396,6 @@ void initEarthMap()
  */
 void drawMoreEarth()
 {
-    resetWatchdog();
 
     uint16_t last_x = map_b.x + EARTH_W - 1;
 
@@ -1418,7 +1452,6 @@ void drawMoreEarth()
  */
 static void ll2sScaled (const LatLong &ll, SCoord &s, uint8_t edge, int scale)
 {
-    resetWatchdog();
 
     uint16_t map_x = scale*map_b.x;
     uint16_t map_y = scale*map_b.y;
@@ -1707,7 +1740,6 @@ void drawSun ()
     if (sun_c.s.x == 0)
         return;
 
-    resetWatchdog();
     
     // draw at full display precision
 
@@ -1741,7 +1773,6 @@ void drawMoon ()
     if (moon_c.s.x == 0)
         return;
 
-    resetWatchdog();
 
     float phase = lunar_cir.phase;
     
@@ -1766,7 +1797,6 @@ void drawMoon ()
  */
 void drawDXInfo ()
 {
-    resetWatchdog();
 
     // skip if dx_info_b being used for sat info or pane 0
     if (dx_info_for_sat || SHOWING_PANE_0())

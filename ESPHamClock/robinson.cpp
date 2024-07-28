@@ -84,6 +84,7 @@ void ll2sRobinson (const LatLong &ll, SCoord &s, int edge, int scalesz)
     float dy = hh * Y;
 
     // convert to scaled screen coords, insuring within edge
+    edge += 5;                                                  // test is not exact
     float x0 = map_b.x + hw;
     float y0 = map_b.y + hh;
     float dx_edge = hw * G;                                     // full halfwidth at this lat

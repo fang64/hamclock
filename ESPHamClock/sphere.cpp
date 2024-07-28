@@ -1,4 +1,9 @@
+/* a few handy spherical trig functions.
+ */
+
+
 #include "HamClock.h"
+
 
 
 /* solve a spherical triangle:
@@ -34,15 +39,14 @@ void solveSphere (float A, float b, float cc, float sc, float *cap, float *Bp)
         }
 }
 
-/* simple and fast method to estimate angular separation between two LatLong, all in rads.
+
+/* simple angular separation between two LatLong, all in rads.
  * to get path length in miles, multiply result by ERAD_M.
  */
 float simpleSphereDist (const LatLong &ll1, const LatLong &ll2)
 {
-        float dlat = fabsf(ll1.lat - ll2.lat);
-        float dlng = fabsf(ll1.lng - ll2.lng);
-        if (dlng > M_PIF)
-            dlng = 2*M_PIF - dlng;
-        dlng *= cosf ((ll1.lat + ll2.lat)/2);
-        return (hypotf(dlat, dlng));
+        float ca;
+        solveSphere (ll1.lng - ll2.lng, M_PI_2F-ll2.lat, cosf (M_PI_2F-ll1.lat), sinf (M_PI_2F-ll1.lat),
+                        &ca, NULL);
+        return (acosf(ca));
 }

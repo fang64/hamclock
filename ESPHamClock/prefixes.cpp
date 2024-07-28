@@ -1,11 +1,42 @@
+/* manage prefixes and mapping them to/from lat/lng.
+ * 
+ * we actually use two different lists. a short one in memory for LL->prefix and a much longer one
+ * based on AC1D's cty file for prefix->LL. TODO: use cty for both but needs some clever sort for speed.
+ */
+
 #include "HamClock.h"
 
+
+/* prefixes are cached with fast radix access
+ */
+
+static char cty_page[] = "/cty/cty_wt_mod-ll.txt";      // web page to download
+static char cty_fn[] = "cty-ll.txt";                    // local cache copy name
+
 typedef struct {
-    char prefix[MAX_PREF_LEN];            // prefix, left justified, \0 padded but none if full
-    int16_t lat, lng;                     // rough center, degs*100 +E +N
+    char call[MAX_SPOTCALL_LEN];                // mostly prefixes, a few calls; sorted ala strcmp
+    float lat_d, lng_d;                         // +N +E degrees
+    int call_len;                               // handy strlen(call)
+} CtyLoc;
+static CtyLoc *cty_list;                        // malloced list
+static int n_cty, n_malloc;                     // n entries used, n malloced
+#define _N_RADIX ('Z' - '0' + 1)                // radix range, 
+static int cty_radix[_N_RADIX];                 // table of cty_list index from first character
+static char prev_radix;                         // used to detect change in radis index
+static time_t next_refresh;                     // time of next download
+#define MAX_CTY_AGE     (2*24*3600)             // normally update city file this often, secs
+#define RETRY_DT        60                      // retry interval if trouble, secs
+
+
+/* table of common prefixes and their rough center location.
+ */
+
+typedef struct {
+    char prefix[MAX_PREF_LEN];                  // prefix, left justified, \0 padded but none if full
+    int16_t lat, lng;                           // rough center, degs*100 +E +N
 } Prefix;
 
-static const Prefix prefixes[] PROGMEM = {
+static const Prefix prefixes[] = {
      {{'1','A','\0','\0'},        4154,   1230},
      {{'1','S','\0','\0'},         839,  11129},
      {{'3','A','\0','\0'},        4345,    725},
@@ -639,6 +670,7 @@ static const Prefix prefixes[] PROGMEM = {
 #define N_PREFIXES NARRAY(prefixes)
 #define MAX_R2   (11*11)          // max radius^2, sqr degrees
 
+
 /* find nearest prefix to the given LL, if within allowed max
  */
 bool ll2Prefix (const LatLong &ll, char prefix[MAX_PREF_LEN+1])
@@ -660,8 +692,8 @@ bool ll2Prefix (const LatLong &ll, char prefix[MAX_PREF_LEN+1])
     float coslat = cosf(ll.lat);
     uint16_t closest_prefix = 0;
     for (uint16_t i = 0; i < N_PREFIXES; i++) {
-        float dlat = ll.lat_d - 0.01F * (int16_t) pgm_read_word (&prefixes[i].lat);
-        float dlng = lngDiff(ll.lng_d - 0.01F * (int16_t) pgm_read_word (&prefixes[i].lng));
+        float dlat = ll.lat_d - 0.01F * (int16_t) prefixes[i].lat;
+        float dlng = lngDiff (ll.lng_d - 0.01F * (int16_t) prefixes[i].lng);
         dlng *= coslat;
         float d2 = dlat*dlat + dlng*dlng;
         if (d2 < mind2) {
@@ -677,12 +709,9 @@ bool ll2Prefix (const LatLong &ll, char prefix[MAX_PREF_LEN+1])
         return (false);
     }
 
-    // float lat = (float) pgm_read_float (&prefixes[closest_prefix].lat),
-    // float lng = (float) pgm_read_float (&prefixes[closest_prefix].lng));
-
     // create legitimate string
     for (uint8_t i = 0; i < MAX_PREF_LEN; i++)
-        prefix[i] = (char) pgm_read_byte (&prefixes[closest_prefix].prefix[i]);
+        prefix[i] = (char) prefixes[closest_prefix].prefix[i];
     prefix[MAX_PREF_LEN] = '\0';
 
     // save result
@@ -693,43 +722,59 @@ bool ll2Prefix (const LatLong &ll, char prefix[MAX_PREF_LEN+1])
     return (true);
 }
 
-/* if call contains / copy the most likely dx half (not home call) to dx_call.
- * else just copy complete call to dx_call.
+/* split a call into home and dx portions.
+ * if nothing looks like a dx portion then copy call to both.
+ * N.B. we assume call has already been cleaned with strtrim() and strtoupper()
  */
-void findDXCallPortion (const char *call, char dx_call[NV_CALLSIGN_LEN])
+void splitCallSign (const char *call, char home_call[NV_CALLSIGN_LEN], char dx_call[NV_CALLSIGN_LEN])
 {
-    // init dx_call
-    memset (dx_call, 0, NV_CALLSIGN_LEN);
-
     // split at slash, if any
     const char *slash = strchr (call, '/');
+
     if (slash) {
 
         // find left and right boundaries
-        const char *right = slash+1;                // beginning of right portion
-        size_t llen = slash - call;                 // length of left portion
-        size_t rlen = strlen (right);               // length of right portion
+        const char *left = call;                        // just handy
+        const char *right = slash+1;                    // beginning of right portion
+        int l_len = slash - left;                       // length of left portion
+        int r_len = strlen (right);                     // length of right portion
         const char *slash2 = strchr (right, '/');
         if (slash2)
-            rlen = slash2 - right;                  // don't count past a 2nd slash
+            r_len = slash2 - right;                      // don't count past a 2nd slash
 
         // dx is the shorter side unless it looks like a common shorthand or seems suspicious
 
-        if (rlen <= 1 || llen <= rlen || !strcmp(right,"MM") || !strcmp(right,"AM")
-                || !strncmp (right, "QRP", 3) || strspn(right,"0123456789") == rlen || strchr (right, '#'))
-            memcpy (dx_call, call, llen >= NV_CALLSIGN_LEN ? NV_CALLSIGN_LEN-1 : llen);
-        else
-            memcpy (dx_call, right, rlen >= NV_CALLSIGN_LEN ? NV_CALLSIGN_LEN-1 : rlen);
+        if (r_len <= 1 || !strcmp(right,"MM") || !strcmp(right,"AM")
+                      || !strcmp (right, "QRP") || (int)strspn(right,"0123456789") == r_len) {
+
+            // disregard suspicious right side
+            snprintf (home_call, NV_CALLSIGN_LEN, "%.*s", l_len, left);
+            snprintf (dx_call, NV_CALLSIGN_LEN, "%.*s", l_len, left);
+
+        } else if (l_len <= r_len) {
+
+            // left is shorter, consider it the dx
+            snprintf (home_call, NV_CALLSIGN_LEN, "%.*s", r_len, right);
+            snprintf (dx_call, NV_CALLSIGN_LEN, "%.*s", l_len, left);
+
+        } else {
+
+            // right is shorter, consider it the dx
+            snprintf (home_call, NV_CALLSIGN_LEN, "%.*s", l_len, left);
+            snprintf (dx_call, NV_CALLSIGN_LEN, "%.*s", r_len, right);
+
+        }
 
     } else {
 
-        // just use the entire call
-        strncpy (dx_call, call, NV_CALLSIGN_LEN-1);
+        // call is home, no dx
+        snprintf (home_call, NV_CALLSIGN_LEN, "%s", call);
+        snprintf (dx_call, NV_CALLSIGN_LEN, "%s", call);
 
     }
 }
 
-/* extract the most likely portion from the given call that appears to be the prefix
+/* extract the most likely portion from the given call that appears to be the dx prefix
  */
 void findCallPrefix (const char *call, char prefix[MAX_PREF_LEN])
 {
@@ -741,168 +786,160 @@ void findCallPrefix (const char *call, char prefix[MAX_PREF_LEN])
         return;
 
     // always work with the dx-end
+    char home_call[NV_CALLSIGN_LEN];
     char dx_call[NV_CALLSIGN_LEN];
-    findDXCallPortion (call, dx_call);
+    splitCallSign (call, home_call, dx_call);
     size_t dxcall_len = strlen(dx_call);
 
-    // find right-most digit in dx_call
+    // find rmd "right-most digit" in dx_call
     const char *rmd = &dx_call[dxcall_len];
     while (--rmd >= dx_call && !isdigit(*rmd))
         continue;
 
     // if no rmd or it's the first char, then use it plus one more else prefix is what lies in front of rmd
     if (rmd <= dx_call) {
-        memcpy (prefix, dx_call, 2);
+        snprintf (prefix, MAX_PREF_LEN, "%.2s", dx_call);
     } else {
-        size_t pref_len = rmd - dx_call + 1;                    // include rmd
-        memcpy (prefix, dx_call, pref_len >= MAX_PREF_LEN ? MAX_PREF_LEN-1 : pref_len);
+        snprintf (prefix, MAX_PREF_LEN, "%.*s", (int)(rmd - dx_call + 1), dx_call);     // include rmd itself
     }
 
     // printf ("************************ %s %s\n", call, prefix);
 }
+
+
+/***********************************************************************************
+ *
+ * cty file support
+ * 
+ ***********************************************************************************/
+
+/* init cty values for a fresh start
+ */
+static void initCty(void)
+{
+    if (cty_list)
+        free (cty_list);
+    cty_list = NULL;
+    n_cty = 0;
+    n_malloc = 0;
+}
+
+/* crack and add another line to cty_list
+ */
+static void addCtyLine (char *line)
+{
+    // skip blank and comment lines
+    if (line[0] == '\n' || line[0] == '#')
+        return;
+
+    // crack
+    CtyLoc cl;
+    if (sscanf (line, "%10s %f %f", cl.call, &cl.lat_d, &cl.lng_d) != 3) {
+        Serial.printf ("CTY: %s bad format: %s\n", cty_page, line);
+        return;
+    }
+
+    // add to list, expanding as needed
+    if (n_cty + 1 > n_malloc) {
+        cty_list = (CtyLoc *) realloc (cty_list, (n_malloc += 1000) * sizeof(CtyLoc));
+        if (!cty_list)
+            fatalError ("No memory for cty location list %d\n", n_malloc);
+    }
+    cl.call_len = strlen(cl.call);
+    cty_list[n_cty++] = cl;
+
+    // update radix index when first char changes
+    if (cl.call[0] != prev_radix) {
+        int radix_index = cl.call[0] - '0';
+        if (radix_index < 0 || radix_index >= _N_RADIX)
+            fatalError ("cty radix out of range %d %d", radix_index, _N_RADIX);
+        cty_radix[radix_index] = n_cty - 1;
+        prev_radix = cl.call[0];
+        // printf ("********* radix %c %5d %5d\n",cl.call[0], radix_index, radix[radix_index]);
+    }
+}
+
+/* insure cty_lst and its supporting radix index are ready to use, even if stale if no other way.
+ * use local file but if absent or too old try to download.
+ * return whether cty_list is ready.
+ */
+static bool loadCtyFile(void)
+{
+    // out fast if cache still valid or not time to retry
+    if (cty_list != NULL && myNow() < next_refresh)
+        return (true);
+
+    // open cached file
+    FILE *fp = openCachedFile (cty_fn, cty_page, MAX_CTY_AGE);
+    if (!fp) {
+        next_refresh = myNow() + RETRY_DT;
+        return (false);
+    }
+
+    // (re)build cty_list
+    initCty();
+    char line[100];
+    while (fgets (line, sizeof(line), fp))
+        addCtyLine (line);
+
+    // done
+    fclose (fp);
+    next_refresh = myNow() + MAX_CTY_AGE;
+    Serial.printf ("CTY: refreshed %s from %s found %d locations\n", cty_fn, cty_page, n_cty);
+
+    // real question is whether cty_list exists
+    return (cty_list != NULL);
+}
+
 
 /* given a call sign or prefix find its lat/long by querying the cty table.
  * return whether successful.
  */
 bool call2LL (const char *call, LatLong &ll)
 {
-        static char cty_page[] PROGMEM = "/cty/cty_wt_mod-ll.txt";
-        typedef struct {
-            char call[MAX_SPOTCALL_LEN];                // mostly prefixes, a few calls; sorted ala strcmp
-            float lat_d, lng_d;                         // +N +E degrees
-            int call_len;                               // handy strlen(call)
-        } CtyLoc;
-        static CtyLoc *cty_list;                        // malloced list
-        static int n_cty;                               // n entries
-        #define _N_RADIX ('Z' - '0' + 1)                // radix range, 
-        #define _LOOKUP_DT (3600*24*1000L)              // refresh period, millis
-        static int radix[_N_RADIX];                     // table of cty_list index from first character
-        static uint32_t last_lookup;                    // update occasionally
+    // check cty_list
+    if (!loadCtyFile())
+        return (false);
 
-        // retrieve the file first time or once per _LOOKUP_DT
-        if (!cty_list || timesUp (&last_lookup, _LOOKUP_DT)) {
+    // use the dx end of a portable call
+    char home_call[NV_CALLSIGN_LEN];
+    char dx_call[NV_CALLSIGN_LEN];
+    splitCallSign (call, home_call, dx_call);
 
-            WiFiClient cty_client;
-            bool ok = false;
-
-            Serial.println (cty_page);
-
-            if (wifiOk() && cty_client.connect(backend_host, backend_port)) {
-
-                // look alive
-                updateClocks(false);
-
-                // request page and skip response header
-                httpHCPGET (cty_client, backend_host, cty_page);
-                if (!httpSkipHeader (cty_client)) { 
-                    Serial.printf (_FX("CTY: %s header short\n"), cty_page);
-                    goto out;
-                }
-
-                // fresh start
-                free (cty_list);
-                cty_list = NULL;
-                n_cty = 0;
-                int n_malloc = 0;
-                const int n_more = 1000;
-
-                // read lines and build tables
-                char line[50];
-                char prev_radix = 0;
-                uint16_t line_len;
-                CtyLoc cl;
-                while (getTCPLine (cty_client, line, sizeof(line), &line_len)) {
-
-                    // skip blank and comment lines
-                    if (line_len == 0 || line[0] == '#')
-                        continue;
-
-                    // crack
-                    if (sscanf (line, "%10s %f %f", cl.call, &cl.lat_d, &cl.lng_d) != 3) {
-                        Serial.printf (_FX("CTY: %s bad format: %s\n"), cty_page, line);
-                        goto out;
-                    }
-
-                    // add to list, expanding as needed
-                    if (n_cty + 1 > n_malloc) {
-                        cty_list = (CtyLoc *) realloc (cty_list, (n_malloc += n_more) * sizeof(CtyLoc));
-                        if (!cty_list)
-                            fatalError (_FX("No memory for cluster location list %d\n"), n_malloc);
-                    }
-                    cl.call_len = strlen(cl.call);
-                    cty_list[n_cty++] = cl;
-
-                    // update radix index when first char changes
-                    if (cl.call[0] != prev_radix) {
-                        int radix_index = cl.call[0] - '0';
-                        if (radix_index < 0 || radix_index >= _N_RADIX)
-                            fatalError (_FX("cluster radix out of range %d %d"), radix_index, _N_RADIX);
-                        radix[radix_index] = n_cty - 1;
-                        prev_radix = cl.call[0];
-                        // printf ("********* radix %c %5d %5d\n",cl.call[0],radix_index,radix[radix_index]);
-                    }
-                }
-
-                // sanity check
-                if (n_cty > 20000)
-                    ok = true;
+    // start at radix then find longest cty_list call entry that starts with dx_call.
+    const CtyLoc *candidate = NULL;
+    int radix_index = dx_call[0] - '0';
+    if (radix_index >= 0 && radix_index < _N_RADIX) {
+        int start = cty_radix[radix_index];
+        int len_match = 0;
+        // printf ("********* %c start %d .. ", dx_call[0], start);
+        for (int i = start; i < n_cty; i++) {
+            const CtyLoc *cp = &cty_list[i];
+            if (cp->call[0] != dx_call[0]) {
+                // printf ("%d\n", i);
+                break;
             }
-
-          out:
-
-            // close connection regardless
-            cty_client.stop();
-
-            if (ok) {
-                // note success
-                last_lookup = millis();
-                Serial.printf (_FX("CTY: Found %d locations, next refresh in %ld s at %ld\n"), n_cty,
-                                        _LOOKUP_DT/1000L, (last_lookup+_LOOKUP_DT)/1000L);
-            } else {
-                // note failure and reset
-                Serial.printf (_FX("CTY: %s download failed after %d\n"), cty_page, n_cty);
-                free (cty_list);
-                cty_list = NULL;
-                n_cty = 0;
-                return (false);
-            }
-        }
-
-        // use the dx end of a portable call
-        char dx_call[NV_CALLSIGN_LEN];
-        findDXCallPortion (call, dx_call);
-
-        // start at radix then find longest cty_list call entry that starts with dx_call.
-        const CtyLoc *candidate = NULL;
-        int radix_index = dx_call[0] - '0';
-        if (radix_index >= 0 && radix_index < _N_RADIX) {
-            int start = radix[radix_index];
-            int len_match = 0;
-            // printf ("********* %c start %d .. ", dx_call[0], start);
-            for (int i = start; i < n_cty; i++) {
-                const CtyLoc *cp = &cty_list[i];
-                if (cp->call[0] != dx_call[0]) {
-                    // printf ("%d\n", i);
-                    break;
-                }
-                if (strncmp (cp->call, dx_call, cp->call_len) == 0) {
-                    int cc_len = strlen(cp->call);
-                    if (cc_len > len_match) {
-                        len_match = cc_len;
-                        candidate = cp;
-                    }
+            if (strncmp (cp->call, dx_call, cp->call_len) == 0) {
+                int cc_len = strlen(cp->call);
+                if (cc_len > len_match) {
+                    len_match = cc_len;
+                    candidate = cp;
                 }
             }
         }
+    }
 
-        if (candidate) {
-            ll.lat_d = candidate->lat_d;
-            ll.lng_d = candidate->lng_d;
-            normalizeLL (ll);
-            return (true);
-        } else {
-            // darn
-            Serial.printf (_FX("CTY: No location for %s AKA %s\n"), call, dx_call);
-            return (false);
-        }
+    if (candidate) {
+        ll.lat_d = candidate->lat_d;
+        ll.lng_d = candidate->lng_d;
+        normalizeLL (ll);
+        return (true);
+    } else {
+        // darn
+        if (strcmp (call, dx_call))
+            Serial.printf ("CTY: No location for %s AKA %s\n", dx_call, call);
+        else
+            Serial.printf ("CTY: No location for %s\n", call);
+        return (false);
+    }
 }

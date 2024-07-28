@@ -40,6 +40,7 @@ typedef struct {
 // daily alarm info
 typedef struct {
     uint16_t hrmn;                              // time as hr*60 + min, always in DE TZ
+    bool utc;                                   // user wants time in UTC, else DE
     AlarmState state;                           // whether off, armed or ringing
     SBox lbl_b;                                 // main control label
     SBox time_b;                                // main time display
@@ -184,6 +185,7 @@ static void setAlarmPin (bool set)
 #define ALMO_TW         300                     // once-alarm control button width
 #define ALMO_TITY       (ALMO_Y0+SW_BH+3)       // once-alarm title Y
 #define ALMD_NVARMED    (24U*60U)               // add to hrmn when stored in NV_DAILYALARM to indicate armed
+#define ALMD_NVUTC      (2*24U*60U)             // add to hrmn when stored in NV_DAILYALARM to indicate UTC
 #define ALM_RINGTO      60                      // alarm clock ringing timeout, secs; NOT EASILY CHANGED
 #define ALMO_ARMED_BIT  1                       // NV_ONCEALARMMASK bit means armed
 #define ALMO_UTC_BIT    2                       // NV_ONCEALARMMASK bit means alarm_once.time is in utc
@@ -286,7 +288,7 @@ AlarmOnce alarm_once = {
     {BC_ALMO_X, BC_ALMO_Y, BC_ALMO_W, BC_ALMO_H},
 };
 static AlarmDaily alarm_daily = {
-    0, ALMS_OFF,
+    0, false, ALMS_OFF,
     {ALMD_LX0, ALMD_Y0, ALMD_LW, SW_BH},
     {ALMD_TX0, ALMD_Y0, ALMD_TW, SW_BH},
     {BC_ALMD_X, BC_ALMD_Y, BC_ALMD_W, BC_ALMD_H},
@@ -335,6 +337,8 @@ static void saveSWNV(void)
     uint16_t acode = alarm_daily.hrmn;
     if (alarm_daily.state != ALMS_OFF)
         acode += ALMD_NVARMED;
+    if (alarm_daily.utc)
+        acode += ALMD_NVUTC;
     NVWriteUInt16 (NV_DAILYALARM, acode);
 
     uint8_t once_mask = 0;
@@ -359,17 +363,42 @@ static void loadSWNV(void)
         NVWriteUInt32 (NV_CD_PERIOD, countdown_period);
     }
 
-    // read and unpack daily alarm time and whether armed.
+    /* read and unpack daily alarm time and whether armed or utc.
+     *    
+     *                     Armed?    UTC?
+     *             5759 \
+     *             ......>  yes      yes
+     *    NVA+NVU  4320 /
+     *             4319 \
+     *             ......>   no      yes
+     *    NVU      2880 /
+     *             2879 \
+     *             ......>  yes       no
+     *    NVA      1440 /
+     *             1439 \
+     *             ......>   no       no
+     *    0        0    /
+     */
+
     if (!NVReadUInt16 (NV_DAILYALARM, &alarm_daily.hrmn)) {
         alarm_daily.hrmn = 0;
-        alarm_daily.state = ALMS_OFF;
         NVWriteUInt16 (NV_DAILYALARM, 0);
     }
     if (alarm_daily.hrmn < ALMD_NVARMED) {
         alarm_daily.state = ALMS_OFF;
+        alarm_daily.utc = false;
+    } else if (alarm_daily.hrmn < ALMD_NVUTC) {
+        alarm_daily.state = ALMS_ARMED;
+        alarm_daily.utc = false;
+        alarm_daily.hrmn -= ALMD_NVARMED;
+    } else if (alarm_daily.hrmn < ALMD_NVARMED+ALMD_NVUTC) {
+        alarm_daily.state = ALMS_OFF;
+        alarm_daily.utc = true;
+        alarm_daily.hrmn -= ALMD_NVUTC;
     } else {
         alarm_daily.state = ALMS_ARMED;
-        alarm_daily.hrmn -= ALMD_NVARMED;
+        alarm_daily.utc = true;
+        alarm_daily.hrmn -= ALMD_NVARMED+ALMD_NVUTC;
     }
 
     // read and unpack the one-time alarm
@@ -443,88 +472,6 @@ static void drawColorScale()
     tft.drawLine (hue_x, color_b.y+3*color_b.h/8, hue_x, color_b.y+5*color_b.h/8, RA8875_WHITE);
 }
 
-/* draw the given digit in the given bounding box with the given line thickness.
- */
-static void drawDigit (const SBox &b, int digit, uint16_t lt)
-{
-    // insure all dimensions are even so two halves make a whole
-    uint16_t t = (lt+1) & ~1U;
-    uint16_t w = (b.w+1) & ~1U;
-    uint16_t h = (b.h+1) & ~1U;
-    uint16_t to2 = t/2;
-    uint16_t wo2 = w/2;
-    uint16_t ho2 = h/2;
-
-    // erase 
-    tft.fillRect (b.x, b.y, w, h, SW_BG);
-
-    // draw digit -- replace with drawRect to check boundaries
-    switch (digit) {
-    case 0:
-        tft.fillRect (b.x, b.y, w, t, sw_col);
-        tft.fillRect (b.x, b.y+t, t, h-2*t, sw_col);
-        tft.fillRect (b.x, b.y+h-t, w, t, sw_col);
-        tft.fillRect (b.x+w-t, b.y+t, t, h-2*t, sw_col);
-        break;
-    case 1:
-        tft.fillRect (b.x+wo2-to2, b.y, t, h, sw_col);      // center column? a little right?
-        break;
-    case 2:
-        tft.fillRect (b.x, b.y, w, t, sw_col);
-        tft.fillRect (b.x+w-t, b.y+t, t, ho2-t-to2, sw_col);
-        tft.fillRect (b.x, b.y+ho2-to2, w, t, sw_col);
-        tft.fillRect (b.x, b.y+ho2+to2, t, ho2-t-to2, sw_col);
-        tft.fillRect (b.x, b.y+h-t, w, t, sw_col);
-        break;
-    case 3:
-        tft.fillRect (b.x, b.y, w, t, sw_col);
-        tft.fillRect (b.x+t, b.y+ho2-to2, w-t, t, sw_col);
-        tft.fillRect (b.x, b.y+h-t, w, t, sw_col);
-        tft.fillRect (b.x+w-t, b.y+t, t, h-2*t, sw_col);
-        break;
-    case 4:
-        tft.fillRect (b.x, b.y, t, ho2+to2, sw_col);
-        tft.fillRect (b.x+t, b.y+ho2-to2, w-2*t, t, sw_col);
-        tft.fillRect (b.x+w-t, b.y, t, h, sw_col);
-        break;
-    case 5:
-        tft.fillRect (b.x, b.y, w, t, sw_col);
-        tft.fillRect (b.x, b.y+t, t, ho2-t-to2, sw_col);
-        tft.fillRect (b.x, b.y+ho2-to2, w, t, sw_col);
-        tft.fillRect (b.x+w-t, b.y+ho2+to2, t, ho2-t-to2, sw_col);
-        tft.fillRect (b.x, b.y+h-t, w, t, sw_col);
-        break;
-    case 6:
-        tft.fillRect (b.x, b.y, t, h, sw_col);
-        tft.fillRect (b.x+t, b.y, w-t, t, sw_col);
-        tft.fillRect (b.x+t, b.y+ho2-to2, w-t, t, sw_col);
-        tft.fillRect (b.x+w-t, b.y+ho2+to2, t, ho2-to2-t, sw_col);
-        tft.fillRect (b.x+t, b.y+h-t, w-t, t, sw_col);
-        break;
-    case 7:
-        tft.fillRect (b.x, b.y, w, t, sw_col);
-        tft.fillRect (b.x+w-t, b.y+t, t, h-t, sw_col);
-        break;
-    case 8:
-        tft.fillRect (b.x, b.y, t, h, sw_col);
-        tft.fillRect (b.x+w-t, b.y, t, h, sw_col);
-        tft.fillRect (b.x+t, b.y, w-2*t, t, sw_col);
-        tft.fillRect (b.x+t, b.y+ho2-to2, w-2*t, t, sw_col);
-        tft.fillRect (b.x+t, b.y+h-t, w-2*t, t, sw_col);
-        break;
-    case 9:
-        tft.fillRect (b.x, b.y, t, ho2+to2, sw_col);
-        tft.fillRect (b.x+w-t, b.y, t, h, sw_col);
-        tft.fillRect (b.x+t, b.y, w-2*t, t, sw_col);
-        tft.fillRect (b.x+t, b.y+ho2-to2, w-2*t, t, sw_col);
-        break;
-    default:
-        fatalError(_FX("drawDigit %d"), digit);
-        break;
-    }
-}
-
-
 /* draw the given stopwatch digit in the given position 0 .. SW_NDIG-1.
  * use swdigits[] to avoid erasing/redrawing the same digit again.
  */
@@ -543,7 +490,7 @@ static void drawSWDigit (uint8_t position, uint8_t digit)
     b.h = SW_DH;
 
     // draw
-    drawDigit (b, digit, SW_LT);
+    drawDigit (b, digit, SW_LT, SW_BG, sw_col);
 }
 
 /* display the given time value in millis()
@@ -595,7 +542,7 @@ static void drawSWTime(uint32_t t)
     ndig++;
 
     if (ndig != SW_ND)
-        fatalError (_FX("stopwatch %d != %d"), ndig, SW_ND);
+        fatalError ("stopwatch %d != %d", ndig, SW_ND);
 }
 
 
@@ -643,11 +590,11 @@ static void drawSatIndicator(bool force)
 
     if (sn.raz == SAT_NOAZ)
 
-        drawStringInBox (_FX("No rise"), sat_b, false, sw_col);
+        drawStringInBox ("No rise", sat_b, false, sw_col);
 
     else if (sn.saz == SAT_NOAZ)
 
-        drawStringInBox (_FX("No set"), sat_b, false, sw_col);
+        drawStringInBox ("No set", sat_b, false, sw_col);
 
     else {
 
@@ -717,7 +664,7 @@ static void drawAlarmIndicators (bool label_too)
     if (sws_display == SWD_MAIN) {
 
         // N.B. coordinate with alarm_daily.time_b touch control locations
-        snprintf (buf, sizeof(buf), "DE   %02d:%02d",  a_hr, a_mn);
+        snprintf (buf, sizeof(buf), "%s  %02d:%02d", alarm_daily.utc ? "UTC" : "DE ", a_hr, a_mn);
         drawStringInBox (buf, alarm_daily.time_b, false, sw_col);
 
         if (label_too) {
@@ -935,7 +882,7 @@ static void drawBCAwareness (bool force)
         if (force || !time_was_ok) {
             // erase
             tft.fillRect (BC_BAD_X, BC_BAD_Y, BC_BAD_W, BC_BAD_H, RA8875_BLACK);
-            Serial.print (F("SW: time ok now\n"));
+            Serial.print ("SW: time ok now\n");
         }
     } else {
         if (force || time_was_ok) {
@@ -943,13 +890,13 @@ static void drawBCAwareness (bool force)
             tft.setCursor (BC_BAD_X, BC_BAD_Y+27);
             tft.setTextColor (RA8875_RED);
             if (clock_ok) {
-                const char *msg = _FX("Time is offset");
+                const char *msg = "Time is offset";
                 tft.print (msg);
-                Serial.printf (_FX("SW: %s\n"), msg);
+                Serial.printf ("SW: %s\n", msg);
             } else {
-                const char *msg = _FX("Time is unknown");
+                const char *msg = "Time is unknown";
                 tft.print (msg);
-                Serial.printf (_FX("SW: %s\n"), msg);
+                Serial.printf ("SW: %s\n", msg);
             }
         }
     }
@@ -974,9 +921,9 @@ static void drawBCDateInfo (int hr, int dy, int wd, int mo)
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
     tft.setCursor (bc_date_b.x, bc_date_b.y + 90);
     if (getDateFormat() == DF_MDY || getDateFormat() == DF_YMD)
-        tft.printf (_FX("%s %d"), monthStr(mo), dy);
+        tft.printf ("%s %d", monthStr(mo), dy);
     else
-        tft.printf (_FX("%d %s"), dy, monthStr(mo));
+        tft.printf ("%d %s", dy, monthStr(mo));
 
     // AM/PM/UTC
     tft.setCursor (bc_date_b.x, bc_date_b.y + 125);
@@ -1140,10 +1087,10 @@ static void drawDigitalBigClock (bool all)
     // update hour every hour
     if (all || hr != prev_hr) {
         if (hrten >= 0) {
-            drawDigit (b, hrten, BDC_HMLT);
+            drawDigit (b, hrten, BDC_HMLT, SW_BG, sw_col);
             b.x += BDC_HMW + BDC_HMGAP;
         }
-        drawDigit (b, hrunit, BDC_HMLT);
+        drawDigit (b, hrunit, BDC_HMLT, SW_BG, sw_col);
         b.x += BDC_HMW;
         prev_hr = hr;
     } else {
@@ -1173,13 +1120,13 @@ static void drawDigitalBigClock (bool all)
         // draw tens of minutes if changed
         uint8_t mnten = mn/10;
         if (all || mnten != prev_mnten) {
-            drawDigit (b, mnten, BDC_HMLT);
+            drawDigit (b, mnten, BDC_HMLT, SW_BG, sw_col);
             prev_mnten = mnten;
         }
         b.x += BDC_HMW + BDC_HMGAP;
 
         // unit minute for sure
-        drawDigit (b, mnunit, BDC_HMLT);
+        drawDigit (b, mnunit, BDC_HMLT, SW_BG, sw_col);
         b.x += BDC_HMW;
         prev_mnunit = mnunit;
     } else 
@@ -1196,13 +1143,13 @@ static void drawDigitalBigClock (bool all)
         // draw tens of seconds if changed
         uint8_t scten = sc/10;
         if (all || scten != prev_scten) {
-            drawDigit (b, scten, BDC_HMLT/BCD_SSZRED);
+            drawDigit (b, scten, BDC_HMLT/BCD_SSZRED, SW_BG, sw_col);
             prev_scten = scten;
         }
         b.x += b.w + BDC_HMGAP/BCD_SSZRED;
 
         // unit seconds for sure
-        drawDigit (b, sc%10, BDC_HMLT/BCD_SSZRED);
+        drawDigit (b, sc%10, BDC_HMLT/BCD_SSZRED, SW_BG, sw_col);
     }
 
     // update awareness
@@ -1692,9 +1639,7 @@ static void showAlarmRinging()
         const PlotPane alarm_pane = PANE_2;
         const SBox &b = plot_b[alarm_pane];
 
-        // close down other network systems if using this pane
-        if (findPaneChoiceNow(PLOT_CH_DXCLUSTER) == alarm_pane)
-            closeDXCluster();
+        // close down other network systems if using this pane?
         if (findPaneChoiceNow(PLOT_CH_GIMBAL) == alarm_pane)
             closeGimbal();
 
@@ -1732,15 +1677,15 @@ static void showAlarmRinging()
         selectFontStyle (LIGHT_FONT, SMALL_FONT);
         drawStringInBox (" Cancel ", dismiss_b, false, BRGRAY);
 
-        // wait for tap anywhere in pane or time out
+        // wait for tap anywhere or time out
         SCoord s;
         char c;
         UserInput ui = {
             b,
             checkExternalTurnOff,
-            false,
+            UF_FALSE,
             ALM_RINGTO * 1000,                  // wants ms
-            true,
+            UF_CLOCKSOK,
             s,
             c,
             false,
@@ -1761,11 +1706,11 @@ static void showAlarmRinging()
         drawMainPageStopwatch (true);
         setAlarmPin (false);
 
-        // restart -- init doesn't include our own countdown pane
+        // restart -- can't schedule our own countdown pane
         if (findPaneChoiceNow(PLOT_CH_COUNTDOWN) == alarm_pane)
             drawCDTimeRemaining(true);
         else
-            initWiFiRetry();
+            scheduleNewPlot (plot_ch[PANE_2]);
 
     } else {
 
@@ -1846,7 +1791,7 @@ static void runBCMenu (const SCoord &s)
 
     // run, do nothing more if cancelled
     SBox ok_b;
-    MenuInfo menu = {menu_b, ok_b, false, false, 1, MI_N, mitems};
+    MenuInfo menu = {menu_b, ok_b, UF_NOCLOCKS, M_CANCELOK, 1, MI_N, mitems};
     if (!runMenu (menu))
         return;
 
@@ -2060,40 +2005,64 @@ static void checkSWPageTouch()
 
             // N.B. coordinate with drawing locations
 
-            uint16_t t_left  = alarm_daily.time_b.x + alarm_daily.time_b.w/2;
-            uint16_t t_mid   = alarm_daily.time_b.x + 3*alarm_daily.time_b.w/4;
+            uint16_t t_left  = alarm_daily.time_b.x + alarm_daily.time_b.w/4;
 
-            if (s.x > t_left) {
+            if (s.x < t_left) {
 
-                uint16_t a_hr = alarm_daily.hrmn/60;
-                uint16_t a_mn = alarm_daily.hrmn%60;
+                // toggle time zone
 
-                if (s.y < alarm_daily.time_b.y + alarm_daily.time_b.h/2) {
-                    // increase daily alarm hour or minute
-                    if (s.x < t_mid)
-                        a_hr = (a_hr + 1) % 24;
-                    else {
-                        if (++a_mn == 60) {
-                            if (++a_hr == 24)
-                                a_hr = 0;
-                            a_mn = 0;
-                        }
-                    }
+                alarm_daily.utc = !alarm_daily.utc;
+
+                // change to new timezone
+                int tz_mins = de_tz.tz_secs/60;                 // think of hhmm as just minutes
+                if (alarm_daily.utc) {
+                    // was local so subtract tz to get utc
+                    alarm_daily.hrmn += (1440 - tz_mins);       // keep hrmn positive -- it's unsigned!
                 } else {
-                    // decrease daily alarm hour or minute
-                    if (s.x < t_mid)
-                        a_hr = (a_hr + 23) % 24;
-                    else {
-                        if (a_mn == 0) {
-                            a_mn = 59;
+                    // was utc so add tz to get local
+                    alarm_daily.hrmn += (1440 + tz_mins);       // keep hrmn positive -- it's unsigned!
+                }
+                alarm_daily.hrmn %= 1440;                       // insure back to [0,1440)
+
+
+            } else {
+
+                // adjust time
+                uint16_t t_mid   = alarm_daily.time_b.x + alarm_daily.time_b.w/2;
+                uint16_t t_right = alarm_daily.time_b.x + 3*alarm_daily.time_b.w/4;
+
+                if (s.x > t_mid) {
+
+                    uint16_t a_hr = alarm_daily.hrmn/60;
+                    uint16_t a_mn = alarm_daily.hrmn%60;
+
+                    if (s.y < alarm_daily.time_b.y + alarm_daily.time_b.h/2) {
+                        // above center: increase daily alarm hour or minute
+                        if (s.x < t_right)
+                            a_hr = (a_hr + 1) % 24;
+                        else {
+                            if (++a_mn == 60) {
+                                if (++a_hr == 24)
+                                    a_hr = 0;
+                                a_mn = 0;
+                            }
+                        }
+                    } else {
+                        // below center: decrease daily alarm hour or minute
+                        if (s.x < t_right)
                             a_hr = (a_hr + 23) % 24;
-                        } else {
-                            a_mn -= 1;
+                        else {
+                            if (a_mn == 0) {
+                                a_mn = 59;
+                                a_hr = (a_hr + 23) % 24;
+                            } else {
+                                a_mn -= 1;
+                            }
                         }
                     }
-                }
 
-                alarm_daily.hrmn = a_hr*60 + a_mn;
+                    alarm_daily.hrmn = a_hr*60 + a_mn;
+                }
             }
 
             drawAlarmIndicators (false);
@@ -2215,7 +2184,7 @@ static void checkSWPageTouch()
         } else if (inBox (s, bigclock_b)) {
 
             // start desired big clock
-            Serial.println(F("SW: BigClock enter"));
+            Serial.println("SW: BigClock enter");
             sws_display = (bc_bits & SW_BCDIGBIT) ? SWD_BCDIGITAL : SWD_BCANALOG;
             drawBigClock (true);
         }
@@ -2242,7 +2211,7 @@ static void checkSWPageTouch()
             // show menu and redraw to engage any changes even if cancelled just to erase menu
             runBCMenu (s);
             if (sws_display == SWD_MAIN) {
-                Serial.println(F("SW: BigClock exit"));
+                Serial.println("SW: BigClock exit");
                 eraseScreen();
                 drawSWMainPage();
             } else {
@@ -2265,7 +2234,7 @@ static bool dailyAlarmWentOff(void)
     if (alarm_daily.state == ALMS_ARMED) {
 
         // find hr mn now
-        time_t t = nowWO() + de_tz.tz_secs;
+        time_t t = alarm_daily.utc ? nowWO() : nowWO() + de_tz.tz_secs;
         int t_hr = hour(t);
         int t_mn = minute(t);
 
@@ -2274,7 +2243,7 @@ static bool dailyAlarmWentOff(void)
         int a_mn = alarm_daily.hrmn % 60;
         bool is_on_now = t_hr == a_hr && t_mn == a_mn;          // N.B. this assumes ALM_RINGTO == 60
 
-        // check wheter just went off first time this period
+        // check whether just went off first time this period
         if (is_on_now) {
             if (!reported_this_period) {
                 alarm_daily.state = ALMS_RINGING;
@@ -2295,7 +2264,7 @@ static bool dailyAlarmWentOff(void)
 static bool dailyAlarmIsOver(void)
 {
     // find hr mn now
-    time_t t = nowWO() + de_tz.tz_secs;
+    time_t t = alarm_daily.utc ? nowWO() : nowWO() + de_tz.tz_secs;
     int t_hr = hour(t);
     int t_mn = minute(t);
 
@@ -2442,10 +2411,9 @@ void drawMainPageStopwatch (bool force)
  */
 void checkStopwatchTouch(TouchType tt)
 {
-    Serial.println(F("SW: main enter"));
+    Serial.println("SW: main enter");
 
     // close down other systems
-    closeDXCluster();           // prevent inbound msgs from clogging network
     closeGimbal();              // avoid dangling connection
     hideClocks();
 
@@ -2458,7 +2426,7 @@ void checkStopwatchTouch(TouchType tt)
  */
 void checkCountdownTouch(void)
 {
-    Serial.println(F("SW: PLOT_CH_COUNTDOWN touch"));
+    Serial.println("SW: PLOT_CH_COUNTDOWN touch");
 
     // restart countdown
     setSWEngineState (SWE_COUNTDOWN, countdown_period);
@@ -2523,7 +2491,7 @@ bool runStopwatch()
         switch (sws_display) {
 
         case SWD_NONE:
-            Serial.println(F("SW: main exit"));
+            Serial.println("SW: main exit");
             insureCountdownPaneSensible();
             initScreen();
             return (false);
@@ -2662,27 +2630,29 @@ SWDisplayState getSWDisplayState()
     return (sws_display);
 }
 
-/* return daily alarm state and time, always in DE TZ
+/* return daily alarm state and time
  */
-void getDailyAlarmState (AlarmState &as, uint16_t &de_hr, uint16_t &de_mn)
+void getDailyAlarmState (AlarmState &as, uint16_t &de_hr, uint16_t &de_mn, bool &utc)
 {
     as = alarm_daily.state;
     de_hr = alarm_daily.hrmn / 60;
     de_mn = alarm_daily.hrmn % 60;
+    utc = alarm_daily.utc;
 }
 
 /* set a new daily alarm state from a web command, always in DE TZ
  * N.B. we do no error checking
  */
-void setDailyAlarmState (const AlarmState &as, uint16_t hr, uint16_t mn)
+void setDailyAlarmState (const AlarmState &as, uint16_t hr, uint16_t mn, bool utc)
 {
     if (as == ALMS_OFF) {
         // minimal state downgrade, leave time unchanged
         alarm_daily.state = alarm_daily.state == ALMS_RINGING ? ALMS_ARMED : ALMS_OFF;
     } else {
-        // set new state and time
+        // set all
         alarm_daily.state = as;
         alarm_daily.hrmn = hr*60U + mn;
+        alarm_daily.utc = utc;
     }
     saveSWNV();
 
@@ -2708,7 +2678,7 @@ void getOneTimeAlarmState (AlarmState &as, time_t &t_utc, bool &utc, char str[],
     time_t t = alarm_once.time;
     if (!alarm_once.utc)
         t += de_tz.tz_secs;
-    breakTime (alarm_once.time, tm);
+    breakTime (t, tm);
     snprintf (str, str_l, "%s %04d-%02d-%02d %02d:%02d", alarm_once.utc ? "UTC" : "DE  ",
                                         tm.Year+1970, tm.Month, tm.Day, tm.Hour, tm.Minute);
 }

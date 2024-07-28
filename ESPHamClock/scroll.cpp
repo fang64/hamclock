@@ -67,10 +67,14 @@ void ScrollState::drawScrollUpControl (const SBox &box, uint16_t color) const
         // tft.drawRect (x2+1, y0+1, box.x + box.w - x2 - 2, SCR_H, RA8875_RED);
 
         if (draw) {
-            tft.setCursor (x2+3, y0+2);
+            tft.setCursor (x2+1, y0+2);
             selectFontStyle (LIGHT_FONT, FAST_FONT);
             tft.setTextColor (color);
-            tft.print (nMoreAbove());
+            int nma = nMoreAbove();
+            if (nma < 1000)
+                tft.print (nma);
+            else
+                tft.print (">99");
         }
 
         tft.fillTriangle (x0, y0, x1, y1, x2, y2, draw ? color : RA8875_BLACK);
@@ -96,10 +100,14 @@ void ScrollState::drawScrollDownControl (const SBox &box, uint16_t color) const
         // tft.drawRect (x1+1, y0+1, box.x + box.w - x1 - 2, SCR_H, RA8875_RED);
 
         if (draw) {
-            tft.setCursor (x1+3, y0+2);
+            tft.setCursor (x1+1, y0+2);
             selectFontStyle (LIGHT_FONT, FAST_FONT);
             tft.setTextColor (color);
-            tft.print (nMoreBeneath());
+            int nmb = nMoreBeneath();
+            if (nmb < 1000)
+                tft.print (nmb);
+            else
+                tft.print (">99");
         }
 
         tft.fillTriangle (x0, y0, x1, y1, x2, y2, draw ? color : RA8875_BLACK);

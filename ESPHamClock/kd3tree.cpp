@@ -114,7 +114,7 @@ static KD3Node* find_median(KD3Node *start, KD3Node *end, int level)
 /* transform and array of KD3Node into a proper kd3tree in place.
  * initial call with level 0.
  */
-KD3Node* mkKD3NodeTree (KD3Node *t, int len, int level)
+KD3Node *mkKD3NodeTree (KD3Node *t, int len, int level)
 {
     KD3Node *n;
  
@@ -127,6 +127,18 @@ KD3Node* mkKD3NodeTree (KD3Node *t, int len, int level)
     }
     return n;
 }
+
+/* free the given kd3 array and its data.
+ * N.B. a is NOT the root node, it is the array of all nodes (the logical root could be anywhere)
+ * N.B. call this only if the data elements were malloced.
+ */
+void freeKD3NodeTree (KD3Node *a, int n_a)
+{
+    for (int i = 0; i < n_a; i++)
+        free (a[i].data);
+    free (a);
+}
+
  
 /* given a kd3tree created with mkKD3NodeTree, find the closest entry to nd.
  * initial call with level 0.

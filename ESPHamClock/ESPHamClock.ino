@@ -53,6 +53,9 @@ SCircle satpass_c;
 // whether to shade night or show place names
 uint8_t night_on, names_on;
 
+// handy flag when showing main page
+bool mainpage_up;
+
 // grid styles
 uint8_t mapgrid_choice;
 const char *grid_styles[MAPGRID_N] = {
@@ -376,16 +379,17 @@ void setup()
     // enable touch screen system
     tft.touchEnable(true);
 
-#if defined(_IS_UNIX)
     // support live even in setup
     initLiveWeb(false);
-#endif
 
     // set up brb_rotset and brb_mode
     initBRBRotset();
 
     // run Setup at full brighness
     clockSetup();
+
+    // set desried gray display
+    tft.setGrayDisplay(getGrayDisplay());
 
     // init pan and zoom
     if (!NVReadUInt8 (NV_ZOOM, &pan_zoom.zoom)) {
@@ -400,6 +404,7 @@ void setup()
         pan_zoom.pan_y = 0;
         NVWriteInt16 (NV_PANY, pan_zoom.pan_y);
     }
+    normalizePanZoom(pan_zoom);
 
     // initialize MCP23017, fails gracefully so just log whether found
     found_mcp = mcp.begin_I2C();
@@ -464,7 +469,7 @@ void setup()
     // wifi info box
     wifi_b.x = uptime_b.x + uptime_b.w;
     wifi_b.y = cs_info.box.y+cs_info.box.h+CSINFO_DROP;
-    wifi_b.w = 127;
+    wifi_b.w = 126;
     wifi_b.h = CSINFO_H;
 
     // version box
@@ -645,38 +650,38 @@ void setup()
 // called repeatedly forever
 void loop()
 {
+    // always do these
+    updateSatPass ();                   // just for the satellite LED
+    checkDXCluster ();                  // collect new spots if running
+
     // update stopwatch exclusively, if active
-    if (runStopwatch()) {
-        mainpage_up = false;                    // disable live web r/o marker
-        updateSatPass();                        // just for the satellite LED
-        return;
+    if (!runStopwatch()) {
+
+        // check on wifi including plots and NCDXF_b
+        updateWiFi();
+
+        // update clocks
+        updateClocks(false);
+
+        // update sat pass (this is just the pass; the path is recomputed before each map sweep)
+        updateSatPass();
+
+        // display more of earth map
+        drawMoreEarth();
+
+        // other goodies
+        drawUptime(false);
+        drawWiFiInfo();
+        drawVersion(false);
+        followBrightness();
+        checkOnAir();
+        readBME280();
+        runNextDemoCommand();
+        updateGPSDLoc();
+
+        // check for touch events
+        checkTouch();
     }
-    mainpage_up = true;                         // ok to show liveweb r/o marker
-
-    // check on wifi including plots and NCDXF_b
-    updateWiFi();
-
-    // update clocks
-    updateClocks(false);
-
-    // update sat pass (this is just the pass; the path is recomputed before each map sweep)
-    updateSatPass();
-
-    // display more of earth map
-    drawMoreEarth();
-
-    // other goodies
-    drawUptime(false);
-    drawWiFiInfo();
-    drawVersion(false);
-    followBrightness();
-    checkOnAir();
-    readBME280();
-    runNextDemoCommand();
-    updateGPSDLoc();
-
-    // check for touch events
-    checkTouch();
 }
 
 
@@ -762,6 +767,9 @@ void initScreen()
     // erase entire screen
     eraseScreen();
 
+    // back to main page
+    mainpage_up = true;
+
     // set protected region, which requires explicit call to tft.drawPR() to update
     tft.setPR (map_b.x, map_b.y, map_b.w, map_b.h);
 
@@ -791,8 +799,7 @@ void initScreen()
     drawUptime(true);
     drawScreenLock();
 
-    // always close these so they will restart if open in any pane
-    closeDXCluster();
+    // always close so it will restart if open in any pane
     closeGimbal();
 
     // flush any stale touchs
@@ -1586,7 +1593,7 @@ static void drawVersion(bool force)
     // show current version, but highlight if new version is available
     uint16_t col = new_avail ? RA8875_RED : GRAY;
     selectFontStyle (LIGHT_FONT, FAST_FONT);
-    snprintf (line, sizeof(line), "V %s", hc_version);
+    snprintf (line, sizeof(line), "V%s", hc_version);
     uint16_t vw = getTextWidth (line);
     tft.setTextColor (col);
     tft.setCursor (version_b.x+version_b.w-vw, version_b.y+1);        // right justify
@@ -1698,6 +1705,7 @@ static void drawWiFiInfo()
 
     // show if successful
     if (str[0]) {
+        // strcpy (str, "P-IP 111.222.333.444");           // RBF
         uint16_t sw = getTextWidth(str);
         fillSBox (wifi_b, RA8875_BLACK);
         // drawSBox (wifi_b, RA8875_GREEN);                // RBF
@@ -1792,12 +1800,19 @@ static void drawUptime(bool force)
             tft.printf ("%2dh %2dm", hrs, mins);
             prev_m = mins;
         }
-    } else {
-        if (hrs != prev_h || force) {
+    } else if (upsecs < SECSPERDAY+60) {
+        prepUptime();
+        tft.printf ("%2dd %2ds", days, secs);
+    } else if (upsecs < SECSPERDAY+3600) {
+        if (mins != prev_m || force) {
             prepUptime();
-            tft.printf ("%6dd", days);
-            prev_h = hrs;
+            tft.printf ("%2dd %2dm", days, mins);
+            prev_m = mins;
         }
+    } else if (hrs != prev_h || force) {
+        prepUptime();
+        tft.printf ("%2dd %2dh", days, hrs);
+        prev_h = hrs;
     }
 }
 
@@ -2022,7 +2037,7 @@ void setScreenLock (bool on)
     if (on != screenIsLocked()) {
         toggleLockScreen();
         // ?? setDemoMode (false);
-        if (getSWDisplayState() == SWD_NONE)
+        if (mainpage_up)
             drawScreenLock();
     }
 }
@@ -2122,7 +2137,7 @@ void drawDEFormatMenu()
 
     // run menu
     SBox ok_b;
-    MenuInfo menu = {menu_b, ok_b, false, false, 1, NARRAY(mitems), mitems};
+    MenuInfo menu = {menu_b, ok_b, UF_NOCLOCKS, M_CANCELOK, 1, NARRAY(mitems), mitems};
     if (runMenu (menu)) {
 
         // capture and save new state
@@ -2164,11 +2179,8 @@ void drawDEFormatMenu()
             if (mitems[12].set)
                 new_rotset |= (1 << PLOT_CH_SOTA);
 
-            // paranoid
-            if (new_rotset == 0)
-                fatalError ("drawDEFormatMenu: No rotset");
-
-            if (!enforceDXCAlone (plot_b[PANE_0], new_rotset)) {
+            // might not be any if user clicked this section but made no choice
+            if (new_rotset != 0) {
 
                 // ok!
                 plot_rotset[PANE_0] = new_rotset;
@@ -2419,6 +2431,10 @@ void eraseScreen()
     tft.setPR (0, 0, 0, 0);
     tft.fillScreen(RA8875_BLACK);
     tft.drawPR();
+
+    // we assume erasing is prep for some other page
+    hideClocks();
+    mainpage_up = false;
 }
 
 /* holdover from ESP days
@@ -2553,6 +2569,42 @@ void openURL (const char *url)
         liveweb_openurl = strdup (url);
 }
 
+
+/* fork then run execv(3) command without a shell to retain our rootiness.
+ * return exit status from waitpid().
+ * N.B. caller must end list with a NULL
+ * N.B. tempting to just assume the args are already a list on the stack but we'd rather not.
+ */
+static int runExecv (const char *path, ...)
+{
+        int pid = fork();
+
+        if (pid == 0) {
+            // child
+            char **argv = NULL;
+            int n_argv = 0;
+            va_list ap;
+            va_start (ap, path);
+            for(;;) {
+                char *arg = va_arg (ap, char *);
+                argv = (char **) realloc (argv, (n_argv+1) * sizeof(char *));
+                argv[n_argv++] = arg;
+                if (arg == NULL)
+                    break;
+            }
+            va_end (ap);
+            execv (path, (char **const) argv);
+            Serial.printf ("execv(%s): %s\n", path, strerror(errno));
+            free ((void*)argv);
+            _exit(1);
+        }
+
+        int status;
+        waitpid (pid, &status, 0);
+        return (status);
+}
+
+
 /* ask Are You Sure for the given question.
  * return whether yes
  */
@@ -2573,7 +2625,7 @@ static bool RUSure (SBox &box, const char *q)
 
     SBox ok_b;
 
-    MenuInfo menu = {box, ok_b, false, false, 1, n_rusm, mitems};
+    MenuInfo menu = {box, ok_b, UF_NOCLOCKS, M_CANCELOK, 1, n_rusm, mitems};
     return (runMenu (menu));
 }
 
@@ -2581,7 +2633,6 @@ static bool RUSure (SBox &box, const char *q)
  */
 static void runShutdownMenu(void)
 {
-    closeDXCluster();       // prevent inbound msgs from clogging network
     closeGimbal();          // avoid dangling connection
 
     // if screen is locked, the only menu option is to unlock
@@ -2607,7 +2658,7 @@ static void runShutdownMenu(void)
 
     // run menu
     bool do_full_init = false;
-    MenuInfo menu = {menu_b, ok_b, false, false, 1, n_shm, mitems};
+    MenuInfo menu = {menu_b, ok_b, UF_NOCLOCKS, M_CANCELOK, 1, n_shm, mitems};
     if (runMenu(menu)) {
 
         // engage each selection
@@ -2652,15 +2703,15 @@ static void runShutdownMenu(void)
                 tft.setCursor (350, 200);
                 tft.print ("Rebooting...");
                 wdDelay (1000);
-                int x = system ("/sbin/reboot || /usr/sbin/reboot");
+                int x = runExecv ("/sbin/reboot", "reboot", NULL);
                 if (WIFEXITED(x) && WEXITSTATUS(x) == 0)
                     doExit();
                 else {
+                    Serial.printf ("reboot exited %d\n", x);
                     eraseScreen();
                     tft.setCursor (350, 200);
                     tft.print ("Reboot failed");
                     wdDelay (1000);
-                    Serial.printf ("system(reboot) returns %d\n", x);
                     do_full_init = true;
                 }
             }
@@ -2674,16 +2725,23 @@ static void runShutdownMenu(void)
                 tft.setCursor (350, 200);
                 tft.print ("Shutting down...");
                 wdDelay (1000);
-                int x = system ("/sbin/poweroff || /usr/sbin/poweroff || /sbin/halt || /usr/sbin/halt");
+                int x = runExecv ("/sbin/poweroff", "poweroff", NULL);
                 if (WIFEXITED(x) && WEXITSTATUS(x) == 0)
                     doExit();
                 else {
-                    eraseScreen();
-                    tft.setCursor (350, 200);
-                    tft.print ("Shutdown failed");
-                    wdDelay (1000);
-                    Serial.printf ("system(poweroff) returns %d\n", x);
-                    do_full_init = true;
+                    // well then try halt
+                    Serial.printf ("poweroff exited %d, trying halt\n", x);
+                    x = runExecv ("/sbin/halt", "halt", NULL);
+                    if (WIFEXITED(x) && WEXITSTATUS(x) == 0)
+                        doExit();
+                    else {
+                        Serial.printf ("halt exited %d\n", x);
+                        eraseScreen();
+                        tft.setCursor (350, 200);
+                        tft.print ("Shutdown failed");
+                        wdDelay (1000);
+                        do_full_init = true;
+                    }
                 }
             }
         }
@@ -2806,54 +2864,54 @@ void fatalError (const char *fmt, ...)
         SBox x_b = {450, 400, 100, 50};
         const char r_msg[] = "Restart";
         const char x_msg[] = "Exit";
-        drawStringInBox (r_msg, r_b, false, RA8875_WHITE);
-        drawStringInBox (x_msg, x_b, false, RA8875_WHITE);
-        int kb_sel = -1;    // 0 if kb chose Restart, 1 if Exit
-        drainTouch();
+        bool select_restart = true;
 
         SCoord s;
         char kbc;
         UserInput ui = {
             screen_b,
-            NULL,
-            false,
-            0,
-            false,
+            UI_UFuncNone,
+            UF_UNUSED,
+            UI_NOTIMEOUT,
+            UF_NOCLOCKS,
             s,
             kbc,
             false,
             false
         };
 
+        drainTouch();
+
+        // must select restart or exit by some means
         for(;;) {
 
-            tft.drawRect (r_b.x+3, r_b.y+3, r_b.w-6, r_b.h-6, kb_sel == 0 ? RA8875_GREEN : RA8875_BLACK);
-            tft.drawRect (x_b.x+3, x_b.y+3, x_b.w-6, x_b.h-6, kb_sel == 1 ? RA8875_GREEN : RA8875_BLACK);
+            // show current selection
+            drawStringInBox (r_msg, r_b, select_restart, RA8875_WHITE);
+            drawStringInBox (x_msg, x_b, !select_restart, RA8875_WHITE);
 
+            // wait for any user action
             (void) waitForUser(ui);
 
-            bool kb_go = false;
-            if (kbc) {
-                if (kb_sel < 0)
-                    kb_sel = 0;
-                if (kbc == '\r' || kbc == '\n' || kbc == ' ')
-                    kb_go = true;
-                else if (kbc == 'h' && kb_sel == 1)
-                    kb_sel = 0;
-                else if (kbc == 'l' && kb_sel == 0)
-                    kb_sel = 1;
-            }
+            if (kbc == CHAR_LEFT || kbc == CHAR_RIGHT) {
 
-            if ((kb_go && kb_sel == 0) || inBox (s, r_b)) {
-                drawStringInBox (r_msg, r_b, true, RA8875_WHITE);
-                Serial.print ("Fatal error: rebooting\n");
-                doReboot();
-            }
+                // L/R arrow keys appear to move to opposite selection
+                select_restart = !select_restart;
 
-            if ((kb_go && kb_sel == 1) || inBox (s, x_b)) {
-                drawStringInBox (x_msg, x_b, true, RA8875_WHITE);
-                Serial.print ("Fatal error: exiting\n");
-                doExit();
+            } else {
+
+                bool typed_ok = kbc == CHAR_CR || kbc == CHAR_NL;
+
+                if ((typed_ok && select_restart) || (kbc == CHAR_NONE && inBox(s, r_b))) {
+                    drawStringInBox (r_msg, r_b, true, RA8875_WHITE);
+                    Serial.print ("Fatal error: rebooting\n");
+                    doReboot();
+                }
+
+                if ((typed_ok && !select_restart) || (kbc == CHAR_NONE && inBox(s, x_b))) {
+                    drawStringInBox (x_msg, x_b, true, RA8875_WHITE);
+                    Serial.print ("Fatal error: exiting\n");
+                    doExit();
+                }
             }
         }
     }

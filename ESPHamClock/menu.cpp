@@ -3,15 +3,47 @@
 
 #include "HamClock.h"
 
+/* MENU_TEXT editing is a bear. These sketches help:
+ *
+ *   w_len = 8
+ *                          l  c  w  action                                 l  c  w
+ *     -----------------                               -----------------
+ *   |a|b|c|d|e|f|g|h| |    8  8  1  CHAR_LEFT         |a|b|c|d|e|f|g|h|    8  7  0
+ *     -----------------                               -----------------
+ *                    _                                               _
+ *
+ *
+ *     -----------------                               -----------------
+ *   |a|b|c|d|e|f|g|h| |    8  8  1  CHAR_DEL          |a|b|c|d|e|f|g| |    7  7  0
+ *     -----------------                               -----------------
+ *                    _                                               _
+ *  
+ *     -----------------                               -----------------
+ *   |a|b|c|d|e|f|g|h| |    8  8  1  type x        |a|b|c|d|e|f|g|h|x| |  9  9  2
+ *     -----------------                               -----------------
+ *                    _                                               _
+ *  
+ *     -----------------                               -----------------
+ *   |a|b|c|d|e|f|g|h| |    8  7  1  type y          |a|b|c|d|e|f|g|y|h|  9  8  2
+ *     -----------------                               -----------------
+ *                  _                                                 _
+ *
+ */
+
+
+// #define SHOW_BB                      // RBF
+
 // basic parameters
 // allow setting some/all these in Menu?
 #define MENU_TBM        2               // top and bottom margin
 #define MENU_RM         2               // right margin
-#define MENU_RH         11              // row height
+#define MENU_RH         11              // row height, includes room for MENU_TEXT cursor
 #define MENU_IS         6               // indicator size
 #define MENU_BB         4               // ok/cancel button horizontal border
 #define MENU_BDX        2               // ok/cancel button text horizontal offset
 #define MENU_BDY        2               // ok/cancel button text vertical offset
+#define MENU_FW         6               // MENU_TEXT font width
+#define MENU_CD         2               // cursor rows below text baseline
 #define MENU_TIMEOUT    MENU_TO         // timeout, millis
 #define MENU_FGC        RA8875_WHITE    // normal foreground color
 #define MENU_BGC        RA8875_BLACK    // normal background color
@@ -22,12 +54,63 @@
 static const char ok_label[] = "Ok";
 static const char cancel_label[] = "Cancel";
 
+/* draw text and optionally the label and/or cursor in the given MenuItem in the given box and color.
+ * N.B. mi is assumed to be of type MENU_TEXT.
+ */
+static void drawMenuText (const MenuItem &mi, const SBox &pb, bool draw_label, bool cursor,
+uint16_t color, const char *text)
+{
+    MenuText *tfp = mi.textf;
+
+    // beware clock can change these!
+    selectFontStyle (LIGHT_FONT, FAST_FONT);
+
+    // start of visible text
+    uint16_t text_x = pb.x + mi.indent + MENU_FW*(tfp->l_mem-1);        // not EOS
+
+    // draw fresh label if desired
+    if (draw_label) {
+        tft.fillRect (pb.x, pb.y, text_x - pb.x, pb.h, MENU_BGC);
+
+        #if defined(SHOW_BB)
+            tft.drawRect (pb.x, pb.y, text_x - pb.x, pb.h, RA8875_GREEN);
+        #endif // SHOW_BB
+
+        tft.setTextColor (MENU_FGC);
+        tft.setCursor (pb.x + mi.indent, pb.y+2);
+        tft.print (tfp->label);
+    }
+
+    // color applies only to text portion
+    tft.setTextColor (color);
+
+    tft.fillRect (text_x, pb.y, pb.w - (text_x - pb.x), pb.h, MENU_BGC);        // also erases cursor
+
+    #if defined(SHOW_BB)
+        drawSBox (pb, RA8875_GREEN);
+        tft.drawRect (text_x, pb.y, pb.w - (text_x - pb.x), pb.h, RA8875_RED);
+    #endif // SHOW_BB
+
+    tft.setCursor (text_x, pb.y+2);
+    tft.printf ("%.*s", tfp->w_len, text);
+
+    // draw cursor if desired (already erased above)
+    if (cursor) {
+        uint16_t c_x = text_x + MENU_FW*(tfp->c_pos-tfp->w_pos);
+        uint16_t c_y = pb.y + pb.h - MENU_CD;
+        tft.drawLine (c_x, c_y, c_x + MENU_FW, c_y, MENU_FOCC);
+    }
+}
 
 /* draw selector symbol and label for the given menu item in the given pick box.
  * optionally indicate this item has the keyboard focus.
  */
 static void menuDrawItem (const MenuItem &mi, const SBox &pb, bool draw_label, bool kb_focus)
 {
+    // N.B. updateClocks can change font!
+    selectFontStyle (LIGHT_FONT, FAST_FONT);
+    tft.setTextColor (MENU_FGC);
+
     // prepare a copy of the label without underscores if drawing
     char *no__copy = NULL;
     if (draw_label && mi.label) {       // label will be NULL for IGNORE and BLANK
@@ -80,15 +163,21 @@ static void menuDrawItem (const MenuItem &mi, const SBox &pb, bool draw_label, b
         }
         drawSBox (pb, kb_focus ? MENU_FOCC : MENU_BGC);
         break;
+
+    case MENU_TEXT:
+        // redraw text and possibly the cursor and/or label
+        drawMenuText (mi, pb, draw_label, mi.set || kb_focus, MENU_FGC, &mi.textf->text[mi.textf->w_pos]);
+        break;
     }
 
     // clean up
     free ((void*)no__copy);
 
-    // show bounding box for debug
-    // drawSBox (pb, RA8875_RED);
+    #if defined(SHOW_BB)
+        drawSBox (pb, RA8875_RED);
+    #endif
 
-    // draw now if just changing indicator over map_b
+    // draw now if menu is over map_b
     if (!draw_label && boxesOverlap (pb, map_b))
         tft.drawPR();
 }
@@ -114,32 +203,28 @@ static int menuCountItemsSet (MenuInfo &menu, int ii)
     return (n_set);
 }
 
-/* turn off all items in same group and type as item ii.
+/* turn off MENU_TEXT and all items that are in the same group and type as item ii.
  */
 static void menuItemsAllOff (MenuInfo &menu, SBox *pick_boxes, int ii)
 {
     MenuItem &menu_ii = menu.items[ii];
 
     for (int i = 0; i < menu.n_items; i++) {
-        if (menu.items[i].type == MENU_IGNORE)
-            continue;
-        if (menu.items[i].type != menu_ii.type)
-            continue;
-        if (menu.items[i].group != menu_ii.group)
-            continue;
-        if (menu.items[i].set) {
-            menu.items[i].set = false;
-            menuDrawItem (menu.items[i], pick_boxes[i], false, false);
+        MenuItem &mi = menu.items[i];
+        if (mi.type != MENU_IGNORE && mi.set
+                && (mi.type == MENU_TEXT || (mi.type == menu_ii.type && mi.group == menu_ii.group))) {
+            mi.set = false;
+            menuDrawItem (mi, pick_boxes[i], false, false);
         }
     }
 }
 
 
 
-/* engage a action at the specified pick index.
- * from_kb indicates whether to highlight the new focus item.
+/* engage an action at the specified pick index.
+ * kb_focus indicates whether to highlight the new focus item for keyboard navigation.
  */
-static void updateMenu (MenuInfo &menu, SBox *pick_boxes, int pick_i, bool from_kb)
+static void updateMenu (MenuInfo &menu, SBox *pick_boxes, int pick_i, bool kb_focus)
 {
     SBox &pb = pick_boxes[pick_i];
     MenuItem &mi = menu.items[pick_i];
@@ -151,11 +236,10 @@ static void updateMenu (MenuInfo &menu, SBox *pick_boxes, int pick_i, bool from_
         break;
 
     case MENU_1OFN:
-        // ignore if already set, else turn this one on and all others in this group off
         if (!mi.set) {
             menuItemsAllOff (menu, pick_boxes, pick_i);
             mi.set = true;
-            menuDrawItem (mi, pb, false, from_kb);
+            menuDrawItem (mi, pb, false, kb_focus);
         }
         break;
 
@@ -163,11 +247,11 @@ static void updateMenu (MenuInfo &menu, SBox *pick_boxes, int pick_i, bool from_
         // turn off if set, else turn this one on and all others in this group off
         if (mi.set) {
             mi.set = false;
-            menuDrawItem (mi, pb, false, from_kb);
+            menuDrawItem (mi, pb, false, kb_focus);
         } else {
             menuItemsAllOff (menu, pick_boxes, pick_i);
             mi.set = true;
-            menuDrawItem (mi, pb, false, from_kb);
+            menuDrawItem (mi, pb, false, kb_focus);
         }
         break;
 
@@ -175,11 +259,11 @@ static void updateMenu (MenuInfo &menu, SBox *pick_boxes, int pick_i, bool from_
         // turn on unconditionally, but turn off only if not the last one
         if (!mi.set) {
             mi.set = true;
-            menuDrawItem (mi, pb, false, from_kb);
+            menuDrawItem (mi, pb, false, kb_focus);
         } else {
             if (menuCountItemsSet (menu, pick_i) > 1) {
                 mi.set = false;
-                menuDrawItem (mi, pb, false, from_kb);
+                menuDrawItem (mi, pb, false, kb_focus);
             }
         }
         break;
@@ -187,50 +271,41 @@ static void updateMenu (MenuInfo &menu, SBox *pick_boxes, int pick_i, bool from_
     case MENU_TOGGLE:
         // uncondition change
         mi.set = !mi.set;
-        menuDrawItem (mi, pb, false, from_kb);
+        menuDrawItem (mi, pb, false, kb_focus);
+        break;
+
+    case MENU_TEXT:
+        mi.set = true;
+        menuDrawItem (mi, pb, true, kb_focus);
         break;
     }
 }
 
 
-/* update menu based on the given keyboard char.
- * m_index is index of last updated item.
+/* move to a different field depending on arrow keyin kb_char.
+ * m_index is index of current menu item, return new item.
  */
-static int checkKBControl (MenuInfo &menu, SBox *pick_boxes, int m_index, const char kbchar)
+static int kbNavigation (MenuInfo &menu, SBox *pick_boxes, int m_index, const char kb_char)
 {
-    // find first active group if nothing prior
-    if (m_index < 0) {
-        for (int i = 0; i < menu.n_items; i++) {
-            MenuItem &mi = menu.items[i];
-            if (MENU_ACTIVE(mi.type)) {
-                m_index = i;
-                break;
-            }
-        }
-    }
-    if (m_index < 0)
-        return (m_index);                                       // no active types!
-
 
     // prep search state
-    uint16_t minx = 10000, maxx = 0;
-    uint16_t miny = 10000, maxy = 0;
     SBox &pm = pick_boxes[m_index];
+    int mind = 100000;
     int candidate = -1;
 
     // search in desired direction
-    switch (kbchar) {
+    switch (kb_char) {
 
-    case 'h': case CHAR_LEFT:
-        // next field left, if any
+    case CHAR_LEFT:
+        // next field left closest in y, if any
         for (int i = 1; i <= menu.n_items; i++) {
             int ii = (m_index + i) % menu.n_items;
             MenuItem &mii = menu.items[ii];
             SBox &pii = pick_boxes[ii];
-            uint16_t rightii_x = pii.x + pii.w;
-            if (MENU_ACTIVE(mii.type) && pii.y == pm.y && rightii_x <= pm.x && rightii_x > maxx) {
+            int d = abs ((int)pii.x - (int)pm.x) + abs ((int)pii.y - (int)pm.y);
+            if (MENU_ACTIVE(mii.type) && pii.x < pm.x && d < mind) {
                 candidate = ii;
-                maxx = rightii_x;
+                mind = d;
             }
         }
         if (candidate >= 0) {
@@ -241,16 +316,16 @@ static int checkKBControl (MenuInfo &menu, SBox *pick_boxes, int m_index, const 
         }
         break;
 
-    case 'j': case CHAR_DOWN:
-        // next field down, if any
+    case CHAR_DOWN:
+        // next field down closest to x, if any
         for (int i = 1; i <= menu.n_items; i++) {
             int ii = (m_index + i) % menu.n_items;
             MenuItem &mii = menu.items[ii];
             SBox &pii = pick_boxes[ii];
-            uint16_t topii_y = pii.y;
-            if (MENU_ACTIVE(mii.type) && pii.x == pm.x && topii_y >= pm.y + pm.h && topii_y < miny) {
+            int d = abs ((int)pii.x - (int)pm.x) + abs ((int)pii.y - (int)pm.y);
+            if (MENU_ACTIVE(mii.type) && pii.y > pm.y && d < mind) {
                 candidate = ii;
-                miny = topii_y;
+                mind = d;
             }
         }
         if (candidate >= 0) {
@@ -261,16 +336,16 @@ static int checkKBControl (MenuInfo &menu, SBox *pick_boxes, int m_index, const 
         }
         break;
 
-    case 'k': case CHAR_UP:
-        // next field up, if any
+    case CHAR_UP:
+        // next field up closest to x, if any
         for (int i = 1; i <= menu.n_items; i++) {
             int ii = (m_index + i) % menu.n_items;
             MenuItem &mii = menu.items[ii];
             SBox &pii = pick_boxes[ii];
-            uint16_t botii_y = pii.y + pii.h;
-            if (MENU_ACTIVE(mii.type) && pii.x == pm.x && botii_y <= pm.y && botii_y > maxy) {
+            uint16_t d = abs ((int)pii.x - (int)pm.x) + abs ((int)pii.y - (int)pm.y);
+            if (MENU_ACTIVE(mii.type) && pii.y < pm.y && d < mind) {
                 candidate = ii;
-                maxy = botii_y;
+                mind = d;
             }
         }
         if (candidate >= 0) {
@@ -281,16 +356,16 @@ static int checkKBControl (MenuInfo &menu, SBox *pick_boxes, int m_index, const 
         }
         break;
 
-    case 'l': case CHAR_RIGHT:
-        // next field right, if any
+    case CHAR_RIGHT:
+        // next field right closest in y, if any
         for (int i = 1; i <= menu.n_items; i++) {
             int ii = (m_index + i) % menu.n_items;
             MenuItem &mii = menu.items[ii];
             SBox &pii = pick_boxes[ii];
-            uint16_t leftii_x = pii.x;
-            if (MENU_ACTIVE(mii.type) && pii.y == pm.y && leftii_x >= pm.x + pm.w && leftii_x < minx) {
+            int d = abs ((int)pii.x - (int)pm.x) + abs ((int)pii.y - (int)pm.y);
+            if (MENU_ACTIVE(mii.type) && pii.x > pm.x && d < mind) {
                 candidate = ii;
-                minx = leftii_x;
+                mind = d;
             }
         }
         if (candidate >= 0) {
@@ -313,9 +388,106 @@ static int checkKBControl (MenuInfo &menu, SBox *pick_boxes, int m_index, const 
     return (m_index);
 }
 
-/* update menu from the given tap.
+/* given a MENU_TEXT text field index textf_i perform the editing actions of the given character.
+ * if char is up or down arrow, defer to kbNavigation and return its index, else return the same index.
  */
-static void checkTapControl (MenuInfo &menu, SBox *pick_boxes, const SCoord &tap)
+static int textFieldEdit (MenuInfo &menu, SBox *pick_boxes, int textf_i, const char kb_char)
+{
+    MenuText *tfp = menu.items[textf_i].textf;
+    size_t t_len = strlen (tfp->text);
+
+    bool debug = false;                                  // RBD
+    if (debug) printf ("TFE w = %2d c = %2d w = %2d ... ",  tfp->w_len, tfp->c_pos, tfp->w_pos);
+
+    switch (kb_char) {
+    case CHAR_UP:
+    case CHAR_DOWN:
+        return (kbNavigation (menu, pick_boxes, textf_i, kb_char));
+
+    case CHAR_LEFT:
+        if (debug) printf (" LEFT ");
+        // move cursor left if not at left edge else shift text right
+        if (tfp->c_pos > tfp->w_pos) {
+            tfp->c_pos -= 1;
+            menuDrawItem (menu.items[textf_i], pick_boxes[textf_i], false, true);
+        } else if (tfp->w_pos > 0) {
+            tfp->w_pos -= 1;
+            tfp->c_pos -= 1;    // cursor appears to stay in position
+            menuDrawItem (menu.items[textf_i], pick_boxes[textf_i], false, true);
+        }
+        break;
+
+    case CHAR_RIGHT:
+        if (debug) printf (" RIGT ");
+        if (tfp->c_pos - tfp->w_pos + 1 < tfp->w_len) {
+            // cursor is left of right edge ...
+            if (tfp->c_pos < t_len) {
+                // ... and more text follows so move right
+                tfp->c_pos += 1;
+                menuDrawItem (menu.items[textf_i], pick_boxes[textf_i], false, true);
+            } else if (tfp->w_pos > 0) {
+                // ... but no more text to right so shift text right if more left of window
+                tfp->w_pos -= 1;
+                menuDrawItem (menu.items[textf_i], pick_boxes[textf_i], false, true);
+            }
+        } else {
+            // cursor is against right edge ...
+            if (tfp->c_pos < t_len) {
+                // ... and more text follows so shift text right keeping cursor fixed
+                tfp->c_pos += 1;
+                tfp->w_pos += 1;
+                menuDrawItem (menu.items[textf_i], pick_boxes[textf_i], false, true);
+            }
+        }
+        break;
+
+    case CHAR_BS:
+    case CHAR_DEL:
+        if (debug) printf (" DEL  ");
+        // delete char left of cursor, if any
+        if (tfp->c_pos > 0) {
+            memmove (&tfp->text[tfp->c_pos-1], &tfp->text[tfp->c_pos], tfp->t_mem - tfp->c_pos);  // w/EOS
+            tfp->c_pos -= 1;
+            // if there is text off the left end it rather than moving cursor left
+            if (tfp->w_pos > 0)
+                tfp->w_pos -= 1;
+            menuDrawItem (menu.items[textf_i], pick_boxes[textf_i], false, true);
+        }
+        break;
+
+    default:
+        // insert kb_char at cursor pos if printable and more room left
+        if (isprint(kb_char)) {
+            // if more room is available
+            if (tfp->c_pos < tfp->t_mem-1) {
+                // insert at c_pos
+                if (debug) printf (" IN %c ", kb_char);
+                memmove (&tfp->text[tfp->c_pos+1], &tfp->text[tfp->c_pos], tfp->t_mem - tfp->c_pos - 1);
+                tfp->text[tfp->c_pos] = tfp->to_upper ? toupper(kb_char) : kb_char;
+                if (tfp->c_pos < tfp->w_pos + tfp->w_len - 1) {
+                    // cursor is left of right edge so just move it right
+                    tfp->c_pos += 1;
+                } else {
+                    // cursor is at right edge, keep is fixed and shift text left
+                    tfp->c_pos += 1;
+                    tfp->w_pos += 1;
+                }
+                menuDrawItem (menu.items[textf_i], pick_boxes[textf_i], false, true);
+            } else
+                if (debug) printf (" FULL ");
+        }
+        break;
+    }
+
+    if (debug) printf ("  %2d %2d\n", tfp->c_pos, tfp->w_pos);
+
+    return (textf_i);
+}
+
+/* update menu from the given tap.
+ * return menu.items index, else -1
+ */
+static int checkTapControl (MenuInfo &menu, SBox *pick_boxes, const SCoord &tap)
 {
     for (int i = 0; i < menu.n_items; i++) {
 
@@ -324,22 +496,52 @@ static void checkTapControl (MenuInfo &menu, SBox *pick_boxes, const SCoord &tap
 
         if (mi.type != MENU_IGNORE && inBox (tap, pb)) {
 
+            if (mi.type == MENU_TEXT) {
+
+                // tap could be in either the label or text areas
+                MenuText *tfp = mi.textf;
+
+                // get start of text area -- N.B. must match menuDrawItem() position
+                uint16_t text_x = pb.x + mi.indent + MENU_FW*(tfp->l_mem-1);    // not EOS
+
+
+                if (tap.x < text_x) {
+                    // call label updater, if any
+                    if (tfp->label_fp)
+                        (*tfp->label_fp) (tfp->label, tfp->l_mem);
+                } else {
+                    // set cursor at tap location
+                    unsigned c_pos = tfp->w_pos + (tap.x - text_x)/MENU_FW;
+                    if (c_pos < tfp->w_pos)
+                        c_pos = tfp->w_pos;
+                    if (c_pos > strlen(tfp->text))
+                        c_pos = strlen(tfp->text);
+                    if (tfp->w_pos - c_pos >= tfp->w_len)
+                    if (c_pos - tfp->w_pos > tfp->w_len)
+                        c_pos = tfp->w_len + tfp->w_pos;
+                    tfp->c_pos = c_pos;
+                }
+            }
+
             // implement each type of behavior
             updateMenu (menu, pick_boxes, i, false);
 
             // tap found
-            break;
+            return (i);
         }
     }
+
+    return (-1);
 }
 
 /* operate the given menu until ok, cancel or timeout.
  * caller passes a box we use for ok so they can use it later with menuRedrawOk if needed.
- * return true if op clicked ok else false for all other cases.
- * N.B. menu.menu_b.x/y are required but may be adjusted to prevent edge spill.
- * N.B. incomig menu.menu_b.w is only grown to fit; thus calling with 0 will shrink wrap.
- * N.B. incomig menu.menu_b.h is ignored, we always shrink wrap h.
+ * return true if op clicked ok or CR/NL else false for all other cases.
+ * N.B. menu.menu_b.x/y are required but we may adjust to prevent edge spill.
+ * N.B. incoming menu.menu_b.w is only grown to fit; thus calling with 0 will shrink wrap.
+ * N.B. incoming menu.menu_b.h is ignored, we always shrink wrap h.
  * N.B. menu box is erased before returning.
+ * N.B. MENU_TEXT must be last entry, if any
  */
 bool runMenu (MenuInfo &menu)
 {
@@ -347,30 +549,38 @@ bool runMenu (MenuInfo &menu)
     selectFontStyle (LIGHT_FONT, FAST_FONT);
     tft.setTextColor (MENU_FGC);
 
-    // find number of non-ignore items and expand menu_b.w to fit longest label
-    int n_activerows = 0;
-    int widest = 0;
+    // note MenuText field, its width and assigned pick box, if any
+    MenuItem *mt_mip = NULL;
+    SBox *mt_pbp = NULL;
+    int mt_w = 0;
+
+    // find number of non-ignore items and find widest item
+    int n_tablerows = 0;                                // not including MENU_TEXT
+    int widest = 0;                                     // not including MENU_TEXT
     for (int i = 0; i < menu.n_items; i++) {
         MenuItem &mi = menu.items[i];
-        if (mi.type != MENU_IGNORE) {
-            // check extent
+        if (mi.type == MENU_IGNORE)
+            continue;
+        if (mi.type == MENU_TEXT) {
+            if (i != menu.n_items-1)
+                fatalError ("MENU_TEXT must be on last row %d != %d", i, menu.n_items-1);
+            if (mt_mip != NULL)
+                fatalError ("only one MENU_TEXT supported");
+            mt_mip = &mi;
+            mt_w = mi.indent + MENU_FW * (mt_mip->textf->l_mem-1 + mt_mip->textf->w_len) + MENU_RM;
+        } else {
             uint16_t iw = mi.label ? getTextWidth(mi.label) + mi.indent + MENU_IS + MENU_IS/2 : 0;
             if (iw > widest)
                 widest = iw;
-            // found another non-ignore item
-            n_activerows++;
+            n_tablerows++;                              // MENU_TEXT is not part of table
         }
     }
 
-    // width is duplicated for each column plus add a bit of right margin
-    if (menu.menu_b.w < widest * menu.n_cols + MENU_RM)
-        menu.menu_b.w = widest * menu.n_cols + MENU_RM;
+    // number of rows in each table column
+    int n_rowspercol = (n_tablerows + menu.n_cols - 1)/menu.n_cols;
 
-    // number of rows in each column
-    int n_rowspercol = (n_activerows + menu.n_cols - 1)/menu.n_cols;
-
-    // set menu height, +1 for ok/cancel
-    menu.menu_b.h = MENU_TBM + (n_rowspercol+1)*MENU_RH + MENU_TBM;
+    // set menu height, +1 for ok/cancel, +1 for MENU_TEXT
+    menu.menu_b.h = MENU_TBM + (n_rowspercol+1+!!mt_w)*MENU_RH + MENU_TBM;
 
     // set ok button size, don't know position yet
     menu.ok_b.w = getTextWidth (ok_label) + MENU_BDX*2;
@@ -381,8 +591,12 @@ bool runMenu (MenuInfo &menu)
     cancel_b.w = getTextWidth (cancel_label) + MENU_BDX*2;
     cancel_b.h = MENU_RH;
 
+    // width is duplicated for each column plus add a bit of right margin
+    if (menu.menu_b.w < widest * menu.n_cols + MENU_RM)
+        menu.menu_b.w = widest * menu.n_cols + MENU_RM;
+
     // insure menu width accommodates ok and/or cancel buttons
-    if (menu.no_cancel) {
+    if (menu.cancel == M_NOCANCEL) {
         if (menu.menu_b.w < MENU_BB + menu.ok_b.w + MENU_BB)
             menu.menu_b.w = MENU_BB + menu.ok_b.w + MENU_BB;
     } else {
@@ -390,15 +604,23 @@ bool runMenu (MenuInfo &menu)
             menu.menu_b.w = MENU_BB + menu.ok_b.w + MENU_BB + cancel_b.w + MENU_BB;
     }
 
+    // insure menu width accommodates MENU_TEXT, if any
+    if (menu.menu_b.w < mt_w + 2)
+        menu.menu_b.w = mt_w + 2;
+
+
+    // now we know the size of menu_b
+
+
     // reposition box if needed to avoid spillage
     if (menu.menu_b.x + menu.menu_b.w >= tft.width())
-        menu.menu_b.x = tft.width() - menu.menu_b.w - 2;
+        menu.menu_b.x = tft.width() - menu.menu_b.w - 1;
     if (menu.menu_b.y + menu.menu_b.h >= tft.height())
-        menu.menu_b.y = tft.height() - menu.menu_b.h - 2;
+        menu.menu_b.y = tft.height() - menu.menu_b.h - 1;
 
-    // now we can set button positions within the menu box
-    if (menu.no_cancel) {
-        menu.ok_b.x = menu.menu_b.x + (menu.menu_b.w - menu.ok_b.w)/2;
+    // now we can set ok and cancel button positions within the menu box
+    if (menu.cancel == M_NOCANCEL) {
+        menu.ok_b.x = menu.menu_b.x + (menu.menu_b.w - menu.ok_b.w)/2;  // center
         menu.ok_b.y = menu.menu_b.y + menu.menu_b.h - MENU_TBM - menu.ok_b.h;
         cancel_b.x = 0;
         cancel_b.y = 0;
@@ -413,82 +635,120 @@ bool runMenu (MenuInfo &menu)
     fillSBox (menu.menu_b, MENU_BGC);
     drawSBox (menu.menu_b, MENU_FGC);
 
-    // display buttons
+    // display ok/cancel buttons
     fillSBox (menu.ok_b, MENU_BGC);
     drawSBox (menu.ok_b, MENU_FGC);
     tft.setCursor (menu.ok_b.x+MENU_BDX, menu.ok_b.y+MENU_BDY);
     tft.print (ok_label);
-    if (!menu.no_cancel) {
+    if (menu.cancel == M_CANCELOK) {
         fillSBox (cancel_b, MENU_BGC);
         drawSBox (cancel_b, MENU_FGC);
         tft.setCursor (cancel_b.x+MENU_BDX, cancel_b.y+MENU_BDY);
         tft.print (cancel_label);
     }
 
-    // display each item in its own pick box
+    // display each table item in its own pick box (does not include MENU_TEXT)
     StackMalloc pbox_mem(menu.n_items*sizeof(SBox));
     SBox *pick_boxes = (SBox *) pbox_mem.getMem();
     uint16_t col_w = (menu.menu_b.w - MENU_RM)/menu.n_cols;
-    int vrow_i = 0;                          // visual row, only incremented for non-IGNORE items
+    int tblcell_i = 0;                  // table cell, only incremented for non-IGNORE/MENU_TEXT items
     for (int i = 0; i < menu.n_items; i++) {
 
         MenuItem &mi = menu.items[i];
 
         // assign item next location and draw unless to be ignored
-        if (mi.type != MENU_IGNORE) {
+        if (mi.type != MENU_IGNORE && mi.type != MENU_TEXT) {
             SBox &pb = pick_boxes[i];
 
-            pb.x = menu.menu_b.x + 1 + (vrow_i/n_rowspercol)*col_w;
-            pb.y = menu.menu_b.y + MENU_TBM + (vrow_i%n_rowspercol)*MENU_RH;
+            pb.x = menu.menu_b.x + 1 + (tblcell_i/n_rowspercol)*col_w;
+            pb.y = menu.menu_b.y + MENU_TBM + (tblcell_i%n_rowspercol)*MENU_RH;
             pb.w = col_w;
             pb.h = MENU_RH;
             menuDrawItem (mi, pb, true, false);
 
-            vrow_i++;
+            tblcell_i++;
         }
     }
-    if (vrow_i != n_activerows)                      // sanity check
-        fatalError (_FX("menu row %d != %d / %d"), vrow_i, n_activerows, menu.n_items);
+
+    if (tblcell_i != n_tablerows)                      // sanity check
+        fatalError (_FX("menu row %d != %d / %d"), tblcell_i, n_tablerows, menu.n_items);
+
+    // assign last pick box to MENU_TEXT, if any
+    if (mt_w > 0) {
+        int i = menu.n_items - 1;
+        mt_pbp = &pick_boxes[i];
+        mt_pbp->x = menu.menu_b.x + 1;
+        mt_pbp->y = menu.menu_b.y + menu.menu_b.h - MENU_TBM - 2*MENU_RH;    // above ok/cancel row
+        mt_pbp->w = mt_w;
+        mt_pbp->h = MENU_RH;
+        menuDrawItem (menu.items[i], pick_boxes[i], true, false);
+    }
 
     // immediate draw if menu is over map
     if (boxesOverlap (menu.menu_b, map_b))
         tft.drawPR();
 
+    // set kb focus to first member of first active group, if any
+    int focus_i = -1;
+    for (int i = 0; i < menu.n_items; i++) {
+        if (MENU_ACTIVE(menu.items[i].type)) {
+            focus_i = i;
+            break;
+        }
+    }
+
     SCoord tap;
-    char kbchar;
+    char kb_char;
     UserInput ui = {
         menu.menu_b,
-        NULL,
-        false,
+        UI_UFuncNone,
+        UF_UNUSED,
         MENU_TIMEOUT,
         menu.update_clocks,
         tap,
-        kbchar,
+        kb_char,
         false,
         false
     };
 
     // run
     bool ok = false;
-    int kb_item = -1;
     while (waitForUser (ui)) {
 
-        // check for Enter or tap in ok
-        if (kbchar == CHAR_CR || kbchar == CHAR_NL || inBox (tap, menu.ok_b)) {
-            ok = true;
-            break;
+        // OK if check for Enter or tap in ok
+        if (kb_char == CHAR_CR || kb_char == CHAR_NL || inBox (tap, menu.ok_b)) {
+            // check MenuText field if any
+            ok = true;  // done unless a text field has compiler error
+            if (mt_mip) {
+                MenuText *tfp = mt_mip->textf;
+                char ynot[50];
+                if (!(tfp->text_fp)(tfp->text, ynot, sizeof(ynot))) {
+                    drawMenuText (*mt_mip, *mt_pbp, false, false, MENU_ERRC, ynot);
+                    wdDelay (3000);
+                    drawMenuText (*mt_mip, *mt_pbp, false, true, MENU_FGC, &tfp->text[tfp->w_pos]);
+                    ok = false;
+                }
+            }
+            if (ok)
+                break;
         }
 
-        // check for ESC tap or tap in optional cancel
-        if (kbchar == CHAR_ESC || (!menu.no_cancel && inBox (tap, cancel_b))) {
+        // cancel if check for ESC tap or tap in optional cancel or tap outside box
+        if (kb_char == CHAR_ESC || (menu.cancel == M_CANCELOK && inBox (tap, cancel_b))
+                        || (kb_char == CHAR_NONE && !inBox (tap, menu.menu_b))) {
             break;
         }
 
         // check for kb or tap control
-        if (kbchar)
-            kb_item = checkKBControl (menu, pick_boxes, kb_item, kbchar);
-        else
-            checkTapControl (menu, pick_boxes, tap);
+        if (kb_char) {
+            if (focus_i >= 0) {
+                if (menu.items[focus_i].type == MENU_TEXT)
+                    focus_i = textFieldEdit (menu, pick_boxes, focus_i, kb_char);
+                else
+                    focus_i = kbNavigation (menu, pick_boxes, focus_i, kb_char);
+            }
+        } else
+            focus_i = checkTapControl (menu, pick_boxes, tap);
     }
 
     // done
@@ -556,46 +816,39 @@ void menuRedrawOk (SBox &ok_b, MenuOkState oks)
 }
 
 /* wait until:
- *   a tap occurs inside inbox:                      set tap location and type and return true.
- *   a char is typed:                                set kbchar/ctrl/shift and return true.
+ *   a tap occurs:                                   set tap location and return true.
+ *   a char is typed:                                set kb_char/ctrl/shift and return true.
  *   (*fp)() (IFF fp != NULL) returns true:          set fp_true to true and return false.
  *   to_ms is > 0 and nothing happens for that long: return false.
  * while waiting we optionally update clocks and allow some web server commands.
  */
 bool waitForUser (UserInput &ui)
 {
-    drainTouch();
-
     // initial timeout
     uint32_t t0 = millis();
 
     // reset both actions until they happen here
-    ui.kbchar = 0;
+    ui.kb_char = CHAR_NONE;
     ui.tap = {0, 0};
 
     for(;;) {
 
-        if (readCalTouchWS(ui.tap) != TT_NONE) {
-            drainTouch();
-            if (inBox (ui.tap, ui.inbox))
-                return(true);
-            // tap restarts base timeout
-            t0 = millis();
-        }
+        if (readCalTouchWS(ui.tap) != TT_NONE)
+            return(true);
 
-        ui.kbchar = tft.getChar (&ui.ctrl, &ui.shift);
-        if (ui.kbchar)
+        ui.kb_char = tft.getChar (&ui.kb_ctrl, &ui.kb_shift);
+        if (ui.kb_char != CHAR_NONE)
             return (true);
 
-        if (ui.to_ms && timesUp (&t0, ui.to_ms))
+        if (ui.to_ms != UI_NOTIMEOUT && timesUp (&t0, ui.to_ms))
             return (false);
 
-        if (ui.fp && (*ui.fp)()) {
-            ui.fp_true = true;
+        if (ui.fp != UI_UFuncNone && (*ui.fp)()) {
+            ui.fp_true = UF_TRUE;
             return (false);
         }
 
-        if (ui.update_clocks)
+        if (ui.update_clocks == UF_CLOCKSOK)
             updateClocks(false);
 
         wdDelay (10);

@@ -1524,11 +1524,27 @@ int16_t thick, fbpix_t color)
 
 
 
-
 /* place the given raw pixel at the given raw frame buffer location.
  */
 void Adafruit_RA8875::plotfb (int16_t x, int16_t y, fbpix_t color)
 {
+        // perform gray_type
+        switch (gray_type) {
+        case GRAY_OFF:
+        case GRAY_MAP:
+            // no change -- color ok
+            break;
+        case GRAY_ALL: {
+            uint32_t rgb = FBPIXTORGB32(color);
+            int r = (rgb >> 16) & 0xff;
+            int g = (rgb >> 8) & 0xff;
+            int b = rgb & 0xff;
+            int gray = RGB2GRAY(r,g,b);
+            color = RGB32TOFBPIX ((gray<<16) | (gray<<8) | (gray));
+            }
+            break;
+        }
+
         int index = y*FB_XRES + x;
         if (index < 0 || index >= FB_XRES*FB_YRES)
             printf ("no! %d %d\n", x, y);
@@ -1647,11 +1663,11 @@ void Adafruit_RA8875::drawPR(void)
 }
 
 
-/* return a typed character and current modifier keys if interested (may be NULL), else 0
+/* return a typed character and current modifier keys if interested (may be NULL), else CHAR_NONE
  */
 char Adafruit_RA8875::getChar (bool *control_set, bool *shift_set)
 {
-    char c = 0;
+    char c = CHAR_NONE;
     pthread_mutex_lock (&kb_lock);
         if (kb_qhead != kb_qtail) {
             KBState &ks = kb_q[kb_qhead];

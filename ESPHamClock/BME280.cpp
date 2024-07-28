@@ -12,10 +12,10 @@
 #define I2CADDR_2       0x77                    // always at [1] in data arrays below
 
 // polling management. polls at START_DT at first then slows to FINAL_DT after steady-state period
-#define MAX_BME_AGE     (24*3600L)              // max age to plot, seconds
-#define START_DT        (1*1000L)               // initial polling period, millis
-#define FINAL_DT        (1000L*MAX_BME_AGE/N_BME_READINGS)      // final period, millis
-#define SS_PERIOD       (3600*1000L)            // time to reach steady state, millis
+#define MAX_BME_AGE     (24*3600L)             // max age to plot, seconds
+#define START_DT        (2*1000L)              // initial polling period, millis
+#define FINAL_DT        (1000L*MAX_BME_AGE/N_BME_READINGS)      // final polling period, millis
+#define SS_START        (1800*1000L)           // when to reach final steady state, millis
 
 // data management.
 static const uint8_t bme_i2c[MAX_N_BME] = {I2CADDR_1, I2CADDR_2};    // N.B. match BME_76 and BME_77 indices
@@ -357,10 +357,10 @@ void readBME280 ()
 
             // gradually slow
             time_t up = getUptime (NULL, NULL, NULL, NULL);
-            if (up > SS_PERIOD/1000)
+            if (up > SS_START/1000)
                 readDT = FINAL_DT;
             else
-                readDT = START_DT + up*(1000L*(FINAL_DT-START_DT)/SS_PERIOD);
+                readDT = START_DT + up*(1000L*(FINAL_DT-START_DT)/SS_START);
             // Serial.printf (_FX("BME up %d s readDT %ld s\n"), up, readDT/1000);
         }
     }

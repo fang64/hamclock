@@ -198,7 +198,7 @@ bool askPasswd (const char *category, bool restore)
         SCoord s;
         char kbc;
         SBox all = {0, 0, tft.width(), tft.height()};   // full screen
-        UserInput ui = { all, NULL, false, TO, false, s, kbc, false, false };
+        UserInput ui = { all, UI_UFuncNone, UF_UNUSED, TO, UF_NOCLOCKS, s, kbc, false, false };
 
         // run until enter or cancel
         do {
@@ -224,7 +224,7 @@ bool askPasswd (const char *category, bool restore)
                     break;
 
                 case CHAR_ESC:
-                    cancelled = true;   // bake out
+                    cancelled = true;   // bale out
                     break;
 
                 case CHAR_BS:           // fallthru

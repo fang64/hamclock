@@ -76,7 +76,7 @@ static void setDefaultPaneChoice (PlotPane pp)
             const PlotChoice ch_defaults[PANE_N] = {PLOT_CH_SSN, PLOT_CH_XRAY, PLOT_CH_SDO};
             plot_ch[pp] = ch_defaults[pp];
             plot_rotset[pp] = (1 << plot_ch[pp]);
-            Serial.printf (_FX("PANE: Setting pane %d to default %s\n"), (int)pp, plot_names[plot_ch[pp]]);
+            Serial.printf ("PANE: Setting pane %d to default %s\n", (int)pp, plot_names[plot_ch[pp]]);
         }
     }
 }
@@ -138,34 +138,21 @@ bool plotChoiceIsAvailable (PlotChoice pc)
  */
 void logPaneRotSet (PlotPane pp, PlotChoice pc)
 {
-    Serial.printf (_FX("Pane %d choices:\n"), (int)pp);
+    Serial.printf ("Pane %d choices:\n", (int)pp);
     for (int i = 0; i < PLOT_CH_N; i++)
         if (plot_rotset[pp] & (1 << i))
-            Serial.printf (_FX("    %c%s\n"), i == pc ? '*' : ' ', plot_names[i]);
+            Serial.printf ("    %c%s\n", i == pc ? '*' : ' ', plot_names[i]);
 }
 
 /* log the BRB rotation set
  */
 void logBRBRotSet()
 {
-    Serial.printf (_FX("BRB: choices:\n"));
+    Serial.printf ("BRB: choices:\n");
     for (int i = 0; i < BRB_N; i++)
         if (brb_rotset & (1 << i))
-            Serial.printf (_FX("    %c%s\n"), i == brb_mode ? '*' : ' ', brb_names[i]);
-    Serial.printf (_FX("BRB: now mode %d\n"), brb_mode);
-}
-
-/* if the given rotset include PLOT_CH_DXCLUSTER and more, show message in box and return true.
- * else return false.
- */
-bool enforceDXCAlone (const SBox &box, uint32_t rotset)
-{
-    if ((rotset & (1<<PLOT_CH_DXCLUSTER)) && (rotset & ~(1<<PLOT_CH_DXCLUSTER))) {
-        plotMessage (box, RA8875_RED, _FX("DX Cluster may not be combined with other data panes"));
-        wdDelay(5000);
-        return (true);
-    }
-    return (false);
+            Serial.printf ("    %c%s\n", i == brb_mode ? '*' : ' ', brb_names[i]);
+    Serial.printf ("BRB: now mode %d\n", brb_mode);
 }
 
 /* if the given rotset include PLOT_CH_COUNTDOWN and more, show message in box and return true.
@@ -174,7 +161,7 @@ bool enforceDXCAlone (const SBox &box, uint32_t rotset)
 bool enforceCDownAlone (const SBox &box, uint32_t rotset)
 {
     if ((rotset & (1<<PLOT_CH_COUNTDOWN)) && (rotset & ~(1<<PLOT_CH_COUNTDOWN))) {
-        plotMessage (box, RA8875_RED, _FX("Countdown may not be combined with other data panes"));
+        plotMessage (box, RA8875_RED, "Countdown may not be combined with other data panes");
         wdDelay(5000);
         return (true);
     }
@@ -191,7 +178,7 @@ static PlotChoice askPaneChoice (PlotPane pp)
 
     // not for use for PANE_0
     if (pp == PANE_0)
-        fatalError (_FX("askPaneChoice called with pane 0"));
+        fatalError ("askPaneChoice called with pane 0");
 
     // set this temporarily to show all choices, just for testing worst-case layout
     #define ASKP_SHOWALL 0                      // RBF
@@ -213,7 +200,7 @@ static PlotChoice askPaneChoice (PlotPane pp)
             mi.type = MENU_AL1OFN;
             mi.set = (plot_rotset[pp] & (1 << pc)) ? true : false;
             mi.label = plot_names[pc];
-            mi.indent = 4;
+            mi.indent = 2;
             mi.group = 1;
         }
     }
@@ -224,7 +211,7 @@ static PlotChoice askPaneChoice (PlotPane pp)
     // run
     SBox box = plot_b[pp];       // copy
     SBox ok_b;
-    MenuInfo menu = {box, ok_b, true, false, 2, n_mitems, mitems};
+    MenuInfo menu = {box, ok_b, UF_CLOCKSOK, M_CANCELOK, 2, n_mitems, mitems};
     bool menu_ok = runMenu (menu);
 
     // return current choice by default
@@ -250,7 +237,7 @@ static PlotChoice askPaneChoice (PlotPane pp)
         uint32_t new_sets[PANE_N];
         memcpy (new_sets, plot_rotset, sizeof(new_sets));
         new_sets[pp] = new_rotset;
-        if (!enforceDXCAlone (box, new_rotset) && !enforceCDownAlone (box, new_rotset)) {
+        if (!enforceCDownAlone (box, new_rotset)) {
 
             plot_rotset[pp] = new_rotset;
             savePlotOps();
@@ -302,7 +289,7 @@ PlotPane findPaneForChoice (PlotChoice pc)
  */
 PlotChoice getNextRotationChoice (PlotPane pp, PlotChoice pc)
 {
-    if (paneIsRotating (pp)) {
+    if (isPaneRotating (pp)) {
         for (int i = 1; i < PLOT_CH_N; i++) {
             int j = (pc + i) % PLOT_CH_N;
             if (plot_rotset[pp] & (1 << j))
@@ -311,7 +298,7 @@ PlotChoice getNextRotationChoice (PlotPane pp, PlotChoice pc)
     } else
         return (pc);
 
-    fatalError (_FX("getNextRotationChoice() none for pane %d"), (int)pp);
+    fatalError ("getNextRotationChoice() none for pane %d", (int)pp);
     return (pc); // lint because fatalError never returns
 }
 
@@ -333,7 +320,7 @@ PlotChoice getAnyAvailableChoice()
                 return (pc);
         }
     }
-    fatalError (_FX("no available pane choices"));
+    fatalError ("no available pane choices");
 
     // never get here, just for lint
     return (PLOT_CH_FLUX);
@@ -352,7 +339,7 @@ void insureCountdownPaneSensible()
                 if (plot_ch[i] == PLOT_CH_COUNTDOWN) {
                     setDefaultPaneChoice((PlotPane)i);
                     if (!setPlotChoice ((PlotPane)i, plot_ch[i])) {
-                        fatalError (_FX("can not replace Countdown pain %d with %s"),
+                        fatalError ("can not replace Countdown pain %d with %s",
                                     i, plot_names[plot_ch[i]]);
                     }
                 }
@@ -418,14 +405,14 @@ bool checkPlotTouch (const SCoord &s, PlotPane pp, TouchType tt)
         break;
     case PLOT_CH_SSN:
         if (!in_top) {
-            plotMap (_FX("/ssn/ssn-history.txt"), _FX("SIDC Sunspot History"), SSN_COLOR);
+            plotMap ("/ssn/ssn-history.txt", _FX("SIDC Sunspot History"), SSN_COLOR);
             initEarthMap();
             return(true);
         }
         break;
     case PLOT_CH_FLUX:
         if (!in_top) {
-            plotMap (_FX("/solar-flux/solarflux-history.txt"), _FX("10.7 cm Solar Flux History"),SFLUX_COLOR);
+            plotMap ("/solar-flux/solarflux-history.txt", _FX("10.7 cm Solar Flux History"),SFLUX_COLOR);
             initEarthMap();
             return(true);
         }
@@ -514,7 +501,7 @@ bool checkPlotTouch (const SCoord &s, PlotPane pp, TouchType tt)
 
         // always engage even if same to erase menu
         if (!setPlotChoice (pp, pc)) {
-            fatalError (_FX("checkPlotTouch bad choice %d pane %d"), (int)pc, (int)pp);
+            fatalError ("checkPlotTouch bad choice %d pane %d", (int)pc, (int)pp);
             // never returns
         }
     }
@@ -539,7 +526,7 @@ void initPlotPanes()
     if (plot_rotset[PANE_0] & ~((1<<PLOT_CH_DXCLUSTER) | (1<<PLOT_CH_CONTESTS) | (1<<PLOT_CH_ADIF) |
                                (1<<PLOT_CH_POTA) | (1<<PLOT_CH_SOTA))) {
 
-        Serial.printf (_FX("PANE: Resetting bogus Pane 0 rot set: 0x%x\n"), plot_rotset[PANE_0]);
+        Serial.printf ("PANE: Resetting bogus Pane 0 rot set: 0x%x\n", plot_rotset[PANE_0]);
         plot_rotset[PANE_0] = 0;
         plot_ch[PANE_0] = PLOT_CH_NONE;
 
@@ -556,7 +543,7 @@ void initPlotPanes()
             if (plot_rotset[i] & (1 << j)) {
                 if (!plotChoiceIsAvailable ((PlotChoice)j)) {
                     plot_rotset[i] &= ~(1 << j);
-                    Serial.printf (_FX("PANE: Removing %s from pane %d: not available\n"), plot_names[j],i);
+                    Serial.printf ("PANE: Removing %s from pane %d: not available\n", plot_names[j],i);
                 }
             }
         }
@@ -576,7 +563,7 @@ void initPlotPanes()
                 for (int k = 0; k < PLOT_CH_N; k++) {
                     PlotChoice new_pc = (PlotChoice)k;
                     if (plotChoiceIsAvailable(new_pc) && findPaneChoiceNow(new_pc) == PANE_NONE) {
-                        Serial.printf (_FX("PANE: Reassigning dup pane %d from %s to %s\n"), j,
+                        Serial.printf ("PANE: Reassigning dup pane %d from %s to %s\n", j,
                                         plot_names[plot_ch[j]], plot_names[new_pc]);
                         // remove dup from rotation set then replace with new choice
                         plot_rotset[j] &= ~(1 << plot_ch[j]);
@@ -586,16 +573,6 @@ void initPlotPanes()
                     }
                 }
             }
-        }
-    }
-
-    // enforce PLOT_CH_DXCLUSTER is alone in rotset, if any
-    for (int i = PANE_0; i < PANE_N; i++) {
-        if ((plot_rotset[i] & (1 << PLOT_CH_DXCLUSTER)) && (plot_rotset[i] & ~(1 << PLOT_CH_DXCLUSTER))) {
-            plot_rotset[i] = (1 << PLOT_CH_DXCLUSTER);
-            plot_ch[i] = PLOT_CH_DXCLUSTER;
-            Serial.printf (_FX("isolating DX Cluster in pane %d\n"), i);
-            break;
         }
     }
 
@@ -625,20 +602,20 @@ void savePlotOps()
     NVWriteUInt8 (NV_PLOT_3, plot_ch[PANE_3]);
 }
 
-/* flash plot borders nearly ready to change, and include NCDXF_b also,
+/* flash plot and NCDXF_b borders nearly ready to change
  * unless rotating pretty fast.
  */
 void showRotatingBorder ()
 {
     time_t t0 = myNow();
 
-    // just white if rotation period is 10 s or less
+    // just leave it white if rotation period is 10 s or less
     const int min_rot = 10;
     uint16_t c = RA8875_WHITE;
 
     // check plot panes
     for (int i = 0; i < PANE_N; i++) {
-        if (paneIsRotating((PlotPane)i) || (isSDORotating() && findPaneChoiceNow(PLOT_CH_SDO) == i)) {
+        if (isPaneRotating((PlotPane)i) || isSpecialPaneRotating((PlotPane)i)) {
             // this pane is rotating among other pane choices or SDO is rotating its images
             if (getPaneRotationPeriod() > min_rot)
                 c = ((nextPaneRotation((PlotPane)i) > t0 + PLOT_ROT_WARNING) || (t0&1) == 1)
@@ -650,17 +627,16 @@ void showRotatingBorder ()
     // check BRB
     if (BRBIsRotating()) {
         if (getPaneRotationPeriod() > min_rot)
-            c = ((brb_updateT > t0 + PLOT_ROT_WARNING) || (t0&1) == 1) ? RA8875_WHITE : GRAY;
+            c = ((brb_next_update > t0 + PLOT_ROT_WARNING) || (t0&1) == 1) ? RA8875_WHITE : GRAY;
         drawSBox (NCDXF_b, c);
     }
 
 }
 
-/* read a bmp image from the given connection and display in the given box.
+/* read a 24 BPP bmp image from the given connection and display in the given box.
  * return true else false with short reason in ynot[].
- * N.B. either way we do NOT close client.
  */
-bool installBMP (WiFiClient &client, const SBox &box, char ynot[], size_t ynot_len)
+bool install24BMP (GenReader &gr, const SBox &box, char ynot[], size_t ynot_len)
 {
     // stay alert
     resetWatchdog();
@@ -675,46 +651,46 @@ bool installBMP (WiFiClient &client, const SBox &box, char ynot[], size_t ynot_l
     char c;
 
     // read first two bytes to confirm correct format
-    if (!getTCPChar(client,&c) || c != 'B' || !getTCPChar(client,&c) || c != 'M') {
-        snprintf (ynot, ynot_len, _FX("File not BMP"));
+    if (!gr.getChar(&c) || c != 'B' || !gr.getChar(&c) || c != 'M') {
+        snprintf (ynot, ynot_len, "File not BMP");
         return (false);
     }
     byte_os += 2;
 
     // skip down to byte 10 which is the offset to the pixels offset
     while (byte_os++ < 10) {
-        if (!getTCPChar(client,&c)) {
-            snprintf (ynot, ynot_len, _FX("Header offset error"));
+        if (!gr.getChar(&c)) {
+            snprintf (ynot, ynot_len, "Header offset error");
             return (false);
         }
     }
     for (uint8_t i = 0; i < 4; i++, byte_os++) {
-        if (!getTCPChar(client,&i32.c[i])) {
-            snprintf (ynot, ynot_len, _FX("Pix_start error"));
+        if (!gr.getChar(&i32.c[i])) {
+            snprintf (ynot, ynot_len, "Pix_start error");
             return (false);
         }
     }
     uint32_t pix_start = i32.x;
-    // Serial.printf (_FX("pixels start at %d\n"), pix_start);
+    // Serial.printf ("pixels start at %d\n", pix_start);
 
     // next word is subheader size, must be 40 BITMAPINFOHEADER
     for (uint8_t i = 0; i < 4; i++, byte_os++) {
-        if (!getTCPChar(client,&i32.c[i])) {
-            snprintf (ynot, ynot_len, _FX("Hdr size error"));
+        if (!gr.getChar(&i32.c[i])) {
+            snprintf (ynot, ynot_len, "Hdr size error");
             return (false);
         }
     }
     uint32_t subhdr_size = i32.x;
     if (subhdr_size != 40) {
-        Serial.printf (_FX("DIB must be 40: %d\n"), subhdr_size);
-        snprintf (ynot, ynot_len, _FX("DIB err"));
+        Serial.printf ("DIB must be 40: %d\n", subhdr_size);
+        snprintf (ynot, ynot_len, "DIB err");
         return (false);
     }
 
     // next word is width
     for (uint8_t i = 0; i < 4; i++, byte_os++) {
-        if (!getTCPChar(client,&i32.c[i])) {
-            snprintf (ynot, ynot_len, _FX("Width error"));
+        if (!gr.getChar(&i32.c[i])) {
+            snprintf (ynot, ynot_len, "Width error");
             return (false);
         }
     }
@@ -722,61 +698,61 @@ bool installBMP (WiFiClient &client, const SBox &box, char ynot[], size_t ynot_l
 
     // next word is height
     for (uint8_t i = 0; i < 4; i++, byte_os++) {
-        if (!getTCPChar(client,&i32.c[i])) {
-            snprintf (ynot, ynot_len, _FX("Height error"));
+        if (!gr.getChar(&i32.c[i])) {
+            snprintf (ynot, ynot_len, "Height error");
             return (false);
         }
     }
     int32_t img_h = i32.x;
     int32_t n_pix = img_w*img_h;
-    Serial.printf (_FX("image is %d x %d = %d\n"), img_w, img_h, img_w*img_h);
+    Serial.printf ("image is %d x %d = %d\n", img_w, img_h, img_w*img_h);
 
     // next short is n color planes
     for (uint8_t i = 0; i < 2; i++, byte_os++) {
-        if (!getTCPChar(client,&i16.c[i])) {
-            snprintf (ynot, ynot_len, _FX("Planes error"));
+        if (!gr.getChar(&i16.c[i])) {
+            snprintf (ynot, ynot_len, "Planes error");
             return (false);
         }
     }
     uint16_t n_planes = i16.x;
     if (n_planes != 1) {
-        Serial.printf (_FX("planes must be 1: %d\n"), n_planes);
-        snprintf (ynot, ynot_len, _FX("N Planes error"));
+        Serial.printf ("planes must be 1: %d\n", n_planes);
+        snprintf (ynot, ynot_len, "N Planes error");
         return (false);
     }
 
     // next short is bits per pixel
     for (uint8_t i = 0; i < 2; i++, byte_os++) {
-        if (!getTCPChar(client,&i16.c[i])) {
-            snprintf (ynot, ynot_len, _FX("bits/pix error"));
+        if (!gr.getChar(&i16.c[i])) {
+            snprintf (ynot, ynot_len, "bits/pix error");
             return (false);
         }
     }
     uint16_t n_bpp = i16.x;
     if (n_bpp != 24) {
-        Serial.printf (_FX("bpp must be 24: %d\n"), n_bpp);
-        snprintf (ynot, ynot_len, _FX("BPP error"));
+        Serial.printf ("bpp must be 24: %d\n", n_bpp);
+        snprintf (ynot, ynot_len, "BPP error");
         return (false);
     }
 
     // next word is compression method
     for (uint8_t i = 0; i < 4; i++, byte_os++) {
-        if (!getTCPChar(client,&i32.c[i])) {
-            snprintf (ynot, ynot_len, _FX("Compression error"));
+        if (!gr.getChar(&i32.c[i])) {
+            snprintf (ynot, ynot_len, "Compression error");
             return (false);
         }
     }
     uint32_t comp = i32.x;
     if (comp != 0) {
-        Serial.printf (_FX("compression must be 0: %d\n"), comp);
-        snprintf (ynot, ynot_len, _FX("Comp error"));
+        Serial.printf ("compression must be 0: %d\n", comp);
+        snprintf (ynot, ynot_len, "Comp error");
         return (false);
     }
 
     // skip down to start of pixels
     while (byte_os++ <= pix_start) {
-        if (!getTCPChar(client,&c)) {
-            snprintf (ynot, ynot_len, _FX("Header 3 error"));
+        if (!gr.getChar(&c)) {
+            snprintf (ynot, ynot_len, "Header 3 error");
             return (false);
         }
     }
@@ -809,16 +785,16 @@ bool installBMP (WiFiClient &client, const SBox &box, char ynot[], size_t ynot_l
             char b, g, r;
 
             // read next pixel -- note order!
-            if (!getTCPChar (client, &b) || !getTCPChar (client, &g) || !getTCPChar (client, &r)) {
+            if (!gr.getChar (&b) || !gr.getChar (&g) || !gr.getChar (&r)) {        // not RGB!
                 // allow a little loss because ESP TCP stack can fall behind while also drawing
                 int32_t n_draw = img_y*img_w + img_x;
                 if (n_draw > 9*n_pix/10) {
                     // close enough
-                    Serial.printf (_FX("read error after %d pixels but good enough\n"), n_draw);
-                    break;
+                    Serial.printf ("read error after %d pixels but good enough\n", n_draw);
+                    goto out;
                 } else {
-                    Serial.printf (_FX("read error after %d pixels\n"), n_draw);
-                    snprintf (ynot, ynot_len, _FX("File is short"));
+                    Serial.printf ("read error after %d pixels\n", n_draw);
+                    snprintf (ynot, ynot_len, "File is short");
                     return (false);
                 }
             }
@@ -840,59 +816,20 @@ bool installBMP (WiFiClient &client, const SBox &box, char ynot[], size_t ynot_l
         uint8_t extra = img_w % 4;
         if (extra > 0) {
             for (uint8_t i = 0; i < 4 - extra; i++) {
-                if (!getTCPChar(client,&c)) {
-                    snprintf (ynot, ynot_len, _FX("Row padding error"));
+                if (!gr.getChar(&c)) {
+                    snprintf (ynot, ynot_len, "Row padding error");
                     return (false);
                 }
             }
         }
     }
 
+  out:
+
     // finally!
     return (true);
 }
 
-/* download the given hamclock url containing a bmp image and display in the given box.
- * show error messages in the given color.
- * return whether all ok
- */
-bool drawHTTPBMP (const char *hc_url, const SBox &box, uint16_t color)
-{
-    WiFiClient client;
-    bool ok = false;
-
-    Serial.println(hc_url);
-    resetWatchdog();
-    if (wifiOk() && client.connect(backend_host, backend_port)) {
-        updateClocks(false);
-
-        // query web page
-        httpHCGET (client, backend_host, hc_url);
-
-        // skip response header
-        if (!httpSkipHeader (client)) {
-            plotMessage (box, color, _FX("Image header short"));
-            goto out;
-        }
-
-        // proceed
-        char ynot[100];
-        size_t prefix_l = snprintf (ynot, sizeof(ynot), _FX("Image error: "));
-        if (installBMP (client, box, ynot+prefix_l, sizeof(ynot)-prefix_l)) {
-            // Serial.println (F("image complete"));
-            ok = true;
-        } else {
-            plotMessage (box, color, ynot);
-        }
-
-    } else {
-        plotMessage (box, color, _FX("Connection failed"));
-    }
-
-out:
-    client.stop();
-    return (ok);
-}
 
 /* given min and max and an approximate number of divisions desired,
  * fill in ticks[] with nicely spaced values and return how many.
@@ -936,9 +873,16 @@ int tickmarks (float min, float max, int numdiv, float ticks[])
 
 /* return whether this pane is currently rotating to other panes
  */
-bool paneIsRotating (PlotPane pp)
+bool isPaneRotating (PlotPane pp)
 {
     return ((plot_rotset[pp] & ~(1 << plot_ch[pp])) != 0);  // look for any bit on other than plot_ch
+}
+
+/* return whether this pane has its own special rotating ability (only one such for now)
+ */
+bool isSpecialPaneRotating (PlotPane pp)
+{
+    return (findPaneForChoice (PLOT_CH_SDO) == pp && isSDORotating());
 }
 
 /* restore normal PANE_0

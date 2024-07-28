@@ -52,25 +52,28 @@ static int16_t alt_center_lng;
 static bool alt_center_lng_set;
 static char dxcl_cmds[N_DXCLCMDS][NV_DXCLCMD_LEN];
 static char dx_wlist[NV_DXWLIST_LEN];
-static char spota_wlist[NV_SPOTAWLIST_LEN];
+static char pota_wlist[NV_POTAWLIST_LEN];
+static char sota_wlist[NV_SOTAWLIST_LEN];
+static char adif_wlist[NV_ADIFWLIST_LEN];
 static char adif_fn[NV_ADIFFN_LEN];
 static char i2c_fn[NV_I2CFN_LEN];
+
 
 
 // layout constants
 #define NQR             4                       // number of virtual keyboard rows
 #define NQC             13                      // max number of keyboard columns
-#define KB_CHAR_H       56                      // height of box containing 1 keyboard character
+#define KB_CHAR_H       44                      // height of box containing 1 keyboard character
 #define KB_CHAR_W       59                      // width "
 #define KB_SPC_Y        (KB_Y0+NQR*KB_CHAR_H)   // top edge of special keyboard chars
-#define KB_SPC_H        35                      // heights of special keyboard chars
+#define KB_SPC_H        28                      // heights of special keyboard chars
 #define KB_INDENT       16                      // keyboard indent
 #define SBAR_X          (KB_INDENT+5*KB_CHAR_W/2)// space bar x coord
 #define SBAR_W          (KB_CHAR_W*8)           // space bar width
 #define F_DESCENT       5                       // font descent below baseline
-#define TF_INDENT       10                      // top row font indent within square
-#define BF_INDENT       30                      // bottom font indent within square
-#define KB_Y0           220                     // y coord of keyboard top
+#define TF_INDENT       8                       // top row font indent within square
+#define BF_INDENT       34                      // bottom font indent within square
+#define KB_Y0           270                     // y coord of keyboard top
 #define PR_W            18                      // width of character
 #define PR_A            24                      // ascending height above font baseline
 #define PR_D            9                       // descending height below font baseline
@@ -86,7 +89,7 @@ static char i2c_fn[NV_I2CFN_LEN];
 #define NVMS_DOT        3                       // NV_MAPSPOTS & MKMSK value to mark spots with dots
 #define NVMS_THIN       0x4                     // NV_MAPSPOTS bit to use THINPATHSZ
 #define NVMS_WIDE       0x8                     // NV_MAPSPOTS bit to use WIDEPATHSZ
-#define R2Y(r)          ((r)*(PR_H+2))          // macro given row index from 0 return screen y
+#define R2Y(r)          ((r)*(PR_H+1))          // macro given row index from 0 return screen y
 #define ERRDWELL_MS     3000                    // err message dwell time, ms
 #define BTNDWELL_MS     200                     // button feedback dwell time, ms
 
@@ -115,7 +118,8 @@ static char i2c_fn[NV_I2CFN_LEN];
 #define CSEL_ADX        32                      // dashed tick box dx from tick box x
 
 // color table save/load layout
-#define CTSL_Y          KB_SPC_Y                // color table save/load row y
+#define CTSL_H          (PR_A+PR_D)             // color table save/load height
+#define CTSL_Y          (480-CTSL_H-4)          // color table save/load row y
 #define CTSL_SL_X       20                      // save/load control label x
 #define CTSL_SA_X       (CTSL_SL_X+90)          // save A control x
 #define CTSL_SA_W       (2*PR_W)                // save A control width
@@ -233,7 +237,9 @@ typedef enum {
     FLRIGHOST_SPR,
     NTPHOST_SPR,
     ADIFFN_SPR,
-    SPOTAWL_SPR,
+    ADIFWL_SPR,
+    POTAWL_SPR,
+    SOTAWL_SPR,
 
     // page "4"
     CENTERLNG_SPR,
@@ -264,42 +270,44 @@ static StringPrompt string_pr[N_SPR] = {
 
     // "page 2" -- index 1
 
-    {1, {135, R2Y(1),  0, PR_H}, {135, R2Y(1), 210, PR_H}, NULL, dx_wlist, NV_DXWLIST_LEN, 0},
+    {1, {135, R2Y(1),  0, PR_H}, {135, R2Y(1), 660, PR_H}, NULL, dx_wlist, NV_DXWLIST_LEN, 0},
     {1, { 15, R2Y(2), 70, PR_H}, { 85, R2Y(2),  85, PR_H}, "port:", NULL, 0, 0},               // shadowed
     {1, { 15, R2Y(3), 70, PR_H}, { 85, R2Y(3), 260, PR_H}, "host:", dx_host, NV_DXHOST_LEN, 0},
     {1, { 15, R2Y(4), 70, PR_H}, { 85, R2Y(4), 260, PR_H}, "login:", dx_login, NV_DXLOGIN_LEN, 0},
 
     // three overlapping sets, visibility depends on DXCLCMDPGA/B_BPR
 
-    {1, {350, R2Y(2), 40, PR_H}, {390, R2Y(2), 409, PR_H}, NULL, dxcl_cmds[0], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(3), 40, PR_H}, {390, R2Y(3), 409, PR_H}, NULL, dxcl_cmds[1], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(4), 40, PR_H}, {390, R2Y(4), 409, PR_H}, NULL, dxcl_cmds[2], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(5), 40, PR_H}, {390, R2Y(5), 409, PR_H}, NULL, dxcl_cmds[3], NV_DXCLCMD_LEN, 0},
+    {1, {350, R2Y(3), 40, PR_H}, {390, R2Y(3), 409, PR_H}, NULL, dxcl_cmds[0], NV_DXCLCMD_LEN, 0},
+    {1, {350, R2Y(4), 40, PR_H}, {390, R2Y(4), 409, PR_H}, NULL, dxcl_cmds[1], NV_DXCLCMD_LEN, 0},
+    {1, {350, R2Y(5), 40, PR_H}, {390, R2Y(5), 409, PR_H}, NULL, dxcl_cmds[2], NV_DXCLCMD_LEN, 0},
+    {1, {350, R2Y(6), 40, PR_H}, {390, R2Y(6), 409, PR_H}, NULL, dxcl_cmds[3], NV_DXCLCMD_LEN, 0},
 
-    {1, {350, R2Y(2), 40, PR_H}, {390, R2Y(2), 409, PR_H}, NULL, dxcl_cmds[4], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(3), 40, PR_H}, {390, R2Y(3), 409, PR_H}, NULL, dxcl_cmds[5], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(4), 40, PR_H}, {390, R2Y(4), 409, PR_H}, NULL, dxcl_cmds[6], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(5), 40, PR_H}, {390, R2Y(5), 409, PR_H}, NULL, dxcl_cmds[7], NV_DXCLCMD_LEN, 0},
+    {1, {350, R2Y(3), 40, PR_H}, {390, R2Y(3), 409, PR_H}, NULL, dxcl_cmds[4], NV_DXCLCMD_LEN, 0},
+    {1, {350, R2Y(4), 40, PR_H}, {390, R2Y(4), 409, PR_H}, NULL, dxcl_cmds[5], NV_DXCLCMD_LEN, 0},
+    {1, {350, R2Y(5), 40, PR_H}, {390, R2Y(5), 409, PR_H}, NULL, dxcl_cmds[6], NV_DXCLCMD_LEN, 0},
+    {1, {350, R2Y(6), 40, PR_H}, {390, R2Y(6), 409, PR_H}, NULL, dxcl_cmds[7], NV_DXCLCMD_LEN, 0},
 
-    {1, {350, R2Y(2), 40, PR_H}, {390, R2Y(2), 409, PR_H}, NULL, dxcl_cmds[8], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(3), 40, PR_H}, {390, R2Y(3), 409, PR_H}, NULL, dxcl_cmds[9], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(4), 40, PR_H}, {390, R2Y(4), 409, PR_H}, NULL, dxcl_cmds[10], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(5), 40, PR_H}, {390, R2Y(5), 409, PR_H}, NULL, dxcl_cmds[11], NV_DXCLCMD_LEN, 0},
+    {1, {350, R2Y(3), 40, PR_H}, {390, R2Y(3), 409, PR_H}, NULL, dxcl_cmds[8], NV_DXCLCMD_LEN, 0},
+    {1, {350, R2Y(4), 40, PR_H}, {390, R2Y(4), 409, PR_H}, NULL, dxcl_cmds[9], NV_DXCLCMD_LEN, 0},
+    {1, {350, R2Y(5), 40, PR_H}, {390, R2Y(5), 409, PR_H}, NULL, dxcl_cmds[10], NV_DXCLCMD_LEN, 0},
+    {1, {350, R2Y(6), 40, PR_H}, {390, R2Y(6), 409, PR_H}, NULL, dxcl_cmds[11], NV_DXCLCMD_LEN, 0},
 
 
     // "page 3" -- index 2
 
-    {2, {160, R2Y(0), 60, PR_H}, {220, R2Y(0),  80, PR_H}, "port:", NULL, 0, 0},               // shadowed
-    {2, {300, R2Y(0), 60, PR_H}, {360, R2Y(0), 300, PR_H}, "host:", rig_host, NV_RIGHOST_LEN, 0},
-    {2, {160, R2Y(1), 60, PR_H}, {220, R2Y(1),  80, PR_H}, "port:", NULL, 0, 0},               // shadowed
-    {2, {300, R2Y(1), 60, PR_H}, {360, R2Y(1), 300, PR_H}, "host:", rot_host, NV_ROTHOST_LEN, 0},
-    {2, {160, R2Y(2), 60, PR_H}, {220, R2Y(2),  80, PR_H}, "port:", NULL, 0, 0},               // shadowed
-    {2, {300, R2Y(2), 60, PR_H}, {360, R2Y(2), 300, PR_H}, "host:", flrig_host, NV_FLRIGHOST_LEN, 0},
+    {2, {160, R2Y(0), 60, PR_H}, {220, R2Y(0),  90, PR_H}, "port:", NULL, 0, 0},               // shadowed
+    {2, {310, R2Y(0), 60, PR_H}, {360, R2Y(0), 300, PR_H}, "host:", rig_host, NV_RIGHOST_LEN, 0},
+    {2, {160, R2Y(1), 60, PR_H}, {220, R2Y(1),  90, PR_H}, "port:", NULL, 0, 0},               // shadowed
+    {2, {310, R2Y(1), 60, PR_H}, {360, R2Y(1), 300, PR_H}, "host:", rot_host, NV_ROTHOST_LEN, 0},
+    {2, {160, R2Y(2), 60, PR_H}, {220, R2Y(2),  90, PR_H}, "port:", NULL, 0, 0},               // shadowed
+    {2, {310, R2Y(2), 60, PR_H}, {360, R2Y(2), 300, PR_H}, "host:", flrig_host, NV_FLRIGHOST_LEN, 0},
 
     {2, {100, R2Y(3), 60, PR_H}, {160, R2Y(3), 350, PR_H}, "host:", ntp_host, NV_NTPHOST_LEN, 0},
     {2, {100, R2Y(4), 60, PR_H}, {160, R2Y(4), 350, PR_H}, "file:", adif_fn, NV_ADIFFN_LEN, 0},
 
-    {2, {210, R2Y(5),  0, PR_H}, {210, R2Y(5), 350, PR_H}, NULL, spota_wlist, NV_SPOTAWLIST_LEN, 0},
+    {2, {210, R2Y(5),  0, PR_H}, {210, R2Y(5), 580, PR_H}, NULL, adif_wlist, NV_ADIFWLIST_LEN, 0},
+    {2, {210, R2Y(6),  0, PR_H}, {210, R2Y(6), 400, PR_H}, NULL, pota_wlist, NV_POTAWLIST_LEN, 0},
+    {2, {210, R2Y(7),  0, PR_H}, {210, R2Y(7), 400, PR_H}, NULL, sota_wlist, NV_SOTAWLIST_LEN, 0},
 
 
     // "page 4" -- index 3
@@ -367,8 +375,12 @@ typedef enum {
     FLRIGUSE_BPR,
     NTPSET_BPR,
     ADIFSET_BPR,
-    SPOTAWLISTA_BPR,
-    SPOTAWLISTB_BPR,
+    ADIFWLISTA_BPR,
+    ADIFWLISTB_BPR,
+    POTAWLISTA_BPR,
+    POTAWLISTB_BPR,
+    SOTAWLISTA_BPR,
+    SOTAWLISTB_BPR,
 
     // page "4"
     GPIOOK_BPR,
@@ -391,13 +403,15 @@ typedef enum {
     SPOTPSZA_BPR,
     SPOTPSZB_BPR,
     SCROLLDIR_BPR,
-    SCROLLLEN_BPR,
-    SCROLLBIG_BPR,
+    GRAYA_BPR,
+    GRAYB_BPR,
     PANE_ROTPA_BPR,
     PANE_ROTPB_BPR,
+    MAP_ROTPA_BPR,
+    MAP_ROTPB_BPR,
     SHOWPIP_BPR,
-    WEB_FULLSCRN_BPR,
     X11_FULLSCRN_BPR,
+    WEB_FULLSCRN_BPR,
 
     N_BPR,                                      // number of fields
 
@@ -405,17 +419,26 @@ typedef enum {
 
 } BPIds;
 
-// values for SCROLLLEN_BPR and SCROLLBIG_BPR -- N.B. must sync with SCROLLLEN_BPR/SCROLLBIG_BPR
-#define NSCROLL_A       0
-#define NSCROLL_B       10
-#define NSCROLL_C       25
-#define NSCROLL_D       50
 
-// values for PANE_ROTPA_BPR and PANE_ROTPB_BPR -- N.B. must sync with PANE_ROTPA_BPR/PANE_ROTPB_BPR
+// values for PANE_ROTPA_BPR and PANE_ROTPB_BPR -- N.B. must agree with string_pr[] prompts
 #define PANEROTP_A      5
 #define PANEROTP_B      10
-#define PANEROTP_C      20
-#define PANEROTP_D      40
+#define PANEROTP_C      30
+#define PANEROTP_D      60
+
+// values for MAP_ROTPA_BPR and MAP_ROTPB_BPR -- N.B. must agree with string_pr[] prompts
+#define MAPROTP_A       20
+#define MAPROTP_B       60
+#define MAPROTP_C       90
+#define MAPROTP_D       120
+
+// srting values for each possible watch list states
+#define X(a,b) b,                               // expands _WATCH_DEFN to name then comma
+static const char *wla_name[WLA_N] = {
+    _WATCH_DEFN
+};
+#undef X
+
 
 // define a boolean prompt
 typedef struct {
@@ -448,30 +471,33 @@ static BoolPrompt bool_pr[N_BPR] = {
     {1, {200, R2Y(0),  90, PR_H}, {290, R2Y(0), 50,  PR_H}, false, "WSJT-X?", "No", "Yes", NOMATE},
 
 
-    {1, {15, R2Y(1),  70, PR_H},  {85, R2Y(1), 50, PR_H}, false, "watch:", "Off", NULL, DXWLISTB_BPR},
-    {1, {15, R2Y(1),  70, PR_H},  {85, R2Y(1), 50, PR_H}, false, NULL, "On", "Only", DXWLISTA_BPR},
-                                                // 3x entangled: Off: FX  On: TF  Only: TT
+    {1, {15, R2Y(1),  70, PR_H},  {85, R2Y(1), 50, PR_H}, false, "watch",
+                                                        wla_name[WLA_OFF], wla_name[WLA_NOT], DXWLISTB_BPR},
+    {1, {15, R2Y(1),  70, PR_H},  {85, R2Y(1), 50, PR_H}, false, NULL,
+                                                        wla_name[WLA_FLAG], wla_name[WLA_ONLY], DXWLISTA_BPR},
+                                             // 4x entangled: FF -> TF -> FT -> TT -> ...
+
 
     // three overlapping sets, visibility depends on DXCLCMDPGA/B_BPR
 
-    {1, {350, R2Y(1),   35, PR_H}, {385, R2Y(1), 20, PR_H},  false, "Pg", "1", NULL, DXCLCMDPGB_BPR},
-    {1, {350, R2Y(1),   35, PR_H}, {385, R2Y(1), 20, PR_H},  false, "Pg", "2", "3", DXCLCMDPGA_BPR},
-                                             // 3x entangled: page 1: FX  2: TF  3: TT
+    {1, {350, R2Y(2),   35, PR_H}, {385, R2Y(2), 20, PR_H},  false, "Pg", "1", NULL, DXCLCMDPGB_BPR},
+    {1, {350, R2Y(2),   35, PR_H}, {385, R2Y(2), 20, PR_H},  false, "Pg", "2", "3", DXCLCMDPGA_BPR},
+                                             // 3x entangled: FX -> TF -> TT ...
 
-    {1, {350, R2Y(2),   0, PR_H},  {350, R2Y(2), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
     {1, {350, R2Y(3),   0, PR_H},  {350, R2Y(3), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
     {1, {350, R2Y(4),   0, PR_H},  {350, R2Y(4), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
     {1, {350, R2Y(5),   0, PR_H},  {350, R2Y(5), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
+    {1, {350, R2Y(6),   0, PR_H},  {350, R2Y(6), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
 
-    {1, {350, R2Y(2),   0, PR_H},  {350, R2Y(2), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
     {1, {350, R2Y(3),   0, PR_H},  {350, R2Y(3), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
     {1, {350, R2Y(4),   0, PR_H},  {350, R2Y(4), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
     {1, {350, R2Y(5),   0, PR_H},  {350, R2Y(5), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
+    {1, {350, R2Y(6),   0, PR_H},  {350, R2Y(6), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
 
-    {1, {350, R2Y(2),   0, PR_H},  {350, R2Y(2), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
     {1, {350, R2Y(3),   0, PR_H},  {350, R2Y(3), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
     {1, {350, R2Y(4),   0, PR_H},  {350, R2Y(4), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
     {1, {350, R2Y(5),   0, PR_H},  {350, R2Y(5), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
+    {1, {350, R2Y(6),   0, PR_H},  {350, R2Y(6), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
 
 
     // "page 3" -- index 2
@@ -485,10 +511,24 @@ static BoolPrompt bool_pr[N_BPR] = {
     {2, {10,  R2Y(4),  90, PR_H},  {100, R2Y(4), 300, PR_H}, false, "ADIF?", "No", NULL, NOMATE},
 
 
-    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  50, PR_H}, false, "S/P/A watch:", "Off", NULL,
-                                                                                        SPOTAWLISTB_BPR},
-    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  50, PR_H}, false, NULL, "On", "Only", SPOTAWLISTA_BPR},
-                                                // 3x entangled: Off: FX  On: TF  Only: TT
+
+    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  50, PR_H}, false, "ADIF watch",
+                                                    wla_name[WLA_OFF], wla_name[WLA_NOT], ADIFWLISTB_BPR},
+    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  50, PR_H}, false, NULL,
+                                                    wla_name[WLA_FLAG], wla_name[WLA_ONLY], ADIFWLISTA_BPR},
+                                                // 4x entangled: FF -> TF -> FT -> TT -> ...
+
+    {2, {10,  R2Y(6), 150, PR_H},  {160, R2Y(6),  50, PR_H}, false, "POTA watch",
+                                                    wla_name[WLA_OFF], wla_name[WLA_NOT], POTAWLISTB_BPR},
+    {2, {10,  R2Y(6), 150, PR_H},  {160, R2Y(6),  50, PR_H}, false, NULL,
+                                                    wla_name[WLA_FLAG], wla_name[WLA_ONLY], POTAWLISTA_BPR},
+                                                // 4x entangled: FF -> TF -> FT -> TT -> ...
+
+    {2, {10,  R2Y(7), 150, PR_H},  {160, R2Y(7),  50, PR_H}, false, "SOTA watch",
+                                                    wla_name[WLA_OFF], wla_name[WLA_NOT], SOTAWLISTB_BPR},
+    {2, {10,  R2Y(7), 150, PR_H},  {160, R2Y(7),  50, PR_H}, false, NULL,
+                                                    wla_name[WLA_FLAG], wla_name[WLA_ONLY], SOTAWLISTA_BPR},
+                                                // 4x entangled: FF -> TF -> FT -> TT -> ...
 
 
     // "page 4" -- index 3
@@ -498,7 +538,7 @@ static BoolPrompt bool_pr[N_BPR] = {
 
     {3, {100, R2Y(4), 120, PR_H},  {250, R2Y(4),  120, PR_H}, false, "KX3?", "No", NULL, KX3BAUD_BPR},
     {3, {250, R2Y(4),   0, PR_H},  {250, R2Y(4),  120, PR_H}, false, NULL, "4800 bps", "38400 bps",KX3ON_BPR},
-                                                // 3x entangled: Off: FX   4800: TF   38400: TT
+                                             // 3x entangled: FX -> TF -> TT ...
 
 
 
@@ -509,7 +549,7 @@ static BoolPrompt bool_pr[N_BPR] = {
                                                                                         DATEFMT_DMYYMD_BPR},
     {4, {150, R2Y(0), 170, PR_H},  {180, R2Y(0), 150, PR_H}, false, NULL, "Day Mon Year", "Year Mon Day",
                                                                                         DATEFMT_MDY_BPR},
-                                                // 3x entangled: MDY: FX   DMY: TF  YMD:  TT
+                                             // 3x entangled: FX -> TF -> TT ...
 
 
 
@@ -536,41 +576,51 @@ static BoolPrompt bool_pr[N_BPR] = {
                                         lbl_names[LBL_NONE], lbl_names[LBL_DOT], SPOTLBLB_BPR},
     {4, {150, R2Y(4), 170, PR_H},  {180, R2Y(4), 150, PR_H}, false, NULL,
                                         lbl_names[LBL_PREFIX], lbl_names[LBL_CALL], SPOTLBLA_BPR},
-                                                // 4x entangled: No: FF Dot: TF  Prefix: FT  Call: TT
+                                                // 4x entangled: FF -> TF -> FT -> TT -> ...
 
 
     {4, {400, R2Y(4), 170, PR_H},  {570, R2Y(4), 150, PR_H}, false, "Spot paths?", "No", NULL,SPOTPSZB_BPR},
     {4, {540, R2Y(4), 170, PR_H},  {570, R2Y(4), 150, PR_H}, false, NULL, "Thin", "Wide", SPOTPSZA_BPR},
-                                                // 3x entangled: No: FX  Thin: TF  Wide: TT
+                                             // 3x entangled: FX -> TF -> TT ...
 
 
     {4, {10,  R2Y(5), 170, PR_H},  {180, R2Y(5), 150, PR_H}, false, "Scroll direction?",
                                                                         "Bottom-Up", "Top-Down", NOMATE},
 
 
-    {4, {400, R2Y(5), 170, PR_H},  {570, R2Y(5), 150, PR_H}, false, "Scroll length?", "0","10",SCROLLBIG_BPR},
-    {4, {540, R2Y(5), 170, PR_H},  {570, R2Y(5), 150, PR_H}, false, NULL, "25", "50", SCROLLLEN_BPR},
-                                                // 4x entangled:  0: FF  10: TF   25: FT  50: TT
-                                                // FF -> TF -> FT -> TT -> ...
-                                                // N.B. match NSCROLL_X
+    {4, {400, R2Y(5), 170, PR_H},  {570, R2Y(5), 150, PR_H}, false, "Gray display?", "No", NULL, GRAYB_BPR},
+    {4, {540, R2Y(5), 170, PR_H},  {570, R2Y(5), 150, PR_H}, false, NULL, "All", "Map", GRAYA_BPR},
+                                                // 3x entangled: FX -> TF -> TT ...
+                                                // N.B. names must match getGrayDisplay();
 
 
 
     {4, {10,  R2Y(6), 170, PR_H}, {180, R2Y(6), 150, PR_H}, false, "Pane rotation?",
                                                 "5 seconds", "10 seconds", PANE_ROTPB_BPR},
     {4, {10,  R2Y(6), 170, PR_H}, {180, R2Y(6), 150, PR_H}, false, NULL,
-                                                "20 seconds", "40 seconds", PANE_ROTPA_BPR},
-                                                // 4x entangled:  5: FF  10: TF   20: FT  40: TT
-                                                // FF -> TF -> FT -> TT -> ...
+                                                "30 seconds", "60 seconds", PANE_ROTPA_BPR},
+                                                // 4x entangled: FF -> TF -> FT -> TT -> ...
+                                                // N.B. insure strings match PANEROTP_X
 
 
-    {4, {400, R2Y(6), 170, PR_H}, {570, R2Y(6), 150, PR_H}, false, "Show public IP?", "No", "Yes", NOMATE},
+
+    {4, {400,  R2Y(6), 170, PR_H}, {570, R2Y(6), 150, PR_H}, false, "Map rotation?",
+                                                "20 seconds", "60 seconds", MAP_ROTPB_BPR},
+    {4, {540,  R2Y(6), 170, PR_H}, {570, R2Y(6), 150, PR_H}, false, NULL,
+                                                "90 seconds", "120 seconds", MAP_ROTPA_BPR},
+                                                // 4x entangled: FF -> TF -> FT -> TT -> ...
+                                                // N.B. insure strings match MAPROTP_X
 
 
-    {4, {10,  R2Y(7), 170, PR_H}, {180, R2Y(7), 150, PR_H}, false, "Full scrn web?", "No", "Yes", NOMATE},
+    {4, {10, R2Y(7), 170, PR_H}, {180, R2Y(7), 150, PR_H}, false, "Show public IP?", "No", "Yes", NOMATE},
+
 
     {4, {400, R2Y(7), 170, PR_H}, {570, R2Y(7), 150, PR_H}, false, "Full scrn direct?", "No", "Yes", NOMATE},
                                                 // N.B. state box must be wide enough for "Won't fit"
+
+
+
+    {4, {10,  R2Y(8), 170, PR_H}, {180, R2Y(8), 150, PR_H}, false, "Full scrn web?", "No", "Yes", NOMATE},
 
 
 
@@ -584,6 +634,25 @@ static BoolPrompt bool_pr[N_BPR] = {
 
 
 };
+
+
+/* handy access to watch list info.
+ * N.B. must be in same order as WatchListId
+ */
+typedef struct {
+    char *wlist;                                // one of the *_list arrays used in the setup string prompts
+    int len;                                    // length of "
+    const char *name;                           // brief name
+    BPIds a_bpr, b_bpr;                         // entangle control pair
+    NV_Name nv;                                 // NV name
+} WLInfo;
+static WLInfo wl_info[WLID_N] = {
+    {dx_wlist,   NV_DXWLIST_LEN,   "DX",   DXWLISTA_BPR, DXWLISTB_BPR, NV_DXWLIST},
+    {pota_wlist, NV_POTAWLIST_LEN, "POTA", POTAWLISTA_BPR, POTAWLISTB_BPR, NV_POTAWLIST},
+    {sota_wlist, NV_SOTAWLIST_LEN, "SOTA", SOTAWLISTA_BPR, SOTAWLISTB_BPR, NV_SOTAWLIST},
+    {adif_wlist, NV_ADIFWLIST_LEN, "ADIF", ADIFWLISTA_BPR, ADIFWLISTB_BPR, NV_ADIFWLIST},
+};
+
 
 
 // store info about a given string or bool focus field
@@ -616,11 +685,11 @@ static int cur_page;                            // 0-based 0 .. N_PAGES-1
 
 // dx cluster layout
 #define SPIDER_TX       480                     // title x
-#define SPIDER_TY       (R2Y(2) - PR_D)         // title y
+#define SPIDER_TY       (R2Y(2) + PR_A + 2)     // title y
 #define SPIDER_BX       345                     // border x
 #define SPIDER_BY       (SPIDER_TY - PR_A - 1)  // border y
 #define SPIDER_BRX      799                     // border right x
-#define SPIDER_BBY      (R2Y(6))                // border bottom y
+#define SPIDER_BBY      (R2Y(6) + PR_H + 1)     // border bottom y
 
 /* color selector information.
  * since mouse is required it does not participate in tabbing or Focus.
@@ -767,13 +836,13 @@ static const SBox csel_ctl_b = {CSEL_SCX, CSEL_SCY, CSEL_SCW+CSEL_VDX+CSEL_NW, 3
 
 
 // save/load/done controls
-static const SBox ctsl_save1_b = {CTSL_SA_X, CTSL_Y, CTSL_SA_W, KB_SPC_H};
-static const SBox ctsl_save2_b = {CTSL_SB_X, CTSL_Y, CTSL_SB_W, KB_SPC_H};
-static const SBox ctsl_load1_b = {CTSL_LA_X, CTSL_Y, CTSL_LA_W, KB_SPC_H};
-static const SBox ctsl_load2_b = {CTSL_LB_X, CTSL_Y, CTSL_LB_W, KB_SPC_H};
-static const SBox ctsl_loadp_b = {CTSL_LP_X, CTSL_Y, CTSL_LP_W, KB_SPC_H};
-static const SBox ctsl_loadd_b = {CTSL_LD_X, CTSL_Y, CTSL_LD_W, KB_SPC_H};
-static const SBox ctsl_done_b  = {CTSL_DO_X, CTSL_Y, CTSL_DO_W, KB_SPC_H};
+static const SBox ctsl_save1_b = {CTSL_SA_X, CTSL_Y, CTSL_SA_W, CTSL_H};
+static const SBox ctsl_save2_b = {CTSL_SB_X, CTSL_Y, CTSL_SB_W, CTSL_H};
+static const SBox ctsl_load1_b = {CTSL_LA_X, CTSL_Y, CTSL_LA_W, CTSL_H};
+static const SBox ctsl_load2_b = {CTSL_LB_X, CTSL_Y, CTSL_LB_W, CTSL_H};
+static const SBox ctsl_loadp_b = {CTSL_LP_X, CTSL_Y, CTSL_LP_W, CTSL_H};
+static const SBox ctsl_loadd_b = {CTSL_LD_X, CTSL_Y, CTSL_LD_W, CTSL_H};
+static const SBox ctsl_done_b  = {CTSL_DO_X, CTSL_Y, CTSL_DO_W, CTSL_H};
 
 
 // virtual qwerty keyboard
@@ -820,85 +889,113 @@ static bool ll_edited;
 static void eraseSPValue (const StringPrompt *sp);
 static void drawSPValue (StringPrompt *sp);
 
+
+/* set GRAYA_BPR and GRAYB_BPR to the given setting.
+ */
+static void setGrayDisplay (GrayDpy_t g)
+{
+    switch (g) {
+    case GRAY_OFF:
+        bool_pr[GRAYA_BPR].state = false;
+        bool_pr[GRAYB_BPR].state = false;
+        break;
+    case GRAY_ALL:
+        bool_pr[GRAYA_BPR].state = true;
+        bool_pr[GRAYB_BPR].state = false;
+        break;
+    case GRAY_MAP:
+        bool_pr[GRAYA_BPR].state = true;
+        bool_pr[GRAYB_BPR].state = true;
+        break;
+    }
+}
+
+
 /* return the value string of the given entangled pair.
  * N.B. B must be the forward ent_mate of A
  * 3x entangled: a: FX  b: TF  c: TT
  * 4x entangled: a: FF  b: TF  c: FT  d: TT
  */
-static const char * getEntangledValue (const BoolPrompt *A, const BoolPrompt *B)
+static const char *getEntangledValue (BPIds a_bpr, BPIds b_bpr)
 {
-    if (B != &bool_pr[A->ent_mate] || A != &bool_pr[B->ent_mate])
-        fatalError (_FX("getting bogus entangled pair %s %s\n"), A->p_str, B->p_str);
+    const BoolPrompt &A = bool_pr[a_bpr];
+    const BoolPrompt &B = bool_pr[b_bpr];
+
+    if (a_bpr != B.ent_mate || b_bpr != A.ent_mate)
+        fatalError ("getEntangledValue %s %s", A.p_str, B.p_str);
 
     const char *s; 
 
-    if (A->t_str) {
+    if (A.t_str) {
         // 4 states
-        if (B->state)
-            s = A->state ? B->t_str : B->f_str;
+        if (B.state)
+            s = A.state ? B.t_str : B.f_str;
         else
-            s = A->state ? A->t_str : A->f_str;
+            s = A.state ? A.t_str : A.f_str;
     } else {
         // 3 states
-        if (A->state)
-            s = B->state ? B->t_str : B->f_str;
+        if (A.state)
+            s = B.state ? B.t_str : B.f_str;
         else
-            s = A->f_str;
+            s = A.f_str;
     }
 
     return (s);
 }
 
 
-/* set the state of the entangled pair to represent the given value.
+/* set the state of the entangled bool_pr[] pair to represent the given value.
  + N.B. fatal if value is not one of the t/f_str
  * 3x entangled: a: FX  b: TF  c: TT
  * 4x entangled: a: FF  b: TF  c: FT  d: TT
  */
-static void setEntangledValue (BoolPrompt *A, BoolPrompt *B, const char *value)
+static void setEntangledValue (BPIds a_bpr, BPIds b_bpr, const char *value)
 {
-    if (B != &bool_pr[A->ent_mate] || A != &bool_pr[B->ent_mate])
-        fatalError (_FX("setting bogus entangled pair %s %s to %s\n"), A->p_str, B->p_str, value);
+    BoolPrompt &A = bool_pr[a_bpr];
+    BoolPrompt &B = bool_pr[b_bpr];
 
-    if (A->t_str) {
+    if (a_bpr != B.ent_mate || b_bpr != A.ent_mate)
+        fatalError ("setEntangledValue %s %s", A.p_str, B.p_str);
+
+    if (A.t_str) {
         // 4 states
-        if (strcmp (A->f_str, value) == 0) {
-            A->state = false;
-            B->state = false;
-        } else if (strcmp (A->t_str, value) == 0) {
-            A->state = true;
-            B->state = false;
-        } else if (strcmp (B->f_str, value) == 0) {
-            A->state = false;
-            B->state = true;
-        } else if (strcmp (B->t_str, value) == 0) {
-            A->state = true;
-            B->state = true;
+        if (strcmp (A.f_str, value) == 0) {
+            A.state = false;
+            B.state = false;
+        } else if (strcmp (A.t_str, value) == 0) {
+            A.state = true;
+            B.state = false;
+        } else if (strcmp (B.f_str, value) == 0) {
+            A.state = false;
+            B.state = true;
+        } else if (strcmp (B.t_str, value) == 0) {
+            A.state = true;
+            B.state = true;
         } else
-            fatalError (_FX("unknown 4x entangle value %s"), value);
+            fatalError ("unknown 4x entangle value %s", value);
     } else {
         // 3 states
-        if (strcmp (A->f_str, value) == 0) {
-            A->state = false;
-            B->state = false;
-        } else if (strcmp (B->f_str, value) == 0) {
-            A->state = true;
-            B->state = false;
-        } else if (strcmp (B->t_str, value) == 0) {
-            A->state = true;
-            B->state = true;
+        if (strcmp (A.f_str, value) == 0) {
+            A.state = false;
+            B.state = false;
+        } else if (strcmp (B.f_str, value) == 0) {
+            A.state = true;
+            B.state = false;
+        } else if (strcmp (B.t_str, value) == 0) {
+            A.state = true;
+            B.state = true;
         } else
-            fatalError (_FX("unknown 3x entangle value %s"), value);
+            fatalError ("unknown 3x entangle value %s", value);
     }
 }
 
-/* same as above but allows integeter value
+/* handy same as above but allows integeter value
  */
-static void setEntangledValue (BoolPrompt *A, BoolPrompt *B, int value)
+static void setEntangledValue (BPIds a_bpr, BPIds b_bpr, int value)
 {
     char buf[20];
     snprintf (buf, sizeof(buf), "%d", value);
-    setEntangledValue (A, B, buf);
+    setEntangledValue (a_bpr, b_bpr, buf);
 }
 
 /* log all string and bool settings
@@ -906,45 +1003,53 @@ static void setEntangledValue (BoolPrompt *A, BoolPrompt *B, int value)
 static void logAllPrompts(void)
 {
     // strings
-    for (StringPrompt *sp = string_pr; sp < &string_pr[N_SPR]; sp++)
+    for (int i = 0; i < N_SPR; i++) {
+        StringPrompt *sp = &string_pr[i];
         if (sp->p_str && sp->v_str != wifi_ssid && sp->v_str != wifi_pw)
-            Serial.printf (_FX("Setup: %s = %s\n"), sp->p_str, sp->v_str ? sp->v_str : _FX("NULL"));
+            Serial.printf ("Setup: string %3d: %s = %s\n", i, sp->p_str, sp->v_str ? sp->v_str : "NULL");
+    }
 
     // bools
     for (int i = 0; i < N_BPR; i++) {
         BoolPrompt *bp = &bool_pr[i];
         if (bp->ent_mate == i+1)                        // only print the forward-reference pair
-            Serial.printf (_FX("Setup: %s = %s\n"), bp->p_str, getEntangledValue (bp, &bool_pr[i+1]));
+            Serial.printf ("Setup:    ent %3d: %s = %s\n", i, bp->p_str,
+                                        getEntangledValue ((BPIds)i, (BPIds)(i+1)));
         else if (bp->ent_mate == NOMATE && bp->p_str)
-            Serial.printf (_FX("Setup: %s = %s\n"), bp->p_str,
-                bp->state ? (bp->t_str ? bp->t_str : _FX("T-NULL")) : (bp->f_str ? bp->f_str :_FX("F-NULL")));
+            Serial.printf ("Setup:   bool %3d: %s = %s\n", i, bp->p_str,
+                bp->state ? (bp->t_str ? bp->t_str : "T-NULL") : (bp->f_str ? bp->f_str :"F-NULL"));
     }
 
     // on/off times
     uint16_t onoff[NV_DAILYONOFF_LEN];
     NVReadString (NV_DAILYONOFF, (char*)onoff);
     char oostr[40+6*DAYSPERWEEK];
-    size_t sl = snprintf (oostr, sizeof(oostr), _FX("Setup: DAILYONOFF =  On"));
+    size_t sl = snprintf (oostr, sizeof(oostr), "Setup: DAILYONOFF =  On");
     for (int i = 0; i < DAYSPERWEEK; i++) {
         uint16_t on = onoff[i];
-        sl += snprintf (oostr+sl, sizeof(oostr)-sl, _FX(" %02u:%02u"), on/60, on%60);
+        sl += snprintf (oostr+sl, sizeof(oostr)-sl, " %02u:%02u", on/60, on%60);
     }
     Serial.println (oostr);
-    sl = snprintf (oostr, sizeof(oostr), _FX("Setup: DAILYONOFF = Off"));
+    sl = snprintf (oostr, sizeof(oostr), "Setup: DAILYONOFF = Off");
     for (int i = 0; i < DAYSPERWEEK; i++) {
         uint16_t off = onoff[i+DAYSPERWEEK];
-        sl += snprintf (oostr+sl, sizeof(oostr)-sl, _FX(" %02u:%02u"), off/60, off%60);
+        sl += snprintf (oostr+sl, sizeof(oostr)-sl, " %02u:%02u", off/60, off%60);
     }
     Serial.println (oostr);
 
     // cluster commands
     char clcmdstr[40+NV_DXCLCMD_LEN];
     for (int i = 0; i < N_DXCLCMDS; i++) {
-        snprintf (clcmdstr, sizeof(clcmdstr), _FX("Setup: DXCLCMD%d %s: %s"), i,
+        snprintf (clcmdstr, sizeof(clcmdstr), "Setup: DXCLCMD%d %s: %s", i,
                 bool_pr[DXCLCMD0_BPR+i].state ? " on" : "off", string_pr[DXCLCMD0_SPR+i].v_str);
         Serial.println (clcmdstr);
     }
-    Serial.printf (_FX("Setup: watch_list: %s\n"), dx_wlist);
+
+    // watch lists
+    Serial.printf ("Setup:   dx_wlist: %s\n", dx_wlist);
+    Serial.printf ("Setup: pota_wlist: %s\n", pota_wlist);
+    Serial.printf ("Setup: sota_wlist: %s\n", sota_wlist);
+    Serial.printf ("Setup: adif_wlist: %s\n", adif_wlist);
 }
 
 /* prepare the shadowed prompts
@@ -1008,69 +1113,18 @@ static void freeShadowedParams()
     free (string_pr[CENTERLNG_SPR].v_str);
 }
 
-/* set the given StringPrompt to a brief error message
- */
-static void flagErrField (const StringPrompt *sp)
-{
-    eraseSPValue (sp);
-    tft.setTextColor (ERR_C);
-    tft.setCursor (sp->v_box.x, sp->v_box.y+sp->v_box.h-PR_D);
-    tft.print (F("Err"));
-}
-
 /* format latitude into s[].
  */
 void formatLat (float lat_d, char s[], int s_len)
 {
-    snprintf (s, s_len, _FX("%.3f%c"), fabsf(lat_d), lat_d < 0 ? 'S' : 'N');
+    snprintf (s, s_len, "%.3f%c", fabsf(lat_d), lat_d < 0 ? 'S' : 'N');
 }
 
 /* format longitude into s[].
  */
 void formatLng (float lng_d, char s[], int s_len)
 {
-    snprintf (s, s_len, _FX("%.3f%c"), fabsf(lng_d), lng_d < 0 ? 'W' : 'E');
-}
-
-/* update interaction if sp is one of LAT/LNG/GRID_SPR.
- * also set ll_edited.
- */
-static void checkLLGEdit(const StringPrompt *sp)
-{
-    if (sp == &string_pr[LAT_SPR] || sp == &string_pr[LNG_SPR]) {
-
-        // convert to grid if possible
-        LatLong ll;
-        if (latSpecIsValid (string_pr[LAT_SPR].v_str, ll.lat_d)
-                        && lngSpecIsValid (string_pr[LNG_SPR].v_str, ll.lng_d)) {
-            normalizeLL (ll);
-            ll2maidenhead (string_pr[GRID_SPR].v_str, ll);
-            eraseSPValue (&string_pr[GRID_SPR]);
-            drawSPValue (&string_pr[GRID_SPR]);
-        } else {
-            flagErrField (&string_pr[GRID_SPR]);
-        }
-
-        ll_edited = true;
-
-    } else if (sp == &string_pr[GRID_SPR]) {
-
-        // convert to ll if possible
-        LatLong ll;
-        if (maidenhead2ll (ll, sp->v_str)) {
-            formatLat (ll.lat_d, string_pr[LAT_SPR].v_str, string_pr[LAT_SPR].v_len);
-            eraseSPValue (&string_pr[LAT_SPR]);
-            drawSPValue (&string_pr[LAT_SPR]);
-            formatLng (ll.lng_d, string_pr[LNG_SPR].v_str, string_pr[LNG_SPR].v_len);
-            eraseSPValue (&string_pr[LNG_SPR]);
-            drawSPValue (&string_pr[LNG_SPR]);
-        } else {
-            flagErrField (&string_pr[LAT_SPR]);
-            flagErrField (&string_pr[LNG_SPR]);
-        }
-
-        ll_edited = true;
-    }
+    snprintf (s, s_len, "%.3f%c", fabsf(lng_d), lng_d < 0 ? 'W' : 'E');
 }
 
 
@@ -1098,13 +1152,13 @@ static void drawSpiderCommandsHeader()
     // labels
     tft.setTextColor (PR_C);
     tft.setCursor (SPIDER_TX, SPIDER_TY);
-    tft.print (_FX("Cluster Commands:"));
+    tft.print ("Cluster Commands:");
 }
 
 static void drawPageButton()
 {
     char buf[32];
-    snprintf (buf, sizeof(buf), _FX("< Page %d >"), cur_page+1);      // user sees 1-based
+    snprintf (buf, sizeof(buf), "< Page %d >", cur_page+1);      // user sees 1-based
     drawStringInBox (buf, page_b, false, DONE_C);
 }
 
@@ -1113,9 +1167,9 @@ static void drawPageButton()
 static void drawDoneButton(bool on)
 {
     if (cur_page == COLOR_PAGE)
-        drawStringInBox (_FX("Done"), ctsl_done_b, on, DONE_C);
+        drawStringInBox ("Done", ctsl_done_b, on, DONE_C);
     else
-        drawStringInBox (_FX("Done"), done_b, on, DONE_C);
+        drawStringInBox ("Done", done_b, on, DONE_C);
 }
 
 
@@ -1157,7 +1211,7 @@ static bool boolIsRelevant (BoolPrompt *bp)
 
     if (bp >= &bool_pr[DXCLCMD0_BPR] && bp < &bool_pr[DXCLCMD0_BPR + N_DXCLCMDS]) {
         int pr_page = (bp - &bool_pr[DXCLCMD0_BPR])/4 + 1;
-        int cmd_page = atoi (getEntangledValue (&bool_pr[DXCLCMDPGA_BPR], &bool_pr[DXCLCMDPGB_BPR]));
+        int cmd_page = atoi (getEntangledValue (DXCLCMDPGA_BPR, DXCLCMDPGB_BPR));
         if (cmd_page != pr_page || !bool_pr[CLUSTER_BPR].state || bool_pr[CLISWSJTX_BPR].state)
             return (false);
     }
@@ -1234,7 +1288,7 @@ static bool stringIsRelevant (StringPrompt *sp)
 
     if (sp >= &string_pr[DXCLCMD0_SPR] && sp < &string_pr[DXCLCMD0_SPR + N_DXCLCMDS]) {
         int pr_page = (sp - &string_pr[DXCLCMD0_SPR])/4 + 1;
-        int cmd_page = atoi (getEntangledValue (&bool_pr[DXCLCMDPGA_BPR], &bool_pr[DXCLCMDPGB_BPR]));
+        int cmd_page = atoi (getEntangledValue (DXCLCMDPGA_BPR, DXCLCMDPGB_BPR));
         if (cmd_page != pr_page || !bool_pr[CLUSTER_BPR].state || bool_pr[CLISWSJTX_BPR].state)
             return (false);
     }
@@ -1367,8 +1421,12 @@ static void nextTabFocus (bool backwards)
         {       &string_pr[NTPHOST_SPR], NULL},
         { NULL, &bool_pr[ADIFSET_BPR] },
         {       &string_pr[ADIFFN_SPR], NULL},
-        { NULL, &bool_pr[SPOTAWLISTA_BPR] },
-        {       &string_pr[SPOTAWL_SPR], NULL},
+        { NULL, &bool_pr[ADIFWLISTA_BPR] },
+        {       &string_pr[ADIFWL_SPR], NULL},
+        { NULL, &bool_pr[POTAWLISTA_BPR] },
+        {       &string_pr[POTAWL_SPR], NULL},
+        { NULL, &bool_pr[SOTAWLISTA_BPR] },
+        {       &string_pr[SOTAWL_SPR], NULL},
 
         // page 4
 
@@ -1397,11 +1455,12 @@ static void nextTabFocus (bool backwards)
         { NULL, &bool_pr[SPOTLBLA_BPR] },
         { NULL, &bool_pr[SPOTPSZA_BPR] },
         { NULL, &bool_pr[SCROLLDIR_BPR] },
-        { NULL, &bool_pr[SCROLLLEN_BPR] },
+        { NULL, &bool_pr[GRAYA_BPR] },
         { NULL, &bool_pr[PANE_ROTPA_BPR] },
+        { NULL, &bool_pr[MAP_ROTPA_BPR] },
         { NULL, &bool_pr[SHOWPIP_BPR] },
-        { NULL, &bool_pr[WEB_FULLSCRN_BPR] },
         { NULL, &bool_pr[X11_FULLSCRN_BPR] },
+        { NULL, &bool_pr[WEB_FULLSCRN_BPR] },
     };
     #define N_TAB_FIELDS    NARRAY(tab_fields)
 
@@ -1411,7 +1470,7 @@ static void nextTabFocus (bool backwards)
         if (memcmp (&cur_focus[cur_page], &tab_fields[tab_pos], sizeof(Focus)) == 0)
             break;
     if (tab_pos == N_TAB_FIELDS) {
-        Serial.printf (_FX("cur_focus[%d] not found\n"), cur_page);
+        Serial.printf ("cur_focus[%d] not found\n", cur_page);
         return;
     }
 
@@ -1434,7 +1493,7 @@ static void nextTabFocus (bool backwards)
         }
     }
 
-    Serial.printf (_FX("new focus not found\n"));
+    Serial.printf ("new focus not found\n");
 }
 
 /* set focus on cur_page to the given string or bool prompt, opposite assumed to be NULL.
@@ -1594,7 +1653,7 @@ static void drawSPValue (StringPrompt *sp)
     if (vl1 < vl0) {
         // string was shortened to fit, show cursor under last character
         eraseSPValue (sp);                              // start over
-        tft.printf (_FX("%.*s"), vl1, sp->v_str);       // show chars that fit
+        tft.printf ("%.*s", vl1, sp->v_str);       // show chars that fit
     } else {
         // more room available, cursor follows string
         tft.print(sp->v_str);
@@ -1709,6 +1768,75 @@ static void eraseBPPromptState (BoolPrompt *bp)
 }
 
 
+/* show msg in the given field, or default if not supplied.
+ * if restore the after showing the message, dwell a bit then restore the field.
+ */
+static void flagErrField (StringPrompt *sp, bool restore = false, const char *msg = NULL)
+{
+    // erase and prep
+    eraseSPValue (sp);
+    tft.setTextColor (ERR_C);
+    tft.setCursor (sp->v_box.x, sp->v_box.y+sp->v_box.h-PR_D);
+
+    // show
+    if (!msg)
+        msg = "Err";
+    tft.print (msg);
+
+    if (restore) {
+
+        // dwell then restore value with handy cursor placed to edit
+        wdDelay(ERRDWELL_MS);
+        eraseCursor();
+        eraseSPValue (sp);
+        drawSPValue (sp);
+        setFocus (sp, NULL);
+        drawCursor();
+
+    }
+}
+
+/* update interaction if sp is one of LAT/LNG/GRID_SPR.
+ * also set ll_edited.
+ */
+static void checkLLGEdit(const StringPrompt *sp)
+{
+    if (sp == &string_pr[LAT_SPR] || sp == &string_pr[LNG_SPR]) {
+
+        // convert to grid if possible
+        LatLong ll;
+        if (latSpecIsValid (string_pr[LAT_SPR].v_str, ll.lat_d)
+                        && lngSpecIsValid (string_pr[LNG_SPR].v_str, ll.lng_d)) {
+            normalizeLL (ll);
+            ll2maidenhead (string_pr[GRID_SPR].v_str, ll);
+            eraseSPValue (&string_pr[GRID_SPR]);
+            drawSPValue (&string_pr[GRID_SPR]);
+        } else {
+            flagErrField (&string_pr[GRID_SPR]);
+        }
+
+        ll_edited = true;
+
+    } else if (sp == &string_pr[GRID_SPR]) {
+
+        // convert to ll if possible
+        LatLong ll;
+        if (maidenhead2ll (ll, sp->v_str)) {
+            formatLat (ll.lat_d, string_pr[LAT_SPR].v_str, string_pr[LAT_SPR].v_len);
+            eraseSPValue (&string_pr[LAT_SPR]);
+            drawSPValue (&string_pr[LAT_SPR]);
+            formatLng (ll.lng_d, string_pr[LNG_SPR].v_str, string_pr[LNG_SPR].v_len);
+            eraseSPValue (&string_pr[LNG_SPR]);
+            drawSPValue (&string_pr[LNG_SPR]);
+        } else {
+            flagErrField (&string_pr[LAT_SPR]);
+            flagErrField (&string_pr[LNG_SPR]);
+        }
+
+        ll_edited = true;
+    }
+}
+
 /* draw the virtual keyboard
  */
 static void drawKeyboard()
@@ -1717,7 +1845,6 @@ static void drawKeyboard()
     tft.setTextColor (KF_C);
 
     for (int r = 0; r < NQR; r++) {
-        resetWatchdog();
         uint16_t y = r * KB_CHAR_H + KB_Y0 + KB_CHAR_H;
         const OneKBKey *row = qwerty[r];
         for (int c = 0; c < NQC; c++) {
@@ -1727,7 +1854,7 @@ static void drawKeyboard()
                 uint16_t x = qroff[r] + c * KB_CHAR_W;
 
                 // shifted char above left
-                tft.setCursor (x+TF_INDENT, y-KB_CHAR_H/2-F_DESCENT);
+                tft.setCursor (x+TF_INDENT, y-KB_CHAR_H/3-F_DESCENT);
                 tft.print((char)kp->shifted);
 
                 // non-shifted below right
@@ -1741,9 +1868,9 @@ static void drawKeyboard()
     }
 
     drawStringInBox ("", space_b, false, KF_C);
-    drawStringInBox (_FX("Del"), delete_b, false, DEL_C);
-    drawStringInBox (_FX("<=="), left_b, false, DEL_C);
-    drawStringInBox (_FX("==>"), right_b, false, DEL_C);
+    drawStringInBox ("Del", delete_b, false, DEL_C);
+    drawStringInBox ("<==", left_b, false, DEL_C);
+    drawStringInBox ("==>", right_b, false, DEL_C);
 }
 
 
@@ -2102,12 +2229,11 @@ static void drawCSelInitGUI()
     tft.drawRect (CSEL_SCX, CSEL_SCY+2*CSEL_SCH+2*CSEL_SCYG, CSEL_SCW, CSEL_SCH, CSEL_SCB_C);
 
     // draw prompts and set sliders from one that is set
-    resetWatchdog();
     for (int i = 0; i < N_CSPR; i++) {
         ColSelPrompt &p = csel_pr[i];
         tft.setTextColor (TX_C);
         tft.setCursor (p.p_box.x, p.p_box.y+p.p_box.h-PR_D);
-        tft.printf (_FX("%s:"), p.p_str);
+        tft.printf ("%s:", p.p_str);
         drawCSelTickBox (p);
         drawCSelDemoSwatch (p);
         drawCSelDashTickBox(p);
@@ -2118,18 +2244,18 @@ static void drawCSelInitGUI()
     // draw Save controls
     tft.setTextColor (TX_C);
     tft.setCursor (CTSL_SL_X, CTSL_Y + PR_A);
-    tft.print (_FX("Save to:"));
-    drawStringInBox (_FX(" A "), ctsl_save1_b, false, BUTTON_C);
-    drawStringInBox (_FX(" B "), ctsl_save2_b, false, BUTTON_C);
+    tft.print ("Save to:");
+    drawStringInBox (" A ", ctsl_save1_b, false, BUTTON_C);
+    drawStringInBox (" B ", ctsl_save2_b, false, BUTTON_C);
 
     // draw Load controls
     tft.setTextColor (TX_C);
     tft.setCursor (CTSL_LL_X, CTSL_Y + PR_A);
-    tft.print (_FX("Load from:"));
-    drawStringInBox (_FX(" A "), ctsl_load1_b, false, BUTTON_C);
-    drawStringInBox (_FX(" B "), ctsl_load2_b, false, BUTTON_C);
-    drawStringInBox (_FX("pskreporter"), ctsl_loadp_b, false, BUTTON_C);
-    drawStringInBox (_FX("default"), ctsl_loadd_b, false, BUTTON_C);
+    tft.print ("Load from:");
+    drawStringInBox (" A ", ctsl_load1_b, false, BUTTON_C);
+    drawStringInBox (" B ", ctsl_load2_b, false, BUTTON_C);
+    drawStringInBox ("pskreporter", ctsl_loadp_b, false, BUTTON_C);
+    drawStringInBox ("default", ctsl_loadd_b, false, BUTTON_C);
 }
 
 
@@ -2170,7 +2296,7 @@ static void loadColorTable (int tbl_i, const char *prompt, const SBox &box)
     if (!NVReadColorTable (tbl_i, r, g, b)) {
 
         // show err briefly
-        drawStringInBox (_FX("Err"), box, false, ERR_C);
+        drawStringInBox ("Err", box, false, ERR_C);
         wdDelay(ERRDWELL_MS);
         drawStringInBox (prompt, box, false, BUTTON_C);
 
@@ -2215,7 +2341,7 @@ static void loadPSKColorTable (void)
     }
 
     // ack
-    colorTableAck (_FX("pskreporter"), ctsl_loadp_b);
+    colorTableAck ("pskreporter", ctsl_loadp_b);
 
     // redraw to show done
     drawCSelInitGUI();
@@ -2233,7 +2359,7 @@ static void loadDefaultColorTable (void)
     }
 
     // ack
-    colorTableAck (_FX("default"), ctsl_loadd_b);
+    colorTableAck ("default", ctsl_loadd_b);
 
     // redraw to show done
     drawCSelInitGUI();
@@ -2303,13 +2429,13 @@ static bool handleCSelTouch (SCoord &s)
     if (!ours) {
         ours = true;
         if (inBox (s, ctsl_save1_b))
-            saveColorTable (1, _FX(" A "), ctsl_save1_b);
+            saveColorTable (1, " A ", ctsl_save1_b);
         else if (inBox (s, ctsl_save2_b))
-            saveColorTable (2, _FX(" B "), ctsl_save2_b);
+            saveColorTable (2, " B ", ctsl_save2_b);
         else if (inBox (s, ctsl_load1_b))
-            loadColorTable (1, _FX(" A "), ctsl_load1_b);
+            loadColorTable (1, " A ", ctsl_load1_b);
         else if (inBox (s, ctsl_load2_b))
-            loadColorTable (2, _FX(" B "), ctsl_load2_b);
+            loadColorTable (2, " B ", ctsl_load2_b);
         else if (inBox (s, ctsl_loadp_b))
             loadPSKColorTable();
         else if (inBox (s, ctsl_loadd_b))
@@ -2369,8 +2495,8 @@ static void drawOnOffControls()
 {
     // title
     const char *title = brDimmableOk()
-                        ? _FX("DE Daily Display On/Dim Times")
-                        : _FX("DE Daily Display On/Off Times");
+                        ? "DE Daily Display On/Dim Times"
+                        : "DE Daily Display On/Off Times";
     tft.setCursor (OO_X0+(OO_TW-getTextWidth(title))/2, OO_Y0-OO_RH-OO_TO);
     tft.setTextColor (PR_C);
     tft.print (title);
@@ -2618,7 +2744,7 @@ static bool hostOK (char *host_str, int max_len)
         return (false);
 
     // localhost?
-    if (!strcmp (host_str, _FX("localhost")))
+    if (!strcmp (host_str, "localhost"))
         return (true);
 
     // need at least one dot for TLD or exactly 3 if looks like dotted ip notation
@@ -2645,17 +2771,17 @@ static bool hostOK (char *host_str, int max_len)
  */
 static bool I2CFnOk(void)
 {
-    bool ok = strncmp (i2c_fn, _FX("/dev/"), 5) == 0 && strlen (i2c_fn) > 5;
+    bool ok = strncmp (i2c_fn, "/dev/", 5) == 0 && strlen (i2c_fn) > 5;
 
     // try to open and lock the same as Wire will do
     if (ok) {
         int fd = open (i2c_fn, O_RDWR);
         if (fd < 0) {
-            Serial.printf (_FX("I2C: %s: %s\n"), i2c_fn, strerror(errno));
+            Serial.printf ("I2C: %s: %s\n", i2c_fn, strerror(errno));
             ok = false;
         } else {
             ok = ::flock (fd, LOCK_EX|LOCK_NB) == 0;
-            Serial.printf (_FX("I2C: %s: %s\n"), i2c_fn, ok ? "ok" : strerror(errno));
+            Serial.printf ("I2C: %s: %s\n", i2c_fn, ok ? "ok" : strerror(errno));
             close (fd);
         }
     }
@@ -2680,6 +2806,11 @@ static bool validateStringPrompts (bool show_errors)
     // collect bad ids to flag
     SPIds badsids[N_SPR];
     uint8_t n_badsids = 0;
+
+    // optional error msg -- can only handle one at a time
+    char *err_msg = NULL;
+    char err_buf[100];
+    SPIds err_sid = N_SPR;
 
     // call must not be blank
     noBlanks(call_sign);
@@ -2717,21 +2848,40 @@ static bool validateStringPrompts (bool show_errors)
                 badsids[n_badsids++] = (SPIds)(DXCLCMD0_SPR+i);
         }
 
-        // watch list must not be blank if being used
-        const char *v = getEntangledValue (&bool_pr[DXWLISTA_BPR], &bool_pr[DXWLISTB_BPR]);
-        if (strcmp (v, bool_pr[DXWLISTA_BPR].f_str)) {  // not Off
-            strtrim(string_pr[DXWLIST_SPR].v_str);
-            if (strlen(string_pr[DXWLIST_SPR].v_str) == 0)
-                badsids[n_badsids++] = DXWLIST_SPR;
+        // watch list must compile successfully if being used
+        if (getWatchListState (WLID_DX, NULL) != WLA_OFF) {
+            if (!compileWatchList (WLID_DX, dx_wlist, err_buf, sizeof(err_buf))) {
+                err_msg = err_buf;
+                badsids[n_badsids++] = err_sid = DXWLIST_SPR;
+            }
         }
     }
 
-    // SPOTA watch list must not be blank if being used
-    const char *v = getEntangledValue (&bool_pr[SPOTAWLISTA_BPR], &bool_pr[SPOTAWLISTB_BPR]);
-    if (strcmp (v, bool_pr[SPOTAWLISTA_BPR].f_str)) {  // not Off
-        strtrim(string_pr[SPOTAWL_SPR].v_str);
-        if (strlen(string_pr[SPOTAWL_SPR].v_str) == 0)
-            badsids[n_badsids++] = SPOTAWL_SPR;
+    // POTA watch list must compile successfully if being used
+    if (getWatchListState (WLID_POTA, NULL) != WLA_OFF) {
+        strtrim (pota_wlist);
+        if (!compileWatchList (WLID_POTA, pota_wlist, err_buf, sizeof(err_buf))) {
+            err_msg = err_buf;
+            badsids[n_badsids++] = err_sid = POTAWL_SPR;
+        }
+    }
+
+    // SOTA watch list must compile successfully if being used
+    if (getWatchListState (WLID_SOTA, NULL) != WLA_OFF) {
+        strtrim (sota_wlist);
+        if (!compileWatchList (WLID_SOTA, sota_wlist, err_buf, sizeof(err_buf))) {
+            err_msg = err_buf;
+            badsids[n_badsids++] = err_sid = SOTAWL_SPR;
+        }
+    }
+
+    // ADIF watch list must compile successfully if being used
+    if (getWatchListState (WLID_ADIF, NULL) != WLA_OFF) {
+        strtrim (adif_wlist);
+        if (!compileWatchList (WLID_ADIF, adif_wlist, err_buf, sizeof(err_buf))) {
+            err_msg = err_buf;
+            badsids[n_badsids++] = err_sid = ADIFWL_SPR;
+        }
     }
 
     // check rig_host and port if used
@@ -2849,17 +2999,18 @@ static bool validateStringPrompts (bool show_errors)
         bool show_bad = false;
         for (int pg_offset = 0; !show_bad && pg_offset < N_PAGES; pg_offset++) {
             int tmp_page = (cur_page + pg_offset) % N_PAGES;
-            for (int badsid = 0; !show_bad && badsid < n_badsids; badsid++) {
-                StringPrompt *sp = &string_pr[badsids[badsid]];
+            for (int badsid_i = 0; !show_bad && badsid_i < n_badsids; badsid_i++) {
+                SPIds bad_sid = badsids[badsid_i];
+                StringPrompt *sp = &string_pr[bad_sid];
                 if (sp->page == tmp_page) {
 
                     // set DXCLCMDPGA/B_BPR] if this is one of the cluster commands
                     bool chg_pg1 = false;
                     if (sp >= &string_pr[DXCLCMD0_SPR] && sp < &string_pr[DXCLCMD0_SPR + N_DXCLCMDS]) {
                         int pr_page = (sp - &string_pr[DXCLCMD0_SPR])/4 + 1;
-                        int cmd_page = atoi (getEntangledValue (&bool_pr[DXCLCMDPGA_BPR], &bool_pr[DXCLCMDPGB_BPR]));
+                        int cmd_page = atoi (getEntangledValue (DXCLCMDPGA_BPR, DXCLCMDPGB_BPR));
                         if (pr_page != cmd_page) {
-                            setEntangledValue (&bool_pr[DXCLCMDPGA_BPR], &bool_pr[DXCLCMDPGB_BPR], pr_page);
+                            setEntangledValue (DXCLCMDPGA_BPR, DXCLCMDPGB_BPR, pr_page);
                             chg_pg1 = true;
                         }
                     }
@@ -2869,17 +3020,10 @@ static bool validateStringPrompts (bool show_errors)
                         changePage(tmp_page);
 
                     // flag erroneous field
-                    flagErrField (sp);
-
-                    // dwell error flag(s)
-                    wdDelay(ERRDWELL_MS);
-
-                    // restore value with handy cursor placed to edit
-                    eraseCursor();
-                    eraseSPValue (sp);
-                    drawSPValue (sp);
-                    setFocus (sp, NULL);
-                    drawCursor();
+                    if (err_msg && err_sid == bad_sid)
+                        flagErrField (sp, true, err_msg);
+                    else
+                        flagErrField (sp, true);
 
                     // flagged one
                     show_bad = true;
@@ -2887,7 +3031,7 @@ static bool validateStringPrompts (bool show_errors)
             }
         }
         if (!show_bad)
-            fatalError (_FX("%d bad fields but none found"), n_badsids);
+            fatalError ("%d bad fields but none found", n_badsids);
 
         // at least one bad field
         return (false);
@@ -3011,7 +3155,7 @@ static void initSetup()
     // init gpsd host and option
 
     if (!NVReadString (NV_GPSDHOST, gpsd_host)) {
-        strcpy (gpsd_host, _FX("localhost"));
+        strcpy (gpsd_host, "localhost");
         NVWriteString (NV_GPSDHOST, gpsd_host);
     }
     uint8_t nv_gpsd;
@@ -3052,9 +3196,9 @@ static void initSetup()
     if (!NVReadString (NV_I2CFN, i2c_fn)) {
         // supply a reasonable system-dependent default
         #if defined (_I2C_FREEBSD)
-            strcpy (i2c_fn, _FX("/dev/iic0"));
+            strcpy (i2c_fn, "/dev/iic0");
         #elif defined (_I2C_LINUX)
-            strcpy (i2c_fn, _FX("/dev/i2c-1"));
+            strcpy (i2c_fn, "/dev/i2c-1");
         #else
             i2c_fn[0] = '\0';
         #endif
@@ -3071,7 +3215,7 @@ static void initSetup()
     // init rigctld host, port and option
 
     if (!NVReadString (NV_RIGHOST, rig_host)) {
-        strcpy (rig_host, _FX("localhost"));
+        strcpy (rig_host, "localhost");
         NVWriteString (NV_RIGHOST, rig_host);
     }
     if (!NVReadUInt16(NV_RIGPORT, &rig_port)) {
@@ -3089,7 +3233,7 @@ static void initSetup()
     // init rotctld host, port and option
 
     if (!NVReadString (NV_ROTHOST, rot_host)) {
-        strcpy (rot_host, _FX("localhost"));
+        strcpy (rot_host, "localhost");
         NVWriteString (NV_ROTHOST, rot_host);
     }
     if (!NVReadUInt16(NV_ROTPORT, &rot_port)) {
@@ -3107,7 +3251,7 @@ static void initSetup()
     // init flrig host, port and option
 
     if (!NVReadString (NV_FLRIGHOST, flrig_host)) {
-        strcpy (flrig_host, _FX("localhost"));
+        strcpy (flrig_host, "localhost");
         NVWriteString (NV_FLRIGHOST, flrig_host);
     }
     if (!NVReadUInt16(NV_FLRIGPORT, &flrig_port)) {
@@ -3150,17 +3294,7 @@ static void initSetup()
     bool_pr[DXWLISTA_BPR].state = (dxwlist_mask & 1) == 1;
     bool_pr[DXWLISTB_BPR].state = (dxwlist_mask & 2) == 2;
 
-    if (!NVReadString(NV_SPOTAWLIST, spota_wlist)) {
-        memset (spota_wlist, 0, sizeof(spota_wlist));
-        NVWriteString(NV_SPOTAWLIST, spota_wlist);
-    }
-    uint8_t spotawlist_mask;
-    if (!NVReadUInt8(NV_SPOTAWLISTMASK, &spotawlist_mask)) {
-        spotawlist_mask = 0;
-        NVWriteUInt8(NV_SPOTAWLISTMASK, spotawlist_mask);
-    }
-    bool_pr[SPOTAWLISTA_BPR].state = (spotawlist_mask & 1) == 1;
-    bool_pr[SPOTAWLISTB_BPR].state = (spotawlist_mask & 2) == 2;
+
 
     if (!NVReadString(NV_DXCMD0, dxcl_cmds[0])) {
         memset (dxcl_cmds[0], 0, sizeof(dxcl_cmds[0]));
@@ -3214,7 +3348,7 @@ static void initSetup()
     uint8_t nv_wsjt;
     if (!NVReadUInt8 (NV_WSJT_DX, &nv_wsjt)) {
         // check host for possible backwards compat
-        if (strcasecmp(dx_host,_FX("WSJT-X")) == 0 || strcasecmp(dx_host,_FX("JTDX")) == 0) {
+        if (strcasecmp(dx_host,"WSJT-X") == 0 || strcasecmp(dx_host,"JTDX") == 0) {
             nv_wsjt = 1;
             memset (dx_host, 0, sizeof(dx_host));
             NVWriteString(NV_DXHOST, dx_host);
@@ -3230,6 +3364,50 @@ static void initSetup()
         NVWriteUInt8 (NV_USEDXCLUSTER, nv_dx);
     }
     bool_pr[CLUSTER_BPR].state = (nv_dx != 0);
+
+
+
+    // init watch lists
+
+    if (!NVReadString(NV_POTAWLIST, pota_wlist)) {
+        memset (pota_wlist, 0, sizeof(pota_wlist));
+        NVWriteString(NV_POTAWLIST, pota_wlist);
+    }
+    uint8_t potawlist_mask;
+    if (!NVReadUInt8(NV_POTAWLISTMASK, &potawlist_mask)) {
+        potawlist_mask = 0;
+        NVWriteUInt8(NV_POTAWLISTMASK, potawlist_mask);
+    }
+    bool_pr[POTAWLISTA_BPR].state = (potawlist_mask & 1) == 1;
+    bool_pr[POTAWLISTB_BPR].state = (potawlist_mask & 2) == 2;
+
+
+    if (!NVReadString(NV_SOTAWLIST, sota_wlist)) {
+        memset (sota_wlist, 0, sizeof(sota_wlist));
+        NVWriteString(NV_SOTAWLIST, sota_wlist);
+    }
+    uint8_t sotawlist_mask;
+    if (!NVReadUInt8(NV_SOTAWLISTMASK, &sotawlist_mask)) {
+        sotawlist_mask = 0;
+        NVWriteUInt8(NV_SOTAWLISTMASK, sotawlist_mask);
+    }
+    bool_pr[SOTAWLISTA_BPR].state = (sotawlist_mask & 1) == 1;
+    bool_pr[SOTAWLISTB_BPR].state = (sotawlist_mask & 2) == 2;
+
+
+    if (!NVReadString(NV_ADIFWLIST, adif_wlist)) {
+        memset (adif_wlist, 0, sizeof(adif_wlist));
+        NVWriteString(NV_ADIFWLIST, adif_wlist);
+    }
+    uint8_t adifwlist_mask;
+    if (!NVReadUInt8(NV_ADIFWLISTMASK, &adifwlist_mask)) {
+        adifwlist_mask = 0;
+        NVWriteUInt8(NV_ADIFWLISTMASK, adifwlist_mask);
+    }
+    bool_pr[ADIFWLISTA_BPR].state = (adifwlist_mask & 1) == 1;
+    bool_pr[ADIFWLISTB_BPR].state = (adifwlist_mask & 2) == 2;
+
+
 
     uint8_t spotops;
     if (!NVReadUInt8 (NV_MAPSPOTS, &spotops)) {
@@ -3334,10 +3512,10 @@ static void initSetup()
     uint16_t x11flags;
     int dspw, dsph;
     tft.getScreenSize (&dspw, &dsph);
-    Serial.printf (_FX("Display is %d x %d\n"), dspw, dsph);
-    Serial.printf (_FX("Built for %d x %d\n"), BUILD_W, BUILD_H);
+    Serial.printf ("Display is %d x %d\n", dspw, dsph);
+    Serial.printf ("Built for %d x %d\n", BUILD_W, BUILD_H);
     if (NVReadUInt16 (NV_X11FLAGS, &x11flags)) {
-        Serial.printf (_FX("x11flags found 0x%02X\n"), x11flags);
+        Serial.printf ("x11flags found 0x%02X\n", x11flags);
         bool_pr[X11_FULLSCRN_BPR].state = (x11flags & X11BIT_FULLSCREEN) == X11BIT_FULLSCREEN;
         tft.X11OptionsEngageNow(getX11FullScreen());
     } else {
@@ -3499,39 +3677,11 @@ static void initSetup()
     bool_pr[WEB_FULLSCRN_BPR].state = (webfs != 0);
 
 
-    uint8_t scroll_len;
-    if (!NVReadUInt8 (NV_SCROLLLEN, &scroll_len)) {
-        scroll_len = NSCROLL_C;
-        NVWriteUInt8 (NV_SCROLLLEN, scroll_len);
-    }
-
-    // entangled: 0: FF  10: TF   25: TT  50: FT
-    if (scroll_len < NSCROLL_B) {
-        // NSCROLL_A
-        bool_pr[SCROLLLEN_BPR].state = false;
-        bool_pr[SCROLLBIG_BPR].state = false;
-    } else if (scroll_len < NSCROLL_C) {
-        // NSCROLL_B
-        bool_pr[SCROLLLEN_BPR].state = true;
-        bool_pr[SCROLLBIG_BPR].state = false;
-    } else if (scroll_len < NSCROLL_D) {
-        // NSCROLL_C
-        bool_pr[SCROLLLEN_BPR].state = false;
-        bool_pr[SCROLLBIG_BPR].state = true;
-    } else {
-        // NSCROLL_D
-        bool_pr[SCROLLLEN_BPR].state = true;
-        bool_pr[SCROLLBIG_BPR].state = true;
-    }
-
-
     uint8_t pane_rotp;
     if (!NVReadUInt8 (NV_PANEROTP, &pane_rotp)) {
         pane_rotp = PANEROTP_C;
         NVWriteUInt8 (NV_PANEROTP, pane_rotp);
     }
-
-    // entangled: 5: FF  10: TF   20: TT  40: FT
     if (pane_rotp < PANEROTP_B) {
         // PANEROTP_A
         bool_pr[PANE_ROTPA_BPR].state = false;
@@ -3549,6 +3699,35 @@ static void initSetup()
         bool_pr[PANE_ROTPA_BPR].state = true;
         bool_pr[PANE_ROTPB_BPR].state = true;
     }
+
+
+    uint8_t map_rotp;
+    if (!NVReadUInt8 (NV_MAPROTP, &map_rotp)) {
+        map_rotp = MAPROTP_C;
+        NVWriteUInt8 (NV_MAPROTP, map_rotp);
+    }
+    if (map_rotp < MAPROTP_B) {
+        // MAPROTP_A
+        bool_pr[MAP_ROTPA_BPR].state = false;
+        bool_pr[MAP_ROTPB_BPR].state = false;
+    } else if (map_rotp < MAPROTP_C) {
+        // MAPROTP_B
+        bool_pr[MAP_ROTPA_BPR].state = true;
+        bool_pr[MAP_ROTPB_BPR].state = false;
+    } else if (map_rotp < MAPROTP_D) {
+        // MAPROTP_C
+        bool_pr[MAP_ROTPA_BPR].state = false;
+        bool_pr[MAP_ROTPB_BPR].state = true;
+    } else {
+        // MAPROTP_D
+        bool_pr[MAP_ROTPA_BPR].state = true;
+        bool_pr[MAP_ROTPB_BPR].state = true;
+    }
+
+    uint8_t gray_dpy;
+    if (!NVReadUInt8 (NV_GRAYDPY, &gray_dpy))
+        gray_dpy = GRAY_OFF;
+    setGrayDisplay((GrayDpy_t)gray_dpy);
 }
 
 
@@ -3558,7 +3737,7 @@ static bool askRun()
 {
     eraseScreen();
 
-    drawStringInBox (_FX("Skip"), skip_b, false, TX_C);
+    drawStringInBox ("Skip", skip_b, false, TX_C);
 
     tft.setTextColor (TX_C);
     tft.setCursor (tft.width()/6, tft.height()/5);
@@ -3570,7 +3749,6 @@ static bool askRun()
     int16_t y = tft.getCursorY();
     uint16_t to;
     for (to = ASK_TO*10; !skip_skip && to > 0; --to) {
-        resetWatchdog();
         if ((to+9)/10 != (to+10)/10) {
             tft.fillRect (x, y-PR_A, 2*PR_W, PR_A+PR_D, BG_C);
             tft.setCursor (x, y);
@@ -3584,7 +3762,7 @@ static bool askRun()
         if (tt != TT_NONE || c) {
             drainTouch();
             if (c == 27 || (tt != TT_NONE && inBox (s, skip_b))) {
-                drawStringInBox (_FX("Skip"), skip_b, true, TX_C);
+                drawStringInBox ("Skip", skip_b, true, TX_C);
                 return (false);
             }
                 
@@ -3613,8 +3791,8 @@ static void initDisplay()
 
 #if defined(_SHOW_ALL) || defined(_MARK_BOUNDS)
     // don't show my creds when testing
-    strcpy (wifi_ssid, _FX("mywifissid"));
-    strcpy (wifi_pw, _FX("mywifipassword"));
+    strcpy (wifi_ssid, "mywifissid");
+    strcpy (wifi_pw, "mywifipassword");
 #endif
 
     // set all v_ci to right ends
@@ -3658,10 +3836,10 @@ static void runSetup()
     char c;
     UserInput ui = {
         screen,         // bounding box
-        NULL,           // no aux function
-        false,          // don't care
-        0,              // wait forever
-        false,          // no clocks
+        UI_UFuncNone,   // no aux function
+        UF_UNUSED,      // don't care
+        UI_NOTIMEOUT,   // wait forever
+        UF_NOCLOCKS,    // no clocks
         s,              // AKA ui.tap
         c,              // AKA ui.kbchar
         false,          // whether ctrl with kbchar
@@ -3673,11 +3851,11 @@ static void runSetup()
         BoolPrompt *bp = NULL;
 
         // wait forever for next tap or character input
-        ui.ctrl = ui.shift = false;             // reset modifier keys before each call
+        ui.kb_ctrl = ui.kb_shift = false;             // reset modifier keys before each call
         (void) waitForUser(ui);
-        if (!ui.kbchar) {
-            if (!s2char (ui.tap, ui.kbchar))
-                ui.kbchar = 0;
+        if (ui.kb_char == CHAR_NONE) {
+            if (!s2char (ui.tap, ui.kb_char))
+                ui.kb_char = CHAR_NONE;
         }
 
         // process special cases first
@@ -3718,7 +3896,7 @@ static void runSetup()
 
             // move focus to next or prior tab position depending on shift modified
             eraseCursor();
-            nextTabFocus(ui.shift);
+            nextTabFocus(ui.kb_shift);
             drawCursor();
 
         } else if (cur_focus[cur_page].sp && c == CHAR_LEFT) {
@@ -3814,7 +3992,7 @@ static void runSetup()
                         tft.setCursor (bp->s_box.x, bp->s_box.y+PR_H-PR_D);
                         tft.setTextColor (RA8875_RED);
                         eraseBPState (bp);
-                        tft.print (_FX("Won't fit"));
+                        tft.print ("Won't fit");
                         wdDelay (ERRDWELL_MS);
                         bp->state = false;
                         drawBPState (bp);
@@ -4078,10 +4256,15 @@ static void saveParams2NV()
     NVWriteUInt8 (NV_USEDXCLUSTER, bool_pr[CLUSTER_BPR].state);
     NVWriteUInt8 (NV_WSJT_DX, bool_pr[CLISWSJTX_BPR].state);
     NVWriteString (NV_DXHOST, dx_host);
+
     NVWriteString (NV_DXWLIST, dx_wlist);
     NVWriteUInt8 (NV_DXWLISTMASK, bool_pr[DXWLISTA_BPR].state | (bool_pr[DXWLISTB_BPR].state << 1));
-    NVWriteString (NV_SPOTAWLIST, spota_wlist);
-    NVWriteUInt8 (NV_SPOTAWLISTMASK, bool_pr[SPOTAWLISTA_BPR].state | (bool_pr[SPOTAWLISTB_BPR].state << 1));
+    NVWriteString (NV_POTAWLIST, pota_wlist);
+    NVWriteUInt8 (NV_POTAWLISTMASK, bool_pr[POTAWLISTA_BPR].state | (bool_pr[POTAWLISTB_BPR].state << 1));
+    NVWriteString (NV_SOTAWLIST, sota_wlist);
+    NVWriteUInt8 (NV_SOTAWLISTMASK, bool_pr[SOTAWLISTA_BPR].state | (bool_pr[SOTAWLISTB_BPR].state << 1));
+    NVWriteString (NV_ADIFWLIST, adif_wlist);
+    NVWriteUInt8 (NV_ADIFWLISTMASK, bool_pr[ADIFWLISTA_BPR].state | (bool_pr[ADIFWLISTB_BPR].state << 1));
 
     // N.B. these are NOT contiguous so can not look through N_DXCLCMDS
     NVWriteString (NV_DXCMD0, dxcl_cmds[0]);
@@ -4112,7 +4295,7 @@ static void saveParams2NV()
             | (bool_pr[SPOTPSZA_BPR].state ? (bool_pr[SPOTPSZB_BPR].state ? NVMS_WIDE : NVMS_THIN) : 0));
     NVWriteUInt8 (NV_NTPSET, bool_pr[NTPSET_BPR].state);
     NVWriteString (NV_NTPHOST, ntp_host);
-    NVWriteString (NV_ADIFFN, adif_fn);
+    NVWriteString (NV_ADIFFN, bool_pr[ADIFSET_BPR].state ? adif_fn : "");       // TODO: separate on/off
     NVWriteUInt8 (NV_I2CON, bool_pr[I2CON_BPR].state);
     NVWriteString (NV_I2CFN, i2c_fn);
     NVWriteUInt8 (NV_DATEMDY, bool_pr[DATEFMT_MDY_BPR].state);
@@ -4129,12 +4312,13 @@ static void saveParams2NV()
     NVWriteString (NV_FLRIGHOST, flrig_host);
     NVWriteUInt16 (NV_FLRIGPORT, flrig_port);
     NVWriteUInt8 (NV_SCROLLDIR, bool_pr[SCROLLDIR_BPR].state);
-    NVWriteUInt8 (NV_SCROLLLEN, nMoreScrollRows());
     NVWriteUInt8 (NV_RANKSW, bool_pr[RANKSW_BPR].state);
     NVWriteUInt8 (NV_NEWDXDEWX, bool_pr[NEWDXDEWX_BPR].state);
     NVWriteUInt8 (NV_WEBFS, bool_pr[WEB_FULLSCRN_BPR].state);
     NVWriteUInt8 (NV_PANEROTP, getPaneRotationPeriod());
+    NVWriteUInt8 (NV_MAPROTP, getMapRotationPeriod());
     NVWriteUInt8 (NV_SHOWPIP, showPIP());
+    NVWriteUInt8 (NV_GRAYDPY, (uint8_t)getGrayDisplay());
 
     // save and engage user's X11 settings
     uint16_t x11flags = 0;
@@ -4166,34 +4350,6 @@ static void saveParams2NV()
         de_tz.tz_secs = getTZ (de_ll);
         NVWriteInt32(NV_DE_TZ, de_tz.tz_secs);
     }
-}
-
-/* return whether the given call is on the given watch list.
- * watch is a list of calls or prefixes separated by spaces or commas.
- * if call contains a slash, it is first cracked open to find the likely dx portion.
- * call is considered to be in the list if its first chars match any of the calls or prefixes.
- */
-static bool onWatchList (const char *watch, int wlen, const char *call)
-{
-    // extract likely dx portion
-    char dx_call[NV_CALLSIGN_LEN];
-    findDXCallPortion (call, dx_call);
-
-    // copy watch for strtok
-    StackMalloc watched(wlen);
-    char *wl = (char *) watched.getMem();
-    strcpy (wl, watch);
-
-    // separators
-    const char *sep = ", ";
-    
-    // scan for match
-    for (char *prefix = strtok (wl, sep); prefix; prefix = strtok (NULL, sep))
-        if (strncasecmp (dx_call, prefix, strlen(prefix)) == 0)
-            return (true);
-
-    // no match
-    return (false);
 }
 
 /* draw the given string with border centered inside the given box using the current font.
@@ -4229,7 +4385,7 @@ void clockSetup()
 
     // ask user whether they want to run setup, display anyway if any strings are invalid
     bool str_ok = validateStringPrompts (false);
-    if ((!str_ok || askRun()) && askPasswd (_FX("setup"), false)) {
+    if ((!str_ok || askRun()) && askPasswd ("setup", false)) {
 
         // init display prompts and options
         initDisplay();
@@ -4451,11 +4607,11 @@ int getSpotDotRadius()
  */
 LabelType getSpotLabelType (void)
 {
-    const char *lbl = getEntangledValue (&bool_pr[SPOTLBLA_BPR], &bool_pr[SPOTLBLB_BPR]);
+    const char *lbl = getEntangledValue (SPOTLBLA_BPR, SPOTLBLB_BPR);
     for (int i = 0; i < LBL_N; i++)
         if (strcmp (lbl_names[i], lbl) == 0)
             return ((LabelType)i);
-    fatalError ("Bogus label type: %s\n", lbl);
+    fatalError ("Bogus label type: %s", lbl);
     return (LBL_NONE);  // lint
 }
 
@@ -4712,11 +4868,11 @@ void getDXClCommands(const char *cmds[N_DXCLCMDS], bool on[N_DXCLCMDS])
 bool setDXCluster (char *host, char *port_str, char ynot[])
 {
     if (!hostOK(host,NV_DXHOST_LEN)) {
-        strcpy (ynot, _FX("Bad host"));
+        strcpy (ynot, "Bad host");
         return (false);
     }
     if (!portOK (port_str, 1000, &dx_port)) {
-        strcpy (ynot, _FX("Bad port"));
+        strcpy (ynot, "Bad port");
         return (false);
     }
     strncpy (dx_host, host, NV_DXHOST_LEN-1);
@@ -4805,42 +4961,92 @@ const char *getI2CFilename(void)
 
 
 
-/* return whether the given call is on the dx cluster watch list
+/* return the filtering state and optionally the name of the given watch list
  */
-bool onDXWatchList (const char *call)
+WatchListState getWatchListState (WatchListId wl_id, char name[WLA_MAXLEN])
 {
-    const char *v = getEntangledValue (&bool_pr[DXWLISTA_BPR], &bool_pr[DXWLISTB_BPR]);
-    bool off = strcmp (v, bool_pr[DXWLISTA_BPR].f_str) == 0;
-    return (!off && onWatchList (dx_wlist, NV_DXWLIST_LEN, call));
+    // insure valid
+    if (!wlIdOk (wl_id))
+        fatalError ("getWatchListState %d", (int)wl_id);
+    WLInfo &wli = wl_info[wl_id];
+
+    // get bool pair state
+    const char *wl_v = getEntangledValue (wli.a_bpr, wli.b_bpr);
+
+    // look up in name list
+    for (int i = 0; i < WLA_N; i++) {
+        if (strcmp (wl_v, wla_name[i]) == 0) {
+            if (name)
+                snprintf (name, WLA_MAXLEN, "%s", wla_name[i]);
+            return ((WatchListState)i);
+        }
+    }
+
+    fatalError ("getWatchListState unknown state %s", wl_v);
+
+    // lint
+    return (WLA_OFF);
 }
 
-/* return whether to display only calls in the DX watch list
+/* return a full-length malloced copy of the given watch list string and its total possible length.
+ * N.B. caller must free
  */
-bool showOnlyOnDXWatchList()
+void getWatchList (WatchListId wl_id, char **wl_copypp, size_t *wl_lenp)
 {
-    const char *v = getEntangledValue (&bool_pr[DXWLISTA_BPR], &bool_pr[DXWLISTB_BPR]);
-    bool only = strcmp (v, bool_pr[DXWLISTB_BPR].t_str) == 0;
-    return (only);
+    if (!wlIdOk (wl_id))
+        fatalError ("getWatchList %d", (int)wl_id);
+
+    char *wl_string = wl_info[wl_id].wlist;
+    size_t wl_len = wl_info[wl_id].len;;
+
+    *wl_copypp = (char *) malloc (wl_len);
+    snprintf (*wl_copypp, wl_len, "%s", wl_string);
+    *wl_lenp = wl_len;
 }
 
-
-
-/* return whether the given call is on the spota watch list
+/* save the given string in the given watch list.
+ * N.B. silently truncated if too long
  */
-bool onSPOTAWatchList (const char *call)
+void setWatchList (WatchListId wl_id, const char *new_state, char *new_wlstr)
 {
-    const char *v = getEntangledValue (&bool_pr[SPOTAWLISTA_BPR], &bool_pr[SPOTAWLISTB_BPR]);
-    bool off = strcmp (v, bool_pr[SPOTAWLISTA_BPR].f_str) == 0;
-    return (!off && onWatchList (spota_wlist, NV_SPOTAWLIST_LEN, call));
+    // get corresponding info
+    if (!wlIdOk (wl_id))
+        fatalError ("setWatchList %d %.10s %.10s", (int)wl_id, new_state, new_wlstr);
+    WLInfo &wli = wl_info[wl_id];
+
+    // set state
+    setEntangledValue (wli.a_bpr, wli.b_bpr, new_state);
+
+    // set cleaned up watchlist
+    snprintf (wli.wlist, wli.len, "%s", wlCompress(new_wlstr));
+
+    // save it to NV
+    NVWriteString (wli.nv, wli.wlist);
+
+    // log
+    Serial.printf ("WLIST: set %s to %s %s\n", wli.name, new_state, new_wlstr);
 }
 
-/* return whether to display only calls in the SPOTA watch list
+/* given the text name of a WatchListState, change it IN PLACE to next in the series
  */
-bool showOnlyOnSPOTAWatchList()
+void rotateWatchListState (char *state_name, size_t max_len)
 {
-    const char *v = getEntangledValue (&bool_pr[SPOTAWLISTA_BPR], &bool_pr[SPOTAWLISTB_BPR]);
-    bool only = strcmp (v, bool_pr[SPOTAWLISTB_BPR].t_str) == 0;
-    return (only);
+    for (int i = 0; i < WLA_N; i++) {
+        if (strcmp (state_name, wla_name[i]) == 0) {
+            snprintf (state_name, max_len, "%s", wla_name[(i+1) % WLA_N]);
+            return;
+        }
+    }
+    fatalError ("rotateWatchListState unknown name: %.10s", state_name);
+}
+
+/* handy way to get the name of a watch list
+ */
+const char *getWatchListName (WatchListId wl_id)
+{
+    if (!wlIdOk (wl_id))
+        fatalError ("getWatchListName %d", (int)wl_id);
+    return (wl_info[wl_id].name);
 }
 
 
@@ -4852,13 +5058,6 @@ bool scrollTopToBottom(void)
     return (bool_pr[SCROLLDIR_BPR].state);
 }
 
-
-/* return number of ADDITIONAL scroll rows
- */
-int nMoreScrollRows(void)
-{
-    return (atoi (getEntangledValue (&bool_pr[SCROLLLEN_BPR], &bool_pr[SCROLLBIG_BPR])));
-}
 
 /* return whether to rank spx wx
  */
@@ -4878,7 +5077,7 @@ bool showNewDXDEWx(void)
  */
 int getPaneRotationPeriod (void)
 {
-    return (atoi (getEntangledValue (&bool_pr[PANE_ROTPA_BPR], &bool_pr[PANE_ROTPB_BPR])));
+    return (atoi (getEntangledValue (PANE_ROTPA_BPR, PANE_ROTPB_BPR)));
 }
 
 /* return whether to show the puplic IP address
@@ -4886,4 +5085,21 @@ int getPaneRotationPeriod (void)
 bool showPIP()
 {
     return (bool_pr[SHOWPIP_BPR].state);
+}
+
+/* return map rotation period, seconds
+ */
+int getMapRotationPeriod()
+{
+    return (atoi (getEntangledValue (MAP_ROTPA_BPR, MAP_ROTPB_BPR)));
+}
+
+/* return gray scale setting
+ */
+GrayDpy_t getGrayDisplay(void)
+{
+    const char *v = getEntangledValue (GRAYA_BPR, GRAYB_BPR);
+    if (strcmp (v, "Map") == 0) return (GRAY_MAP);
+    if (strcmp (v, "All") == 0) return (GRAY_ALL);
+    return (GRAY_OFF);  // default?
 }

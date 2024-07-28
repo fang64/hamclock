@@ -17,10 +17,9 @@
 #define NVBIT_SHOWDETZ  0x2                     // showing DE time zone
 
 // URL to access info
-static const char contest_page[] PROGMEM = "/contests/contests311.txt";
+static const char contest_page[] = "/contests/contests311.txt";
 
 static ContestEntry *contests;                  // malloced list of ContestEntry
-static int max_contests;                        // max n contests we retain
 static char *credit;                            // malloced credit line
 static bool show_date;                          // whether to show 2nd line with date
 static bool show_detz;                          // whether to show dates in DE timezone
@@ -285,7 +284,7 @@ static bool runContestMenu (const SCoord &s, const SBox &box)
     SBox ok_b;
 
     // run
-    MenuInfo menu = {menu_b, ok_b, true, false, 1, n_mi, mitems};
+    MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 1, n_mi, mitems};
     if (runMenu (menu)) {
 
         // check for show_date change
@@ -339,7 +338,7 @@ static bool retrieveContests (const SBox &box)
         updateClocks(false);
 
         // fetch page and skip header
-        httpHCPGET (ctst_client, backend_host, contest_page);
+        httpHCGET (ctst_client, backend_host, contest_page);
         if (!httpSkipHeader (ctst_client)) {
             Serial.print (F("CTS: failed\n"));
             goto out;
@@ -361,7 +360,6 @@ static bool retrieveContests (const SBox &box)
         cts_ss.init ((box.h - START_DY)/CONTEST_DY, 0, 0);      // max_vis, top_vis, n_data
         if (show_date)
             cts_ss.max_vis /= 2;
-        max_contests = cts_ss.max_vis + nMoreScrollRows();      // "nRows" really means n contests
 
         // contests consist of 2 lines each
         char line1[100], line2[100];
@@ -380,8 +378,7 @@ static bool retrieveContests (const SBox &box)
         selectFontStyle (LIGHT_FONT, FAST_FONT);
 
         // read 2 lines per contest: info and url
-        while (cts_ss.n_data < max_contests
-                                        && getTCPLine (ctst_client, line1, sizeof(line1), NULL)
+        while (getTCPLine (ctst_client, line1, sizeof(line1), NULL)
                                         && getTCPLine (ctst_client, line2, sizeof(line2), NULL)) {
             // Serial.printf (_FX("CTS line %d: %s\n%s\n"), cts_ss.n_data, line1, line2);
 

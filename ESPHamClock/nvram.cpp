@@ -193,7 +193,7 @@ static const uint8_t nv_sizes[NV_N] = {
     1,                          // NV_I2CON
     4,                          // NV_DXMAX_T
 
-    NV_DXWLIST_LEN,             // NV_DXWLIST
+    NV_POTAWLIST_LEN,           // NV_POTAWLIST
     1,                          // NV_SCROLLDIR
     1,                          // NV_SCROLLLEN
     NV_DXCLCMD_LEN,             // NV_DXCMD4
@@ -215,14 +215,24 @@ static const uint8_t nv_sizes[NV_N] = {
     1,                          // NV_ZOOM
     2,                          // NV_PANX
     2,                          // NV_PANY
-    1,                          // NV_SPOTAWLISTMASK
+    1,                          // NV_POTAWLISTMASK
 
-    NV_SPOTAWLIST_LEN,          // NV_SPOTAWLIST
+    NV_SOTAWLIST_LEN,           // NV_SOTAWLIST
     4,                          // NV_ONCEALARM
     1,                          // NV_ONCEALARMMASK
     1,                          // NV_PANEROTP
     1,                          // NV_SHOWPIP
 
+    1,                          // NV_MAPROTP
+    2,                          // NV_MAPROTSET
+    1,                          // NV_GRAYDPY
+    1,                          // NV_SOTAWLISTMASK
+    1,                          // NV_ADIFWLISTMASK
+
+    NV_DXWLIST_LEN,             // NV_DXWLIST
+    NV_ADIFWLIST_LEN,           // NV_ADIFWLIST
+    1,                          // NV_ADIFSORT
+    4,                          // NV_ADIFBANDS
 
 };
 

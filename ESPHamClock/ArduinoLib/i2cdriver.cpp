@@ -294,7 +294,7 @@ bool i2c_getstatus(I2CDriver *sd)
     }
 
     readbuffer[_I2C_GETSTATSIZE] = 0;
-    int n_scan = sscanf((char*)readbuffer, "[%15s %8s %" SCNu64 " %f %f %f %c %u %u %u %u %u ]",
+    int n_scan = sscanf((char*)readbuffer, "[%15s %8s %" SCNu64 " %f %f %f %c %u %u %u %u %x ]",
         sd->model,
         sd->serial,
         &sd->uptime,

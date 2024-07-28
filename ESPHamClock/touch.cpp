@@ -95,19 +95,15 @@ TouchType readCalTouch (SCoord &s)
 }
 
 
-/* wait for no touch events, need time also since the resistance film seems to be sticky
+/* drain pending touch and kb
  */
 void drainTouch()
 {
-    resetWatchdog();
-    uint32_t t0 = millis();
-    bool touched = false;
-    while (millis() - t0 < 100 || touched) {
-        if ((touched = tft.touched()) == true) {
-            uint16_t tx, ty;
-            tft.touchRead (&tx, &ty, NULL);
-        }
-    }
-    // Serial.println (F("Drain complete"));
-    resetWatchdog();
+    uint16_t tx, ty;
+    while (tft.touched())
+        tft.touchRead (&tx, &ty, NULL);
+
+    bool control, shift;
+    while (tft.getChar (&control, &shift) != CHAR_NONE)
+        continue;
 }

@@ -8,7 +8,7 @@
 .PHONY: clean clobber help
 
 # build flags common to all options and architectures
-CXXFLAGS = -IArduinoLib -IwsServer/include -I. -g -O2 -Wall -DARDUINO=100 -pthread -std=c++17
+CXXFLAGS = -IArduinoLib -IwsServer/include -I. -g -O3 -Wall -DARDUINO=100 -pthread -std=c++17
 # CXXFLAGS += -Wextra -pedantic -Werror -Wno-attributes -Wno-unknown-pragmas
 LDXXFLAGS = -LArduinoLib -LwsServer -g -pthread
 LIBS = -lpthread -larduino -lws
@@ -46,6 +46,7 @@ OBJS = \
 	astro.o \
 	blinker.o \
 	brightness.o \
+	cachefile.o \
 	clocks.o \
 	cities.o \
 	color.o \
@@ -53,6 +54,7 @@ OBJS = \
 	dxcluster.o \
 	earthmap.o \
 	earthsat.o \
+	emetool.o \
 	favicon.o \
 	gimbal.o \
 	gpsd.o \
@@ -84,6 +86,7 @@ OBJS = \
 	sdo.o \
 	selectFont.o \
 	setup.o \
+	sevenseg.o \
 	spacewx.o \
 	sphere.o \
 	spots.o \
@@ -92,6 +95,7 @@ OBJS = \
 	touch.o \
 	tz.o \
 	webserver.o \
+	watchlist.o \
 	wifi.o \
 	wifimeter.o \
 	wx.o \

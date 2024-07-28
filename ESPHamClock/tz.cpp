@@ -13,12 +13,6 @@
 #include <stdlib.h>
 #include <math.h>
 
-signed char pgm_read_byte (const signed char *p)
-{
-    return (*p);
-}
-#define PROGMEM
-
 typedef struct {
     float lat_d, lng_d;
 } LatLong;
@@ -33,7 +27,7 @@ typedef struct {
 
 /* timezone offset in units of 15 minutes +- UTC
  */
-static const signed char tzmap[179][360] PROGMEM = {    // -89..89  -180 .. 179
+static const signed char tzmap[179][360] = {    // -89..89  -180 .. 179
     { /*  -89 */
         /* -180 */   48,  48,  48,  48,  48,  48,  48,  48,  48,  48,
         /* -170 */   48,  48,  48,  48,  48,  48,  48,  48,  48,  48,
@@ -6848,7 +6842,7 @@ int32_t getTZ (const LatLong &ll)
 #ifdef _MAIN_TEST
     printf ("tzmap[%d][%d]\n", lat+89, lng);
 #endif // _MAIN_TEST
-    return (900*((signed char)pgm_read_byte(&tzmap[lat+89][lng])));
+    return (900 * tzmap[lat+89][lng]);
 }
 
 /* given a LatLong return the smallest deviation from a whole hour among the
@@ -6868,7 +6862,7 @@ int getTZStep (const LatLong &ll)
             continue;
         for (int d_lng = -1; d_lng <= 1; d_lng += 1) {
             int lng = (lng0 + d_lng + 360) % 360;
-            int tz_15 = (signed char)pgm_read_byte(&tzmap[lat+89][lng]);
+            int tz_15 = tzmap[lat+89][lng];
             int step_15 = (tz_15 + (24*60/15)) % 4;
             if (step_15 == 3)
                 step_15 = 1;                    // +45 mins sames as -15 mins

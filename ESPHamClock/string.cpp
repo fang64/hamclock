@@ -20,24 +20,26 @@ uint32_t stringHash (const char *str)
 
 /* convert any upper case letter in str to lower case IN PLACE
  */
-void strtolower (char *str)
+char *strtolower (char *str)
 {
+    char *str0 = str;
     for (char c = *str; c != '\0'; c = *++str)
-        if (isupper(c))
-            *str = tolower(c);
+        *str = tolower(c);
+    return (str0);
 }
 
 /* convert any lower case letter in str to upper case IN PLACE
  */
-void strtoupper (char *str)
+char *strtoupper (char *str)
 {
+    char *str0 = str;
     for (char c = *str; c != '\0'; c = *++str)
-        if (islower(c))
-            *str = toupper(c);
+        *str = toupper(c);
+    return (str0);
 }
 
 
-/* remove leading and trailing white space IN PLACE, return str.
+/* remove leading and trailing white space IN PLACE, return new beginning.
  */
 char *strtrim (char *str)
 {
@@ -62,6 +64,7 @@ char *strtrim (char *str)
     return (str);
 }
 
+
 /* return the bounding box of the given string in the current font.
  */
 void getTextBounds (const char str[], uint16_t *wp, uint16_t *hp)
@@ -69,7 +72,6 @@ void getTextBounds (const char str[], uint16_t *wp, uint16_t *hp)
     int16_t x, y;
     tft.getTextBounds ((char*)str, 100, 100, &x, &y, wp, hp);
 }
-
 
 /* return width in pixels of the given string in the current font
  */

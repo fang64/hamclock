@@ -278,10 +278,10 @@ void plotGrayline()
     char c;
     UserInput ui = {
         map_b,
-        NULL,
-        false,
+        UI_UFuncNone,
+        UF_UNUSED,
         60000,
-        true,
+        UF_CLOCKSOK,
         s,
         c,
         false,
@@ -290,8 +290,9 @@ void plotGrayline()
 
     while (waitForUser(ui)) {
 
-        // done if return, esc or tap Resume button
-        if (c == '\r' || c == '\n' || c == 27 || inBox (s, resume_b))
+        // done if return, esc or tap Resume button or tap outside map
+        if (c == CHAR_CR || c == CHAR_NL || c == CHAR_ESC || inBox (s, resume_b)
+                                || (c == CHAR_NONE && !inBox (s, map_b)))
             break;
 
         // first erase previous popup, if any

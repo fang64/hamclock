@@ -28,12 +28,10 @@ char *liveweb_openurl;                                  // a url to attempt to o
 int liveweb_rw_port = LIVEWEB_RW_PORT;                  // r/w server port -- can be changed with -w
 int liveweb_ro_port = LIVEWEB_RO_PORT;                  // r/o server port -- can be changed with -r
 int liveweb_max = 10;                                   // max allowed connections < ws.h::MAX_CLIENTS
-bool mainpage_up;                                       // set when ok to draw r/o symbol
 const int liveweb_maxmax = MAX_CLIENTS-1;               // max max for -help
 
 
 // png format is 3 bytes per pixel
-#define LIVE_BYPPIX     3                               // bytes per pixel
 #define LIVE_NPIX       (BUILD_H*BUILD_W)               // pixels per complete image
 #define LIVE_NBYTES     (LIVE_NPIX*LIVE_BYPPIX)         // bytes per complete image
 #define LIVE_RBYTES     (BUILD_W*LIVE_BYPPIX)           // bytes per row
@@ -46,7 +44,7 @@ static int live_verbose = 0;                            // more chatter if > 0
 
 // complete scene on browser for each web socket
 typedef struct {
-    ws_cli_conn_t *client;                              // opaque pointer unique to each connection, else NULL
+    ws_cli_conn_t *client;                              // pointer unique to each connection, else NULL
     uint8_t *pixels;                                    // this client's current display image
 } SessionInfo;
 static SessionInfo *si_list;                            // malloced list
@@ -125,7 +123,6 @@ static uint8_t *getSIPixels (ws_cli_conn_t *client)
     return (pixels);
 }
 
-
 /* send difference between client's last known screen image and the current image,
  * then store current image back in client's SessionInfo.
  */
@@ -158,26 +155,34 @@ static void updateExistingClient (ws_cli_conn_t *client)
                                 ws_getaddress(client), TVDELUS (tv0,tv1));
     }
 
-    // add a small indicator to mark the r/o page when showing main page.
-    if (mainpage_up && client->port == liveweb_ro_port) {
-
-        // count for user agent
-        n_roweb++;
-
-        // N.B. do not use drawPixelRaw() because that will draw in real fb and thus seen by everyone
-        // define location of r/o mark in raw pixels, then mult by LIVE_BYPPIX to get array index
-        #define RO_MARK_RAWX (tft.SCALESZ*lkscrn_b.x)
-        #define RO_MARK_RAWY (tft.SCALESZ*(lkscrn_b.y+lkscrn_b.h+3))
-        #define RO_MARK_RAWW (tft.SCALESZ*lkscrn_b.w)
-        #define RO_MARK_RAWH (tft.SCALESZ*3)
-        const uint8_t rgb_mark[LIVE_BYPPIX] = {255,0,0};
-        for (int y = RO_MARK_RAWY; y < RO_MARK_RAWY+RO_MARK_RAWH; y++)
-            for (int x = RO_MARK_RAWX; x < RO_MARK_RAWX+RO_MARK_RAWW; x++)
-                memcpy (&img_now[y*LIVE_BYPPIX*BUILD_W + x*LIVE_BYPPIX], rgb_mark, LIVE_BYPPIX);
-    } else {
-
-        // count for user agent
-        n_rwweb++;
+    // draw connection counter on main page
+    if (mainpage_up) {
+        #define CTR_RAWW (3*tft.SCALESZ)
+        #define CTR_RAWH (5*tft.SCALESZ)
+        #define CTR_RAWX (tft.SCALESZ*(lkscrn_b.x-4))
+        #define CTR_RAWY (tft.SCALESZ*(lkscrn_b.y+lkscrn_b.h+3))
+        SBox digit_b = {(uint16_t)CTR_RAWX, (uint16_t)CTR_RAWY, (uint16_t)CTR_RAWW, (uint16_t)CTR_RAWH};
+        if (client->port == liveweb_ro_port) {
+            static const uint8_t txt_clr[LIVE_BYPPIX] = {255U,50U,50U};
+            // n_roweb = 1234567890;       // RBF
+            if (n_roweb < 10)
+                digit_b.x += CTR_RAWW;
+            drawImgNumber (n_roweb, img_now, digit_b, txt_clr);
+            digit_b.x += 2*digit_b.w/3;
+            drawImgR (img_now, digit_b, txt_clr);
+            digit_b.x += 3*digit_b.w/2;
+            drawImgO (img_now, digit_b, txt_clr);
+        } else {
+            static const uint8_t txt_clr[LIVE_BYPPIX] = {255U,255U,255U};
+            // n_rwweb = 1234567890;       // RBF
+            if (n_rwweb < 10)
+                digit_b.x += CTR_RAWW;
+            drawImgNumber (n_rwweb, img_now, digit_b, txt_clr);
+            digit_b.x += 2*digit_b.w/3;
+            drawImgR (img_now, digit_b, txt_clr);
+            digit_b.x += 3*digit_b.w/2;
+            drawImgW (img_now, digit_b, txt_clr);
+        }
     }
 
     // we only send small regions that have changed since previous, ie changes from img_client to img_now.
@@ -601,7 +606,7 @@ static void sendLiveFavicon (FILE *sockfp)
 }
 
 /* callback when browser asks for a new websocket connection.
- * assign a fresh si_list for keeping track of the pixels for the given client.
+ * assign a fresh si_list for keeping track its pixels.
  */
 static void ws_onopen(ws_cli_conn_t *client)
 {
@@ -646,6 +651,12 @@ static void ws_onopen(ws_cli_conn_t *client)
         new_sip->pixels = (uint8_t *) malloc (LIVE_NBYTES);
         if (!new_sip->pixels)
             bye ("No memory for new live session pixels\n");
+
+        // increment appropriate counter
+        if (client->port == liveweb_ro_port)
+            n_roweb += 1;
+        else
+            n_rwweb += 1;
     }
 
     // ok
@@ -663,11 +674,19 @@ static void ws_onclose (ws_cli_conn_t *client)
         SessionInfo *sip = &si_list[i];
         if (sip->client == client) {
             sip->client = NULL;
+
             // recycle pixel memory
             if (sip->pixels) {
                 free (sip->pixels);
                 sip->pixels = NULL;
             }
+
+            // decrement appropriate counter
+            if (client->port == liveweb_ro_port)
+                n_roweb -= 1;
+            else
+                n_rwweb -= 1;
+
             return;
         }
     }

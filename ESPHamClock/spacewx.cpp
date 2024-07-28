@@ -6,16 +6,16 @@
 
 
 // retrieve pages
-static const char bzbt_page[] PROGMEM = "/Bz/Bz.txt";
-static const char swind_page[] PROGMEM = "/solar-wind/swind-24hr.txt";
-static const char ssn_page[] PROGMEM = "/ssn/ssn-31.txt";
-static const char sf_page[] PROGMEM = "/solar-flux/solarflux-99.txt";
-static const char drap_page[] PROGMEM = "/drap/stats.txt";
-static const char kp_page[] PROGMEM = "/geomag/kindex.txt";
-static const char xray_page[] PROGMEM = "/xray/xray.txt";
-static const char noaaswx_page[] PROGMEM = "/NOAASpaceWX/noaaswx.txt";
-static const char aurora_page[] PROGMEM = "/aurora/aurora.txt";
-static const char sw_rank_page[] PROGMEM = "/NOAASpaceWX/rank_coeffs.txt";
+static const char bzbt_page[] = "/Bz/Bz.txt";
+static const char swind_page[] = "/solar-wind/swind-24hr.txt";
+static const char ssn_page[] = "/ssn/ssn-31.txt";
+static const char sf_page[] = "/solar-flux/solarflux-99.txt";
+static const char drap_page[] = "/drap/stats.txt";
+static const char kp_page[] = "/geomag/kindex.txt";
+static const char xray_page[] = "/xray/xray.txt";
+static const char noaaswx_page[] = "/NOAASpaceWX/noaaswx.txt";
+static const char aurora_page[] = "/aurora/aurora.txt";
+static const char sw_rank_page[] = "/NOAASpaceWX/rank_coeffs.txt";
 
 // caches
 static BzBtData bzbt_cache;
@@ -71,10 +71,10 @@ static bool initSWFit(void)
 
         char line[50];
 
-        httpHCPGET (sw_client, backend_host, sw_rank_page);
+        httpHCGET (sw_client, backend_host, sw_rank_page);
 
         if (!httpSkipHeader (sw_client)) {
-            Serial.println (F("RANKSW: rank page header short"));
+            Serial.println ("RANKSW: rank page header short");
             goto out;
         }
 
@@ -87,7 +87,7 @@ static bool initSWFit(void)
         for (int n_c = 0; n_c < SPCWX_N; ) {
             // read line
             if (!getTCPLine (sw_client, line, sizeof(line), NULL)) {
-                Serial.printf (_FX("RANKSW: rank file is short: %d/%d\n"), n_c, SPCWX_N);
+                Serial.printf ("RANKSW: rank file is short: %d/%d\n", n_c, SPCWX_N);
                 goto out;
             }
 
@@ -97,8 +97,8 @@ static bool initSWFit(void)
 
             // require matching index and m and b coeffs
             int get_i;
-            if (sscanf (line, _FX("%d %f %f"), &get_i, &m[n_c], &b[n_c]) != 3 || get_i != n_c) {
-                Serial.printf (_FX("RANKSW: bad rank line: %s\n"), line);
+            if (sscanf (line, "%d %f %f", &get_i, &m[n_c], &b[n_c]) != 3 || get_i != n_c) {
+                Serial.printf ("RANKSW: bad rank line: %s\n", line);
                 goto out;
             }
 
@@ -107,12 +107,12 @@ static bool initSWFit(void)
         }
 
         // all good, log and store
-        Serial.println (F("RANKSW:   Coeffs Name       m       b"));
+        Serial.println ("RANKSW:   Coeffs Name       m       b");
         for (int i = 0; i < SPCWX_N; i++) {
             SpaceWeather_t &sw_i = space_wx[i];
             sw_i.m = m[i];
             sw_i.b = b[i];
-            Serial.printf (_FX("RANKSW: %13s %7g %7g\n"), plot_names[sw_i.pc], sw_i.m, sw_i.b);
+            Serial.printf ("RANKSW: %13s %7g %7g\n", plot_names[sw_i.pc], sw_i.m, sw_i.b);
         }
 
         ok = true;
@@ -136,7 +136,7 @@ static void sortSpaceWx()
         set_mb = true;
         mb_ok = initSWFit();
         if (!mb_ok)
-            Serial.println (F("RANKSW: no ranking available -- using default"));
+            Serial.println ("RANKSW: no ranking available -- using default");
     }
     if (!mb_ok)
         return;                 // use default ranking
@@ -148,12 +148,12 @@ static void sortSpaceWx()
     qsort (sw_sort, SPCWX_N, sizeof(SpaceWeather_t), swQSF);
     
     // set and record rank of each entry
-    Serial.println (F("RANKSW: rank      name    value score"));
+    Serial.println ("RANKSW: rank      name    value score");
     for (int i = 0; i < SPCWX_N; i++) {
         SPCWX_t sp_i = sw_sort[i].sp;
         SpaceWeather_t &sw_i = space_wx[sp_i];
         sw_i.rank = i;
-        Serial.printf (_FX("RANKSW: %d %12s %8.2g %3d\n"), i, plot_names[sw_i.pc], sw_i.value,
+        Serial.printf ("RANKSW: %d %12s %8.2g %3d\n", i, plot_names[sw_i.pc], sw_i.value,
                                 SW_RANKV(&sw_i));
     }
 }
@@ -197,16 +197,16 @@ void drawSpaceStats(uint16_t color)
                 switch ((SPCWX_t)j) {
 
                 case SPCWX_SSN:
-                    strcpy (titles[i], _FX("SSN"));
+                    strcpy (titles[i], "SSN");
                     if (!space_wx[SPCWX_SSN].value_ok)
                         strcpy (values[i], err);
                     else
-                        snprintf (values[i], sizeof(values[i]), _FX("%.0f"), space_wx[SPCWX_SSN].value);
+                        snprintf (values[i], sizeof(values[i]), "%.0f", space_wx[SPCWX_SSN].value);
                     colors[i] = SSN_COLOR;
                     break;
 
                 case SPCWX_XRAY:
-                    strcpy (titles[i], _FX("X-Ray"));
+                    strcpy (titles[i], "X-Ray");
                     if (!space_wx[SPCWX_XRAY].value_ok)
                         strcpy (values[i], err);
                     else
@@ -215,65 +215,65 @@ void drawSpaceStats(uint16_t color)
                     break;
 
                 case SPCWX_FLUX:
-                    strcpy (titles[i], _FX("SFI"));
+                    strcpy (titles[i], "SFI");
                     if (!space_wx[SPCWX_FLUX].value_ok)
                         strcpy (values[i], err);
                     else
-                        snprintf (values[i], sizeof(values[i]), _FX("%.0f"), space_wx[SPCWX_FLUX].value);
+                        snprintf (values[i], sizeof(values[i]), "%.0f", space_wx[SPCWX_FLUX].value);
                     colors[i] = SFLUX_COLOR;
                     break;
 
                 case SPCWX_KP:
-                    strcpy (titles[i], _FX("Kp"));
+                    strcpy (titles[i], "Kp");
                     if (!space_wx[SPCWX_KP].value_ok)
                         strcpy (values[i], err);
                     else
-                        snprintf (values[i], sizeof(values[i]), _FX("%.1f"), space_wx[SPCWX_KP].value);
+                        snprintf (values[i], sizeof(values[i]), "%.1f", space_wx[SPCWX_KP].value);
                     colors[i] = KP_COLOR;
                     break;
 
                 case SPCWX_SOLWIND:
-                    strcpy (titles[i], _FX("Sol Wind"));
+                    strcpy (titles[i], "Sol Wind");
                     if (!space_wx[SPCWX_SOLWIND].value_ok)
                         strcpy (values[i], err);
                     else
-                        snprintf (values[i], sizeof(values[i]), _FX("%.1f"), space_wx[SPCWX_SOLWIND].value);
+                        snprintf (values[i], sizeof(values[i]), "%.1f", space_wx[SPCWX_SOLWIND].value);
                     colors[i] = SWIND_COLOR;
                     break;
 
                 case SPCWX_DRAP:
-                    strcpy (titles[i], _FX("DRAP"));
+                    strcpy (titles[i], "DRAP");
                     if (!space_wx[SPCWX_DRAP].value_ok)
                         strcpy (values[i], err);
                     else
-                        snprintf (values[i], sizeof(values[i]), _FX("%.0f"), space_wx[SPCWX_DRAP].value);
+                        snprintf (values[i], sizeof(values[i]), "%.0f", space_wx[SPCWX_DRAP].value);
                     colors[i] = DRAPPLOT_COLOR;
                     break;
 
                 case SPCWX_BZ:
-                    strcpy (titles[i], _FX("Bz"));
+                    strcpy (titles[i], "Bz");
                     if (!space_wx[SPCWX_BZ].value_ok)
                         strcpy (values[i], err);
                     else
-                        snprintf (values[i], sizeof(values[i]), _FX("%.1f"), space_wx[SPCWX_BZ].value);
+                        snprintf (values[i], sizeof(values[i]), "%.1f", space_wx[SPCWX_BZ].value);
                     colors[i] = BZBT_BZCOLOR;
                     break;
 
                 case SPCWX_NOAASPW:
-                    strcpy (titles[i], _FX("NOAA SpWx"));
+                    strcpy (titles[i], "NOAA SpWx");
                     if (!space_wx[SPCWX_NOAASPW].value_ok)
                         strcpy (values[i], err);
                     else
-                        snprintf (values[i], sizeof(values[i]), _FX("%.0f"), space_wx[SPCWX_NOAASPW].value);
+                        snprintf (values[i], sizeof(values[i]), "%.0f", space_wx[SPCWX_NOAASPW].value);
                     colors[i] = NOAASPW_COLOR;
                     break;
 
                 case SPCWX_AURORA:
-                    strcpy (titles[i], _FX("Aurora"));
+                    strcpy (titles[i], "Aurora");
                     if (!space_wx[SPCWX_AURORA].value_ok)
                         strcpy (values[i], err);
                     else
-                        snprintf (values[i], sizeof(values[i]), _FX("%.0f"), space_wx[SPCWX_AURORA].value);
+                        snprintf (values[i], sizeof(values[i]), "%.0f", space_wx[SPCWX_AURORA].value);
                     colors[i] = AURORA_COLOR;
                     break;
 
@@ -287,6 +287,17 @@ void drawSpaceStats(uint16_t color)
 
     // do it
     drawNCDXFStats (color, titles, values, colors);
+}
+
+
+/* return the next time of routine download.
+ */
+time_t nextRetrieval (PlotChoice pc, int interval)
+{
+    time_t next_update = myNow() + interval;
+    int nm = millis()/1000 + interval;
+    Serial.printf ("%s data now good for %d sec at %d\n", plot_names[pc], interval, nm);
+    return (next_update);
 }
 
 
@@ -308,18 +319,18 @@ bool retrieveSunSpots (SunSpotData &ssn)
 
     // mark value as bad until proven otherwise
     space_wx[SPCWX_SSN].value_ok = false;
-    ssn_cache.data_ok = false;
+    ssn.data_ok = ssn_cache.data_ok = false;
 
     Serial.println(ssn_page);
     if (wifiOk() && ss_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
-        httpHCPGET (ss_client, backend_host, ssn_page);
+        httpHCGET (ss_client, backend_host, ssn_page);
 
         // skip response header
         if (!httpSkipHeader (ss_client)) {
-            Serial.print (F("SSN: header fail\n"));
+            Serial.print ("SSN: header fail\n");
             goto out;
         }
 
@@ -346,12 +357,12 @@ bool retrieveSunSpots (SunSpotData &ssn)
 
         } else {
 
-            Serial.printf (_FX("SSN: data short %d / %d\n"), ssn_i, SSN_NV);
+            Serial.printf ("SSN: data short %d / %d\n", ssn_i, SSN_NV);
         }
 
     } else {
 
-        Serial.print (F("SSN: connection failed\n"));
+        Serial.print ("SSN: connection failed\n");
     }
 
 out:
@@ -380,7 +391,7 @@ static bool checkForNewSunSpots (void)
 /* retrieve solar flux and SPCWX_FLUX if it's time, else use cache.
  * return whether transaction was ok (even if data was not)
  */
-bool retrievSolarFlux (SolarFluxData &sf)
+bool retrieveSolarFlux (SolarFluxData &sf)
 {
     // check cache first
     if (myNow() < sf_cache.next_update) {
@@ -395,18 +406,18 @@ bool retrievSolarFlux (SolarFluxData &sf)
 
     // mark value as bad until proven otherwise
     space_wx[SPCWX_FLUX].value_ok = false;
-    sf_cache.data_ok = false;
+    sf.data_ok = sf_cache.data_ok = false;
 
     Serial.println (sf_page);
     if (wifiOk() && sf_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
-        httpHCPGET (sf_client, backend_host, sf_page);
+        httpHCGET (sf_client, backend_host, sf_page);
 
         // skip response header
         if (!httpSkipHeader (sf_client)) {
-            Serial.print (F("SFlux: header fail\n"));
+            Serial.print ("SFlux: header fail\n");
             goto out;
         }
 
@@ -433,12 +444,12 @@ bool retrievSolarFlux (SolarFluxData &sf)
 
         } else {
 
-            Serial.printf (_FX("SFlux: data short: %d / %d\n"), sf_i, SFLUX_NV);
+            Serial.printf ("SFlux: data short: %d / %d\n", sf_i, SFLUX_NV);
         }
 
     } else {
 
-        Serial.print (F("SFlux: connection failed\n"));
+        Serial.print ("SFlux: connection failed\n");
     }
 
 out:
@@ -460,7 +471,7 @@ static bool checkForNewSolarFlux (void)
         return (false);
 
     SolarFluxData sf;
-    return (retrievSolarFlux (sf));
+    return (retrieveSolarFlux (sf));
 }
 
 
@@ -492,18 +503,18 @@ bool retrieveDRAP (DRAPData &drap)
 
     // mark data as bad until proven otherwise
     space_wx[SPCWX_DRAP].value_ok = false;
-    drap_cache.data_ok = false;
+    drap.data_ok = drap_cache.data_ok = false;
 
     Serial.println (drap_page);
     if (wifiOk() && drap_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
-        httpHCPGET (drap_client, backend_host, drap_page);
+        httpHCGET (drap_client, backend_host, drap_page);
 
         // skip response header
         if (!httpSkipHeader (drap_client)) {
-            Serial.print (F("DRAP: header short\n"));
+            Serial.print ("DRAP: header short\n");
             goto out;
         }
 
@@ -521,17 +532,17 @@ bool retrieveDRAP (DRAPData &drap)
             // crack
             long utime;
             float min, max, mean;
-            if (sscanf (line, _FX("%ld : %f %f %f"), &utime, &min, &max, &mean) != 4) {
-                Serial.printf (_FX("DRAP: garbled: %s\n"), line);
+            if (sscanf (line, "%ld : %f %f %f", &utime, &min, &max, &mean) != 4) {
+                Serial.printf ("DRAP: garbled: %s\n", line);
                 goto out;
             }
-            // Serial.printf (_FX("DRAP: %ld %g %g %g\n", utime, min, max, mean);
+            // Serial.printf ("DRAP: %ld %g %g %g\n", utime, min, max, mean;
 
             // find age for this datum, skip if crazy new or too old
             int age = t_now - utime;
             int xi = DRAPDATA_NPTS*(DRAPDATA_PERIOD - age)/DRAPDATA_PERIOD;
             if (xi < 0 || xi >= DRAPDATA_NPTS) {
-                // Serial.printf (_FX("DRAP: skipping age %g hrs\n"), age/3600.0F);
+                // Serial.printf ("DRAP: skipping age %g hrs\n", age/3600.0F);
                 continue;
             }
             drap_cache.x[xi] = age/(-3600.0F);                             // seconds to hours ago
@@ -539,13 +550,13 @@ bool retrieveDRAP (DRAPData &drap)
             // set in array if larger
             if (max > drap_cache.y[xi]) {
                 // if (y[xi] > 0)
-                    // Serial.printf (_FX("DRAP: saw xi %d utime %ld age %d again\n"), xi, utime, age);
+                    // Serial.printf ("DRAP: saw xi %d utime %ld age %d again\n", xi, utime, age);
                 drap_cache.y[xi] = max;
             }
 
-            // Serial.printf (_FX("DRAP: %3d %6d: %g %g\n"), xi, age, x[xi], y[xi]);
+            // Serial.printf ("DRAP: %3d %6d: %g %g\n", xi, age, x[xi], y[xi]);
         }
-        Serial.printf (_FX("DRAP: read %d lines\n"), n_lines);
+        Serial.printf ("DRAP: read %d lines\n", n_lines);
 
         // look alive
         updateClocks(false);
@@ -558,8 +569,7 @@ bool retrieveDRAP (DRAPData &drap)
                 drap_cache.x[i] = (DRAPDATA_PERIOD - i*DRAPDATA_PERIOD/DRAPDATA_NPTS)/-3600.0F;
                 if (i > 0)
                     drap_cache.y[i] = drap_cache.y[i-1];                      // fill with previous
-                Serial.printf (_FX("DRAP: filling missing interval %d at age %g hrs to %g\n"), i,
-                                                drap_cache.x[i], drap_cache.y[i]);
+                // Serial.printf ("DRAP: filling missing interval %d at age %g hrs to %g\n", i, drap_cache.x[i], drap_cache.y[i]);
                 n_missing++;
             } else {
                 maxi_good = i;
@@ -568,11 +578,11 @@ bool retrieveDRAP (DRAPData &drap)
 
         // check for too much missing or newest too old
         if (n_missing > _DRAPDATA_MAXMI) {
-            Serial.print (F("DRAP: data too sparse\n"));
+            Serial.print ("DRAP: data too sparse\n");
             goto out;
         }
         if (maxi_good < _DRAP_MINGOODI) {
-            Serial.print (F("DRAP: data too old\n"));
+            Serial.print ("DRAP: data too old\n");
             goto out;
         }
 
@@ -584,7 +594,7 @@ bool retrieveDRAP (DRAPData &drap)
 
     } else {
 
-        Serial.print (F("DRAP: connection failed\n"));
+        Serial.print ("DRAP: connection failed\n");
     }
 
 out:
@@ -629,18 +639,18 @@ bool retrieveKp (KpData &kp)
 
     // mark value as bad until proven otherwise
     space_wx[SPCWX_KP].value_ok = false;
-    kp_cache.data_ok = false;
+    kp.data_ok = kp_cache.data_ok = false;
 
     Serial.println(kp_page);
     if (wifiOk() && kp_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
-        httpHCPGET (kp_client, backend_host, kp_page);
+        httpHCGET (kp_client, backend_host, kp_page);
 
         // skip response header
         if (!httpSkipHeader (kp_client)) {
-            Serial.print (F("Kp: header short\n"));
+            Serial.print ("Kp: header short\n");
             goto out;
         }
 
@@ -666,12 +676,12 @@ bool retrieveKp (KpData &kp)
 
         } else {
 
-            Serial.printf (_FX("Kp: data short: %d of %d\n"), kp_i, KP_NV);
+            Serial.printf ("Kp: data short: %d of %d\n", kp_i, KP_NV);
         }
 
     } else {
 
-        Serial.print (F("Kp: connection failed\n"));
+        Serial.print ("Kp: connection failed\n");
     }
 
 out:
@@ -716,18 +726,18 @@ bool retrieveXRay (XRayData &xray)
 
     // mark value as bad until proven otherwise
     space_wx[SPCWX_XRAY].value_ok = false;
-    xray_cache.data_ok = false;
+    xray.data_ok = xray_cache.data_ok = false;
 
     Serial.println(xray_page);
     if (wifiOk() && xray_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
-        httpHCPGET (xray_client, backend_host, xray_page);
+        httpHCGET (xray_client, backend_host, xray_page);
 
         // soak up remaining header
         if (!httpSkipHeader (xray_client)) {
-            Serial.print (F("XRay: header short\n"));
+            Serial.print ("XRay: header short\n");
             goto out;
         }
 
@@ -774,12 +784,12 @@ bool retrieveXRay (XRayData &xray)
 
         } else {
 
-            Serial.printf (_FX("XRay: data short %d of %d\n"), xray_i, XRAY_NV);
+            Serial.printf ("XRay: data short %d of %d\n", xray_i, XRAY_NV);
         }
 
     } else {
 
-        Serial.print (F("XRay: connection failed\n"));
+        Serial.print ("XRay: connection failed\n");
     }
 
 out:
@@ -824,18 +834,18 @@ bool retrieveBzBt (BzBtData &bzbt)
 
     // mark data as bad until proven otherwise
     space_wx[SPCWX_BZ].value_ok = false;
-    bzbt_cache.data_ok = false;
+    bzbt.data_ok = bzbt_cache.data_ok = false;
 
     Serial.println(bzbt_page);
     if (wifiOk() && bzbt_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
-        httpHCPGET (bzbt_client, backend_host, bzbt_page);
+        httpHCGET (bzbt_client, backend_host, bzbt_page);
 
         // skip over remaining header
         if (!httpSkipHeader (bzbt_client)) {
-            Serial.print (F("BZBT: header short\n"));
+            Serial.print ("BZBT: header short\n");
             goto out;
         }
 
@@ -852,7 +862,7 @@ bool retrieveBzBt (BzBtData &bzbt)
             // Serial.printf("BZBT: %d %s\n", bzbt_i, line);
             long unix;
             float this_bz, this_bt;
-            if (sscanf (line, _FX("%ld %*f %*f %f %f"), &unix, &this_bz, &this_bt) != 3) {
+            if (sscanf (line, "%ld %*f %*f %f %f", &unix, &this_bz, &this_bt) != 3) {
                 // Serial.printf ("BZBT: rejecting %s\n", line);
                 continue;
             }
@@ -880,14 +890,14 @@ bool retrieveBzBt (BzBtData &bzbt)
         } else {
 
             if (bzbt_i < BZBT_NV)
-                Serial.printf (_FX("BZBT: data short %d of %d\n"), bzbt_i, BZBT_NV);
+                Serial.printf ("BZBT: data short %d of %d\n", bzbt_i, BZBT_NV);
             else
-                Serial.printf (_FX("BZBT: data %g hrs old\n"), -bzbt_cache.x[BZBT_NV-1]);
+                Serial.printf ("BZBT: data %g hrs old\n", -bzbt_cache.x[BZBT_NV-1]);
         }
 
     } else {
 
-        Serial.print (F("BZBT: connection failed\n"));
+        Serial.print ("BZBT: connection failed\n");
     }
 
 out:
@@ -930,18 +940,18 @@ bool retrieveSolarWind(SolarWindData &sw)
 
     // mark value as bad until proven otherwise
     space_wx[SPCWX_SOLWIND].value_ok = false;
-    sw_cache.data_ok = false;
+    sw.data_ok = sw_cache.data_ok = false;
 
     Serial.println (swind_page);
     if (wifiOk() && swind_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
-        httpHCPGET (swind_client, backend_host, swind_page);
+        httpHCGET (swind_client, backend_host, swind_page);
 
         // skip response header
         if (!httpSkipHeader (swind_client)) {
-            Serial.println (F("SolWind: header short"));
+            Serial.println ("SolWind: header short");
             goto out;
         }
 
@@ -955,12 +965,12 @@ bool retrieveSolarWind(SolarWindData &sw)
         float max_y = 0;
         for (sw_cache.n_values = 0; sw_cache.n_values < SWIND_MAXN
                                                 && getTCPLine (swind_client, line, sizeof(line), NULL); ) {
-            // Serial.printf (_FX("SolWind: %3d: %s\n"), nsw, line);
+            // Serial.printf ("SolWind: %3d: %s\n", nsw, line);
             long unixs;         // unix seconds
             float density;      // /cm^2
             float speed;        // km/s
-            if (sscanf (line, _FX("%ld %f %f"), &unixs, &density, &speed) != 3) {
-                Serial.println (F("SolWind: data garbled"));
+            if (sscanf (line, "%ld %f %f", &unixs, &density, &speed) != 3) {
+                Serial.println ("SolWind: data garbled");
                 goto out;
             }
 
@@ -979,7 +989,7 @@ bool retrieveSolarWind(SolarWindData &sw)
             // want x axis to be hours back from now
             sw_cache.x[sw_cache.n_values] = (t0 - unixs)/(-3600.0F);
             sw_cache.y[sw_cache.n_values] = max_y;
-            // Serial.printf (_FX("SolWind: %3d %5.2f %5.2f\n"), nsw, x[nsw], y[nsw]);
+            // Serial.printf ("SolWind: %3d %5.2f %5.2f\n", nsw, x[nsw], y[nsw]);
 
             // good one
             max_y = 0;
@@ -998,12 +1008,12 @@ bool retrieveSolarWind(SolarWindData &sw)
             sw = sw_cache;
 
         } else {
-            Serial.println (F("SolWind:: data error"));
+            Serial.println ("SolWind:: data error");
         }
 
     } else {
 
-        Serial.println (F("SolWind: connection failed"));
+        Serial.println ("SolWind: connection failed");
     }
 
 out:
@@ -1051,7 +1061,7 @@ bool retrieveNOAASWx (NOAASpaceWxData &noaasw)
 
     // mark data as bad until proven otherwise
     space_wx[SPCWX_NOAASPW].value_ok = false;
-    noaasw_cache.data_ok = false;
+    noaasw.data_ok = noaasw_cache.data_ok = false;
 
     // read scales
     Serial.println(noaaswx_page);
@@ -1061,7 +1071,7 @@ bool retrieveNOAASWx (NOAASpaceWxData &noaasw)
         updateClocks(false);
 
         // fetch page
-        httpHCPGET (noaaswx_client, backend_host, noaaswx_page);
+        httpHCGET (noaaswx_client, backend_host, noaaswx_page);
 
         // skip header then read the data lines
         if (httpSkipHeader (noaaswx_client)) {
@@ -1077,14 +1087,14 @@ bool retrieveNOAASWx (NOAASpaceWxData &noaasw)
 
                 // read next line
                 if (!getTCPLine (noaaswx_client, line, sizeof(line), NULL)) {
-                    Serial.println (F("NOAASW: missing data"));
+                    Serial.println ("NOAASW: missing data");
                     goto out;
                 }
-                // Serial.printf (_FX("NOAA: %d %s\n"), i, line);
+                // Serial.printf ("NOAA: %d %s\n", i, line);
 
                 // category in first char must match
                 if (noaasw_cache.cat[i] != line[0]) {
-                    Serial.printf (_FX("NOAASW: invalid class: %s\n"), line);
+                    Serial.printf ("NOAASW: invalid class: %s\n", line);
                     goto out;
                 }
 
@@ -1096,7 +1106,7 @@ bool retrieveNOAASWx (NOAASpaceWxData &noaasw)
                     char *endptr;
                     noaasw_cache.val[i][j] = strtol (lp, &endptr, 10);
                     if (lp == endptr) {
-                        Serial.printf (_FX("NOAASW: invalid line: %s\n"), line);
+                        Serial.printf ("NOAASW: invalid line: %s\n", line);
                         goto out;
                     }
                     lp = endptr;
@@ -1115,13 +1125,13 @@ bool retrieveNOAASWx (NOAASpaceWxData &noaasw)
             noaasw = noaasw_cache;
 
         } else {
-            Serial.println (F("NOAASW: header short"));
+            Serial.println ("NOAASW: header short");
             goto out;
         }
 
     } else {
 
-        Serial.println (F("NOAASW: connection failed"));
+        Serial.println ("NOAASW: connection failed");
     }
 
 out:
@@ -1165,18 +1175,18 @@ bool retrieveAurora (AuroraData &aurora)
 
     // mark data as bad until proven otherwise
     space_wx[SPCWX_AURORA].value_ok = false;
-    aurora_cache.data_ok = false;
+    aurora.data_ok = aurora_cache.data_ok = false;
 
     Serial.println (aurora_page);
     if (wifiOk() && aurora_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
-        httpHCPGET (aurora_client, backend_host, aurora_page);
+        httpHCGET (aurora_client, backend_host, aurora_page);
 
         // skip response header
         if (!httpSkipHeader (aurora_client)) {
-            Serial.print (F("AURORA: header short\n"));
+            Serial.print ("AURORA: header short\n");
             goto out;
         }
 
@@ -1186,26 +1196,24 @@ bool retrieveAurora (AuroraData &aurora)
         // init state
         time_t t_now = myNow();
         float prev_age = 1e10;
-        int n_lines = 0;
         aurora_cache.n_points = 0;
 
         // read lines keep up to AURORA_NPTS newest
         while (getTCPLine (aurora_client, line, sizeof(line), NULL)) {
-            n_lines++;
 
             // crack
             long utime;
             float percent;
-            if (sscanf (line, _FX("%ld %f"), &utime, &percent) != 2) {
-                Serial.printf (_FX("AURORA: garbled: %s\n"), line);
+            if (sscanf (line, "%ld %f", &utime, &percent) != 2) {
+                Serial.printf ("AURORA: garbled: %s\n", line);
                 goto out;
             }
-            // Serial.printf (_FX("AURORA: %ld %g\n", utime, percent
+            // Serial.printf ("AURORA: %ld %g\n", utime, percent
 
             // find age for this datum, skip if crazy new or too old or out of order
             float age = (t_now - utime)/3600.0F;        // seconds to hours
             if (age < 0 || age > AURORA_MAXAGE || age >= prev_age) {
-                Serial.printf (_FX("AURORA: skipping age %g hrs\n"), age);
+                Serial.printf ("AURORA: skipping age %g hrs\n", age);
                 continue;
             }
             prev_age = age;
@@ -1226,14 +1234,14 @@ bool retrieveAurora (AuroraData &aurora)
 
         // require at least a few recent
         if (aurora_cache.n_points < 5) {
-            Serial.printf (_FX("AURORA: only %d points\n"), aurora_cache.n_points);
+            Serial.printf ("AURORA: only %d points\n", aurora_cache.n_points);
         } else if (aurora_cache.age_hrs[aurora_cache.n_points-1] <= -1.0F) {
-            Serial.printf (_FX("AURORA: newest is too old: %g hrs\n"),
+            Serial.printf ("AURORA: newest is too old: %g hrs\n",
                                 -aurora_cache.age_hrs[aurora_cache.n_points-1]);
         } else {
 
             // good
-            Serial.printf (_FX("AURORA: found %d points [%g,%g] hrs old\n"), aurora_cache.n_points,
+            Serial.printf ("AURORA: found %d points [%g,%g] hrs old\n", aurora_cache.n_points,
                     -aurora_cache.age_hrs[0], -aurora_cache.age_hrs[aurora_cache.n_points-1]);
 
             // capture newest value for space wx
@@ -1245,7 +1253,7 @@ bool retrieveAurora (AuroraData &aurora)
 
     } else {
 
-        Serial.print (F("AURORA: connection failed\n"));
+        Serial.print ("AURORA: connection failed\n");
     }
 
 out:

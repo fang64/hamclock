@@ -11,7 +11,7 @@ bool rss_local;                                 // if set: use local titles, not
 
 // local state
 #define RSS_MAXN        15                      // max number RSS entries to cache
-static const char rss_page[] PROGMEM = "/RSS/web15rss.pl";
+static const char rss_page[] = "/RSS/web15rss.pl";
 static char *rss_titles[RSS_MAXN];              // malloced titles
 static char *rss_tapurl;                        // malloced URL if tapped, if any
 static uint8_t rss_ntitles, rss_title_i;        // n titles and rolling index
@@ -36,7 +36,7 @@ static bool retrieveRSS (void)
         updateClocks(false);
 
         // fetch feed page
-        httpHCPGET (rss_client, backend_host, rss_page);
+        httpHCGET (rss_client, backend_host, rss_page);
 
         // skip response header
         if (!httpSkipHeader (rss_client)) {

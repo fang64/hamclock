@@ -359,23 +359,35 @@ static int processNPTap (char kbc, NPFieldName focus_fn, const SBox &b, const SC
     // use kbc if given
     if (kbc != NPKB_NONE) {
         switch (kbc) {
-        case '\t':      // tab advances to next field
+        case CHAR_TAB:      // advance to next field downwards, or wrap
+        case CHAR_DOWN:
             switch (focus_fn) {
-            case NPF_LAT: return (NPKB_LNG);
-            case NPF_LNG: return (NPKB_GRID);
-            default:      return (NPKB_LAT);
+            case NPF_LAT:  return (NPKB_LNG);
+            case NPF_LNG:  return (NPKB_GRID);
+            case NPF_GRID: return (NPKB_LAT);
+            case NPF_N:    return (NPKB_NONE);
             }
             break;
-        case '\n':      // fallthru
-        case '\r':
+        case CHAR_UP:      // advance upwards or wrap
+            switch (focus_fn) {
+            case NPF_LAT:  return (NPKB_GRID);
+            case NPF_LNG:  return (NPKB_LAT);
+            case NPF_GRID: return (NPKB_LNG);
+            case NPF_N:    return (NPKB_NONE);
+            }
+            break;
+        case CHAR_NL:      // fallthru
+        case CHAR_CR:
             return (NPKB_OK);
-        case 27:        // esc
+        case CHAR_ESC:
             return (NPKB_CANCEL);
-        case '\b':      // fallthru
-        case 127:       // del
+        case CHAR_BS:      // fallthru
+        case CHAR_DEL:
             return (NPKB_DEL);
         default:
-            return (toupper(kbc));
+            if (isalnum(kbc))
+                return (toupper(kbc));
+            return (NPKB_NONE);
         }
     }
 
@@ -441,10 +453,10 @@ bool askNewPos (const SBox &b, LatLong &op_ll, char op_grid[MAID_CHARLEN])
     char kbc;
     UserInput ui = {
         b,
-        NULL,
-        false,
+        UI_UFuncNone,
+        UF_UNUSED,
         NP_TIMEOUT,
-        false,
+        UF_NOCLOCKS,
         s,
         kbc,
         false,
@@ -460,7 +472,7 @@ bool askNewPos (const SBox &b, LatLong &op_ll, char op_grid[MAID_CHARLEN])
         NPFieldName focus_fn = (NPFieldName)(focus_fp - fields);
 
         // wait for user to do something or time out
-        if (!waitForUser(ui)) {
+        if (!waitForUser(ui) || kbc == CHAR_ESC || (kbc == CHAR_NONE && !inBox (s, b))) {
             cancelled = true;
             continue;
         }

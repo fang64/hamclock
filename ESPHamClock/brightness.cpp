@@ -49,7 +49,7 @@ bool found_ltr;                                 // set if ltr329 discovered
 // NCDXF_b or "BRB" public state
 uint8_t brb_mode;                               // one of BRB_MODE
 uint16_t brb_rotset;                            // mask of current BRB_MODEs
-time_t brb_updateT;                             // time of next update
+time_t brb_next_update;                         // time of next update
 
 #define X(a,b)  b,                              // expands BRBMODES to name plus comma
 const char *brb_names[BRB_N] = {
@@ -325,7 +325,7 @@ static void getPhotControl (SBox &b)
  */
 static void drawPhotSymbol()
 {
-        if (getSWDisplayState() != SWD_NONE)
+        if (!mainpage_up)
             return;
 
         uint8_t n = 2;                                          // number of \/
@@ -398,7 +398,7 @@ static void drawPhotControl()
 {
         resetWatchdog();
 
-        if (getSWDisplayState() != SWD_NONE)
+        if (!mainpage_up)
             return;
 
         SBox b;
@@ -439,7 +439,7 @@ static void drawBrControl()
 {
         resetWatchdog();
 
-        if (getSWDisplayState() != SWD_NONE)
+        if (!mainpage_up)
             return;
 
         SBox b;
@@ -486,7 +486,7 @@ static void drawOnOffControls()
 {
         resetWatchdog();
 
-        if (brb_mode != BRB_SHOW_ONOFF || getSWDisplayState() != SWD_NONE)
+        if (brb_mode != BRB_SHOW_ONOFF || !mainpage_up)
             return;
 
         tft.fillRect (NCDXF_b.x+1, NCDXF_b.y+1, NCDXF_b.w-2, NCDXF_b.h-2, RA8875_BLACK);
@@ -756,7 +756,7 @@ static void engageDisplayBrightness(bool log)
 
         // Serial.printf (_FX("BR: engage mode %d\n"), brb_mode);
 
-        if (getSWDisplayState() == SWD_NONE && !wifiMeterIsUp()) {
+        if (mainpage_up) {
             if (brb_mode == BRB_SHOW_BR)
                 drawBrControl();
             else if (brb_mode == BRB_SHOW_PHOT) {
@@ -1182,12 +1182,13 @@ static void runNCDXFMenu (void)
         };
 
         // boxes
-        SBox menu_b = NCDXF_b;                      // copy, not ref!
+        SBox menu_b = NCDXF_b;                          // copy, not ref!
         menu_b.y += 10;
+        menu_b.w = 0;                                   // shrink wrap
         SBox ok_b;
 
         // run menu
-        MenuInfo menu = {menu_b, ok_b, true, true, 1, BRB_N, mitems};   // no room for cancel
+        MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_NOCANCEL, 1, BRB_N, mitems};   // no room for cancel
         bool ok = runMenu(menu);
 
         // engage new option unless canceled
@@ -1221,7 +1222,7 @@ static void runNCDXFMenu (void)
         }
 
         // immediate redraw even if no change in order to erase menu
-        brb_updateT = 0;
+        brb_next_update = 0;
 
         // save
         NVWriteUInt16 (NV_BRB_ROTSET, brb_rotset);

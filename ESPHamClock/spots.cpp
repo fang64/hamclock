@@ -3,6 +3,37 @@
 
 #include "HamClock.h"
 
+#define X(a,b,c,d,e) {b,c,d,e},                 // expands _HAM_BANDS to each BandEdge entry
+const BandEdge ham_bands[HAMBAND_N] = {
+    _HAM_BANDS
+};
+#undef X
+
+/* return index of ham_bands[] containing Hz, else HAMBAND_NONE
+ */
+HamBandSetting findHamBand (long Hz)
+{
+    int kHz = (int)(Hz/1000);
+
+    // quick binary search
+
+    int min_i = 0;
+    int max_i = HAMBAND_N-1;
+    while (min_i <= max_i) {
+        int mid = (min_i + max_i)/2;
+        if (ham_bands[mid].max_kHz < kHz)
+            min_i = mid+1;
+        else if (ham_bands[mid].min_kHz > kHz)
+            max_i = mid-1;
+        else
+            return ((HamBandSetting)mid);
+    }
+
+    // Serial.printf (_FX("%ld Hz unsupported band\n"), Hz);
+    return (HAMBAND_NONE);
+}
+
+
 
 /* find closest location from ll to either end of paths defined in the given list of spots.
  * return whether found one within MAX_CSR_DIST.
@@ -52,9 +83,9 @@ bool getClosestSpot (const DXSpot *list, int n_list, const LatLong &from_ll,
 
 
 /* draw a dot and/or label at the given end of a spot path, as per setup options.
- * N.B. we don't draw the path, use drawSpotPathOnMap() for that.
+ * N.B. this only handles LOME_RXEND or LOME_TXEND, not LOME_BOTH.
  */
-void drawSpotLabelOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMapDot dot)
+static void drawSpotTXRXOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMapDot dot)
 {
     // always draw at least the dot unless no label at all
     LabelType lblt = getSpotLabelType();
@@ -64,8 +95,8 @@ void drawSpotLabelOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMapDot d
     // printf ("******** dot_r %d\n", dot_r);        // RBF
 
     // handy bools
-    bool tx_end = txrx == LOM_TXEND;
-    bool just_dot = dot == LOM_JUSTDOT;
+    bool tx_end = txrx == LOME_TXEND;
+    bool just_dot = dot == LOMD_JUSTDOT;
 
     // handy ll of desired end
     const LatLong &ll = tx_end ? spot.tx_ll : spot.rx_ll;
@@ -112,6 +143,17 @@ void drawSpotLabelOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMapDot d
     setMapTagBox (tag, s, dot_r/tft.SCALESZ+1, b);                        // wants canonical size
     uint16_t txt_color = getGoodTextColor (b_color);
     drawMapTag (tag, b, txt_color, b_color);
+}
+
+/* draw a dot and/or label at the given end/ends of a spot path, as per setup options.
+ * N.B. we don't draw the path, use drawSpotPathOnMap() for that.
+ */
+void drawSpotLabelOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMapDot dot)
+{
+    if (txrx == LOME_TXEND || txrx == LOME_BOTH)
+        drawSpotTXRXOnMap (spot, LOME_TXEND, dot);
+    if (txrx == LOME_RXEND || txrx == LOME_BOTH)
+        drawSpotTXRXOnMap (spot, LOME_RXEND, dot);
 }
 
 /* draw path if enabled as per setup options.
@@ -179,12 +221,73 @@ void drawSpotOnList (const SBox &box, const DXSpot &spot, int row, uint16_t bg_c
     tft.print (line);
 
     // add call
-    const int max_call = MAX_SPOTCALL_LEN-1;
+    const int max_call = BOX_IS_PANE_0(box) ? MAX_SPOTCALL_LEN-3 : MAX_SPOTCALL_LEN-1;
     tft.setTextColor(RA8875_WHITE);
     snprintf (line, sizeof(line), " %-*.*s ", max_call, max_call, spot.tx_call);
     tft.print (line);
 
     // and finally age, width depending on pane
     time_t age = myNow() - spot.spotted;
-    tft.print (formatAge (age, line, sizeof(line), BOX_IS_PANE_0(box) ? 1 : 4));
+    tft.print (formatAge (age, line, sizeof(line), BOX_IS_PANE_0(box) ? 3 : 4));
+}
+
+/* shift ll slightly so it's more likely to have a separate pick position
+ */
+void ditherLL (LatLong &ll)
+{
+    // move around within roughly 1 pixel
+    const float deg_per_pix = (360.0F/BUILD_W)/pan_zoom.zoom;
+    ll.lat_d += deg_per_pix * (0.5F - random(100)/100.0F);
+    ll.lng_d += deg_per_pix * (0.5F - random(100)/100.0F);
+    normalizeLL (ll);
+}
+
+
+
+
+/* qsort-style function to compare two DXSpot by freq
+ */
+int qsDXCFreq (const void *v1, const void *v2)
+{
+    DXSpot *s1 = (DXSpot *)v1;
+    DXSpot *s2 = (DXSpot *)v2;
+    return (roundf(s1->kHz - s2->kHz));
+}
+
+/* qsort-style function to compare two DXSpot by rx_call AKA id
+ */
+int qsDXCDECall (const void *v1, const void *v2)
+{
+    DXSpot *s1 = (DXSpot *)v1;
+    DXSpot *s2 = (DXSpot *)v2;
+    return (strcmp (s1->rx_call, s2->rx_call));
+}
+
+/* qsort-style function to compare two DXSpot by tx_grid
+ */
+int qsDXCDXCall (const void *v1, const void *v2)
+{
+    DXSpot *s1 = (DXSpot *)v1;
+    DXSpot *s2 = (DXSpot *)v2;
+    return (strcmp (s1->tx_call, s2->tx_call));
+}
+
+/* qsort-style function to compare two DXSpot by time spotted
+ */
+int qsDXCSpotted (const void *v1, const void *v2)
+{
+    DXSpot *s1 = (DXSpot *)v1;
+    DXSpot *s2 = (DXSpot *)v2;
+    return (s1->spotted - s2->spotted);
+}
+
+/* qsort-style function to compare two DXSpot by separation distance
+ */
+int qsDXCDist (const void *v1, const void *v2)
+{
+    DXSpot *s1 = (DXSpot *)v1;
+    DXSpot *s2 = (DXSpot *)v2;
+    float d1 = simpleSphereDist (s1->rx_ll, s1->tx_ll);
+    float d2 = simpleSphereDist (s2->rx_ll, s2->tx_ll);
+    return (roundf(1000*(d1 - d2)));
 }

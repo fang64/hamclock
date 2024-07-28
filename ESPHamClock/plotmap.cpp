@@ -59,7 +59,7 @@ void plotMap (const char *filename, const char *title, uint16_t color)
 
         // skip response header
         if (!httpSkipHeader (map_client)) {
-            mapMsg (true, 2000, _FX("%s: Header is short"), file_base);
+            mapMsg (2000, _FX("%s: Header is short"), file_base);
             goto out;
         }
 
@@ -71,7 +71,7 @@ void plotMap (const char *filename, const char *title, uint16_t color)
             float x, y;
             if (sscanf (line, "%f %f", &x, &y) != 2) {
                 Serial.printf (_FX("PMAP: bad line: %s\n"), line);
-                mapMsg (true, 2000, _FX("%s: Data is corrupted"), file_base);
+                mapMsg (2000, _FX("%s: Data is corrupted"), file_base);
                 goto out;
             }
 
@@ -79,7 +79,7 @@ void plotMap (const char *filename, const char *title, uint16_t color)
             float *new_x = (float *) realloc (x_data, (n_data+1) * sizeof(float));
             float *new_y = (float *) realloc (y_data, (n_data+1) * sizeof(float));
             if (!new_x || !new_y) {
-                mapMsg (true, 2000, _FX("%s: Insufficient memory"), file_base);
+                mapMsg (2000, _FX("%s: Insufficient memory"), file_base);
                 goto out;
             }
 
@@ -101,7 +101,7 @@ void plotMap (const char *filename, const char *title, uint16_t color)
 
         // require at least a few points
         if (n_data < 10) {
-            mapMsg (true, 2000, _FX("%s: File is short"), file_base);
+            mapMsg (2000, _FX("%s: File is short"), file_base);
             goto out;
         }
 
@@ -169,15 +169,15 @@ out:
         // see it all now
         tft.drawPR();
 
-        // report info for tap times until time out or tap Resume button
+        // report info for tap times until time out or do anything
         SCoord s;
         char c;
         UserInput ui = {
             map_b,
-            NULL,
-            false,
+            UI_UFuncNone,
+            UF_UNUSED,
             30000,
-            true,
+            UF_CLOCKSOK,
             s,
             c,
             false,
@@ -190,10 +190,6 @@ out:
         tft.drawPR();
 
     }
-
-
-    // record mem usage before freeing
-    printFreeHeap (F("plotMap"));
 
     // clean up, any error is already reported
     free (x_data);
