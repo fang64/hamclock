@@ -1438,7 +1438,7 @@ char *formatAge (time_t age, char *line, int line_l, int cols)
 
     case 3:
 
-        // show 2 digits then s, m, h, d, M, y, c
+        // show 2 digits then s, m, h, d, M, y
         if (age < 60) {
             snprintf (line, line_l, "%2lds", age);
         } else if (age < (60*60)) {
@@ -1449,10 +1449,9 @@ char *formatAge (time_t age, char *line, int line_l, int cols)
             snprintf (line, line_l, "%2ldd", age/(3600L*24));
         } else if (age < 365L*3600*24) {
             snprintf (line, line_l, "%2ldM", age/(31L*3600*24));
-        } else if (age < 100L*365*3600*24) {
+        } else {
             snprintf (line, line_l, "%2ldy", age/(365L*3600*24));
-        } else
-            snprintf (line, line_l, "%2ldc", age/(100L*365*3600*24));
+        }
 
         break;
 

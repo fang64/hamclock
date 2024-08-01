@@ -779,7 +779,7 @@ static void drawMouseLoc()
     // erase any previous city then reset was_city as flag for next time
     if (was_city) {
         tft.fillRect (names_x, names_y, names_w, names_h, RA8875_BLACK);
-        was_city = NULL;
+        was_city = false;
     }
 
     // erase menu area if going to show new data or clean up for azm not over hemispheres

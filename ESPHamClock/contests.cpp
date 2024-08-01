@@ -110,8 +110,8 @@ static void drawContestsPane (const SBox &box)
     }
 
     // draw scroll controls, if needed
-    cts_ss.drawScrollDownControl (box, CONTEST_COLOR);
-    cts_ss.drawScrollUpControl (box, CONTEST_COLOR);
+    cts_ss.drawScrollDownControl (box, CONTEST_COLOR, CONTEST_COLOR);
+    cts_ss.drawScrollUpControl (box, CONTEST_COLOR, CONTEST_COLOR);
 }
 
 /* scroll up, if appropriate to do so now.

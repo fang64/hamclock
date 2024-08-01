@@ -143,46 +143,66 @@ static void formatONTASpot (const DXSpot &spot, const ONTAState *osp, const SBox
  */
 static void drawONTAVisSpots (const SBox &box, const ONTAState *osp)
 {
+    // can't quite use drawVisibleSpots() because of unique formatting :-(
+
     tft.fillRect (box.x+1, box.y + LISTING_Y0-1, box.w-2, box.h - LISTING_Y0 - 1, RA8875_BLACK);
     selectFontStyle (LIGHT_FONT, FAST_FONT);
     uint16_t x = box.x + 1;
     uint16_t y0 = box.y + LISTING_Y0;
 
-    // draw otaspots top_vis on top
+    // show vis spots and note if any would be red above and below
+    bool any_older = false;
+    bool any_newer = false;
     int min_i, max_i;
     if (osp->ss.getVisIndices (min_i, max_i) > 0) {
-
-        for (int i = min_i; i <= max_i; i++) {
-            // get info line
+        for (int i = 0; i < osp->ss.n_data; i++) {
             const DXSpot &spot = osp->spots[i];
-            char line[50];
-            int freq_len;
-            formatONTASpot (spot, osp, box, line, sizeof(line), freq_len);
+            if (i < min_i) {
+                if (!any_older)
+                    any_older = checkWatchListSpot (osp->wl, spot) == WLS_HILITE;
+            } else if (i > max_i) {
+                if (!any_newer)
+                    any_newer = checkWatchListSpot (osp->wl, spot) == WLS_HILITE;
+            } else {
+                // build info line
+                char line[50];
+                int freq_len;
+                formatONTASpot (spot, osp, box, line, sizeof(line), freq_len);
 
-            // set y location
-            uint16_t y = y0 + osp->ss.getDisplayRow(i) * LISTING_DY;
+                // set y location
+                uint16_t y = y0 + osp->ss.getDisplayRow(i) * LISTING_DY;
 
-            // highlight overall bg if on watch list
-            if (checkWatchListSpot (osp->wl, spot) == WLS_HILITE)
-                tft.fillRect (x, y-1, box.w-2, LISTING_DY-3, RA8875_RED);
+                // highlight overall bg if on watch list
+                if (checkWatchListSpot (osp->wl, spot) == WLS_HILITE)
+                    tft.fillRect (x, y-1, box.w-2, LISTING_DY-3, RA8875_RED);
 
-            // show freq with proper band map color background
-            uint16_t bg_col = getBandColor ((long)(spot.kHz*1000));           // wants Hz
-            uint16_t txt_col = getGoodTextColor (bg_col);
-            tft.setTextColor(txt_col);
-            tft.fillRect (x, y-1, freq_len*6, LISTING_DY-3, bg_col);
-            tft.setCursor (x, y);
-            tft.printf ("%*.*s", freq_len, freq_len, line);
+                // show freq with proper band map color background
+                uint16_t bg_col = getBandColor ((long)(spot.kHz*1000));           // wants Hz
+                uint16_t txt_col = getGoodTextColor (bg_col);
+                tft.setTextColor(txt_col);
+                tft.fillRect (x, y-1, freq_len*6, LISTING_DY-3, bg_col);
+                tft.setCursor (x, y);
+                tft.printf ("%*.*s", freq_len, freq_len, line);
 
-            // show remainder of line in white
-            tft.setTextColor(RA8875_WHITE);
-            tft.printf (line+freq_len);
+                // show remainder of line in white
+                tft.setTextColor(RA8875_WHITE);
+                tft.printf (line+freq_len);
+            }
         }
     }
 
-    // draw scroll controls, as needed
-    osp->ss.drawScrollDownControl (box, osp->color);
-    osp->ss.drawScrollUpControl (box, osp->color);
+    // scroll controls red if any more red spots in their directions
+    uint16_t up_color = osp->color;
+    uint16_t dw_color = osp->color;
+    if (osp->ss.okToScrollDown() &&
+                ((scrollTopToBottom() && any_older) || (!scrollTopToBottom() && any_newer)))
+        dw_color = RA8875_RED;
+    if (osp->ss.okToScrollUp() &&
+                ((scrollTopToBottom() && any_newer) || (!scrollTopToBottom() && any_older)))
+        up_color = RA8875_RED;
+
+    osp->ss.drawScrollUpControl (box, up_color, osp->color);
+    osp->ss.drawScrollDownControl (box, dw_color, osp->color);
 }
 
 /* draw spots in the given pane box from scratch.
@@ -287,9 +307,11 @@ static void runONTASortMenu (const SBox &box, ONTAState *osp)
 
         // must recompile to update osp-wl but runMenu already insured wl compiles ok
         char ynot[100];
-        if (!compileWatchList (osp->wl, mtext.text, ynot, sizeof(ynot)))
+        if (lookupWatchListState (mtext.label) != WLA_OFF
+                                && !compileWatchList (osp->wl, mtext.text, ynot, sizeof(ynot)))
             fatalError ("onair failed recompling wl %s: %s", mtext.text, ynot);
-        setWatchList (osp->wl, wl_state, mtext.text);
+        setWatchList (osp->wl, mtext.label, mtext.text);
+        Serial.printf ("%s: set WL to %s %s\n", osp->prog, mtext.label, mtext.text);
 
         saveONTASortby(osp);
         updateOnTheAir (box, (ONTAProgram)(osp->whoami), true);

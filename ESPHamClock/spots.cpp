@@ -243,6 +243,45 @@ void ditherLL (LatLong &ll)
 }
 
 
+/* draw the visible spots and scroll controls
+ */
+void drawVisibleSpots (WatchListId wl_id, const DXSpot *spots, const ScrollState &ss, const SBox &box,
+int16_t app_color)
+{
+    // show vis spots and note if any would be red above and below
+    bool any_older = false;
+    bool any_newer = false;
+    int min_i, max_i;
+    if (ss.getVisIndices (min_i, max_i) > 0) {
+        for (int i = 0; i < ss.n_data; i++) {
+            const DXSpot &spot = spots[i];
+            if (i < min_i) {
+                if (!any_older)
+                    any_older = checkWatchListSpot (wl_id, spot) == WLS_HILITE;
+            } else if (i > max_i) {
+                if (!any_newer)
+                    any_newer = checkWatchListSpot (wl_id, spot) == WLS_HILITE;
+            } else {
+                uint16_t bg_col = checkWatchListSpot (wl_id, spot) == WLS_HILITE ? RA8875_RED:RA8875_BLACK;
+                drawSpotOnList (box, spot, ss.getDisplayRow(i), bg_col);
+            }
+        }
+    }
+
+    // scroll controls red if any more red spots in their directions
+    uint16_t up_color = app_color;
+    uint16_t dw_color = app_color;
+    if (ss.okToScrollDown() &&
+                ((scrollTopToBottom() && any_older) || (!scrollTopToBottom() && any_newer)))
+        dw_color = RA8875_RED;
+    if (ss.okToScrollUp() &&
+                ((scrollTopToBottom() && any_newer) || (!scrollTopToBottom() && any_older)))
+        up_color = RA8875_RED;
+
+    ss.drawScrollUpControl (box, up_color, app_color);
+    ss.drawScrollDownControl (box, dw_color, app_color);
+}
+
 
 
 /* qsort-style function to compare two DXSpot by freq

@@ -270,7 +270,7 @@ static StringPrompt string_pr[N_SPR] = {
 
     // "page 2" -- index 1
 
-    {1, {135, R2Y(1),  0, PR_H}, {135, R2Y(1), 660, PR_H}, NULL, dx_wlist, NV_DXWLIST_LEN, 0},
+    {1, {140, R2Y(1),  0, PR_H}, {140, R2Y(1), 660, PR_H}, NULL, dx_wlist, NV_DXWLIST_LEN, 0},
     {1, { 15, R2Y(2), 70, PR_H}, { 85, R2Y(2),  85, PR_H}, "port:", NULL, 0, 0},               // shadowed
     {1, { 15, R2Y(3), 70, PR_H}, { 85, R2Y(3), 260, PR_H}, "host:", dx_host, NV_DXHOST_LEN, 0},
     {1, { 15, R2Y(4), 70, PR_H}, { 85, R2Y(4), 260, PR_H}, "login:", dx_login, NV_DXLOGIN_LEN, 0},
@@ -305,9 +305,9 @@ static StringPrompt string_pr[N_SPR] = {
     {2, {100, R2Y(3), 60, PR_H}, {160, R2Y(3), 350, PR_H}, "host:", ntp_host, NV_NTPHOST_LEN, 0},
     {2, {100, R2Y(4), 60, PR_H}, {160, R2Y(4), 350, PR_H}, "file:", adif_fn, NV_ADIFFN_LEN, 0},
 
-    {2, {210, R2Y(5),  0, PR_H}, {210, R2Y(5), 580, PR_H}, NULL, adif_wlist, NV_ADIFWLIST_LEN, 0},
-    {2, {210, R2Y(6),  0, PR_H}, {210, R2Y(6), 400, PR_H}, NULL, pota_wlist, NV_POTAWLIST_LEN, 0},
-    {2, {210, R2Y(7),  0, PR_H}, {210, R2Y(7), 400, PR_H}, NULL, sota_wlist, NV_SOTAWLIST_LEN, 0},
+    {2, {215, R2Y(5),  0, PR_H}, {215, R2Y(5), 580, PR_H}, NULL, adif_wlist, NV_ADIFWLIST_LEN, 0},
+    {2, {215, R2Y(6),  0, PR_H}, {215, R2Y(6), 400, PR_H}, NULL, pota_wlist, NV_POTAWLIST_LEN, 0},
+    {2, {215, R2Y(7),  0, PR_H}, {215, R2Y(7), 400, PR_H}, NULL, sota_wlist, NV_SOTAWLIST_LEN, 0},
 
 
     // "page 4" -- index 3
@@ -471,9 +471,9 @@ static BoolPrompt bool_pr[N_BPR] = {
     {1, {200, R2Y(0),  90, PR_H}, {290, R2Y(0), 50,  PR_H}, false, "WSJT-X?", "No", "Yes", NOMATE},
 
 
-    {1, {15, R2Y(1),  70, PR_H},  {85, R2Y(1), 50, PR_H}, false, "watch",
+    {1, {15, R2Y(1),  70, PR_H},  {85, R2Y(1), 55, PR_H}, false, "watch",
                                                         wla_name[WLA_OFF], wla_name[WLA_NOT], DXWLISTB_BPR},
-    {1, {15, R2Y(1),  70, PR_H},  {85, R2Y(1), 50, PR_H}, false, NULL,
+    {1, {15, R2Y(1),  70, PR_H},  {85, R2Y(1), 55, PR_H}, false, NULL,
                                                         wla_name[WLA_FLAG], wla_name[WLA_ONLY], DXWLISTA_BPR},
                                              // 4x entangled: FF -> TF -> FT -> TT -> ...
 
@@ -512,21 +512,21 @@ static BoolPrompt bool_pr[N_BPR] = {
 
 
 
-    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  50, PR_H}, false, "ADIF watch",
+    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  55, PR_H}, false, "ADIF watch",
                                                     wla_name[WLA_OFF], wla_name[WLA_NOT], ADIFWLISTB_BPR},
-    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  50, PR_H}, false, NULL,
+    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  55, PR_H}, false, NULL,
                                                     wla_name[WLA_FLAG], wla_name[WLA_ONLY], ADIFWLISTA_BPR},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
 
-    {2, {10,  R2Y(6), 150, PR_H},  {160, R2Y(6),  50, PR_H}, false, "POTA watch",
+    {2, {10,  R2Y(6), 150, PR_H},  {160, R2Y(6),  55, PR_H}, false, "POTA watch",
                                                     wla_name[WLA_OFF], wla_name[WLA_NOT], POTAWLISTB_BPR},
-    {2, {10,  R2Y(6), 150, PR_H},  {160, R2Y(6),  50, PR_H}, false, NULL,
+    {2, {10,  R2Y(6), 150, PR_H},  {160, R2Y(6),  55, PR_H}, false, NULL,
                                                     wla_name[WLA_FLAG], wla_name[WLA_ONLY], POTAWLISTA_BPR},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
 
-    {2, {10,  R2Y(7), 150, PR_H},  {160, R2Y(7),  50, PR_H}, false, "SOTA watch",
+    {2, {10,  R2Y(7), 150, PR_H},  {160, R2Y(7),  55, PR_H}, false, "SOTA watch",
                                                     wla_name[WLA_OFF], wla_name[WLA_NOT], SOTAWLISTB_BPR},
-    {2, {10,  R2Y(7), 150, PR_H},  {160, R2Y(7),  50, PR_H}, false, NULL,
+    {2, {10,  R2Y(7), 150, PR_H},  {160, R2Y(7),  55, PR_H}, false, NULL,
                                                     wla_name[WLA_FLAG], wla_name[WLA_ONLY], SOTAWLISTA_BPR},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
 
@@ -2974,11 +2974,12 @@ static bool validateStringPrompts (bool show_errors)
     else
         badsids[n_badsids++] = CENTERLNG_SPR;
 
-    // ADIF file name must not be blank if used
+    // check ADIF file name
     if (bool_pr[ADIFSET_BPR].state) {
-        strtrim (adif_fn);
-        if (adif_fn[0] == '\0')
-            badsids[n_badsids++] = ADIFFN_SPR;
+        if (!checkADIFFilename (adif_fn, err_buf, sizeof(err_buf))) {
+            err_msg = err_buf;
+            badsids[n_badsids++] = err_sid = ADIFFN_SPR;
+        }
     }
 
     // check I2C file name
@@ -4951,6 +4952,16 @@ const char *getADIFilename(void)
     return (bool_pr[ADIFSET_BPR].state ? adif_fn : NULL);
 }
 
+/* save new ADIF file name and set it On in case getADIFilename is called later
+ * N.B. we assume checkADIFFilename has already been used.
+ */
+void setADIFFilename (const char *fn)
+{
+    snprintf (adif_fn, NV_ADIFFN_LEN, "%s", fn);
+    NVWriteString (NV_ADIFFN, adif_fn);
+    bool_pr[ADIFSET_BPR].state = true;
+}
+
 /* return name of I2C device to use, else NULL
  */
 const char *getI2CFilename(void)
@@ -4959,6 +4970,18 @@ const char *getI2CFilename(void)
     return (bool_pr[I2CON_BPR].state ? i2c_fn : NULL);
 }
 
+
+/* given a WatchList state name, return matching WatchListState, else WLA_NONE.
+ */
+WatchListState lookupWatchListState (const char *wl_state)
+{
+    for (int i = 0; i < WLA_N; i++) {
+        if (strcmp (wl_state, wla_name[i]) == 0) {
+            return ((WatchListState)i);
+        }
+    }
+    return (WLA_NONE);
+}
 
 
 /* return the filtering state and optionally the name of the given watch list
@@ -4974,18 +4997,15 @@ WatchListState getWatchListState (WatchListId wl_id, char name[WLA_MAXLEN])
     const char *wl_v = getEntangledValue (wli.a_bpr, wli.b_bpr);
 
     // look up in name list
-    for (int i = 0; i < WLA_N; i++) {
-        if (strcmp (wl_v, wla_name[i]) == 0) {
-            if (name)
-                snprintf (name, WLA_MAXLEN, "%s", wla_name[i]);
-            return ((WatchListState)i);
-        }
-    }
+    WatchListState wl_s = lookupWatchListState (wl_v);
+    if (wl_s == WLA_NONE)
+        fatalError ("getWatchListState for %d unknown state %s", wl_id, wl_v);
 
-    fatalError ("getWatchListState unknown state %s", wl_v);
+    // pass back if interested
+    if (name)
+        snprintf (name, WLA_MAXLEN, "%s", wla_name[wl_s]);
 
-    // lint
-    return (WLA_OFF);
+    return (wl_s);
 }
 
 /* return a full-length malloced copy of the given watch list string and its total possible length.
@@ -5022,22 +5042,17 @@ void setWatchList (WatchListId wl_id, const char *new_state, char *new_wlstr)
 
     // save it to NV
     NVWriteString (wli.nv, wli.wlist);
-
-    // log
-    Serial.printf ("WLIST: set %s to %s %s\n", wli.name, new_state, new_wlstr);
 }
 
-/* given the text name of a WatchListState, change it IN PLACE to next in the series
+/* given the text name of a WatchListState in tfp->label, change it IN PLACE to next in the series
  */
-void rotateWatchListState (char *state_name, size_t max_len)
+void rotateWatchListState (struct _menu_text *tfp)
 {
-    for (int i = 0; i < WLA_N; i++) {
-        if (strcmp (state_name, wla_name[i]) == 0) {
-            snprintf (state_name, max_len, "%s", wla_name[(i+1) % WLA_N]);
-            return;
-        }
-    }
-    fatalError ("rotateWatchListState unknown name: %.10s", state_name);
+    WatchListState wl_s = lookupWatchListState (tfp->label);
+    if (wl_s == WLA_NONE)
+        fatalError ("rotateWatchListState unknown name: %.10s", tfp->label);
+
+    snprintf (tfp->label, tfp->l_mem, "%s", wla_name[((int)wl_s+1) % WLA_N]);
 }
 
 /* handy way to get the name of a watch list

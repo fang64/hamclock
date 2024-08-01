@@ -954,6 +954,8 @@ extern void drawADIFSpotsOnMap (void);
 extern void readADIFFile (GenReader &gr, long gr_len, int &n_good, int &n_bad);
 extern bool getClosestADIFSpot (const LatLong &ll, DXSpot *sp, LatLong *llp);
 extern void cleanADIF(void);
+extern bool checkADIFFilename (const char *fn, char *ynot, size_t n_ynot);
+
 
 
 
@@ -1648,7 +1650,7 @@ typedef enum {
     M_NOCANCEL,
 } MenuCancellable;
 
-typedef struct {
+typedef struct _menu_text {
     char *text;                 // mutable "value" memory, must include EOS
     size_t t_mem;               // total text[] memory (string may be shorter)
     char *label;                // mutable "label" memory replaces const MenuItem label, must include EOS
@@ -1657,8 +1659,8 @@ typedef struct {
     bool to_upper;              // whether to always shift entries to upper case
     unsigned c_pos;             // text[] cursor position index
     unsigned w_pos;             // text[] left window position index
-    bool (*text_fp)(const char *str, char ynot[], size_t n_ynot);       // call to check text, unless NULL
-    void (*label_fp)(char *label, size_t l_len);                        // call to affect label, unless NULL
+    bool (*text_fp)(struct _menu_text *, char ynot[], size_t n_ynot);   // call to check text, unless NULL
+    void (*label_fp)(struct _menu_text *);                              // call to affect label, unless NULL
 } MenuText;
 
 typedef enum {
@@ -2102,8 +2104,8 @@ class ScrollState {
             n_data = nd;
         };
 
-        void drawScrollUpControl (const SBox &box, uint16_t color) const;
-        void drawScrollDownControl (const SBox &box, uint16_t color) const;
+        void drawScrollUpControl (const SBox &box, uint16_t arrow_color, uint16_t number_color) const;
+        void drawScrollDownControl (const SBox &box, uint16_t arrow_color, uint16_t number_color) const;
 
         bool checkScrollUpTouch (const SCoord &s, const SBox &b) const;
         bool checkScrollDownTouch (const SCoord &s, const SBox &b) const;
@@ -2259,6 +2261,7 @@ extern bool weekStartsOnMonday(void);
 extern void formatLat (float lat_d, char s[], int s_len);
 extern void formatLng (float lng_d, char s[], int s_len);
 extern const char *getADIFilename(void);
+extern void setADIFFilename (const char *fn);
 extern bool scrollTopToBottom(void);
 extern bool useOSTime (void);
 extern bool rankSpaceWx(void);
@@ -2300,13 +2303,16 @@ typedef enum {
 } WatchListState;
 #undef X
 
+#define WLA_NONE WLA_N                          // handy pseudonym 
+
 #define WLA_MAXLEN      6                       // longest watch list filter state label, including EOS
 
 
 extern void getWatchList (WatchListId wl, char **wlpp, size_t *wl_len);
 extern void setWatchList (WatchListId wl, const char *new_state, char *new_wlstr);
-extern void rotateWatchListState (char *state_name, size_t max_len);
+extern void rotateWatchListState (struct _menu_text *tfp);
 extern WatchListState getWatchListState (WatchListId wl, char name[WLA_MAXLEN]);
+extern WatchListState lookupWatchListState (const char *wl_state);
 extern const char *getWatchListName (WatchListId wl_id);
 
 
@@ -2584,6 +2590,9 @@ extern void drawSpotLabelOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnM
 extern void drawSpotPathOnMap (const DXSpot &spot);
 extern void drawSpotOnList (const SBox &box, const DXSpot &spot, int row, uint16_t bg_color);
 extern void ditherLL (LatLong &ll);
+extern void drawVisibleSpots (WatchListId wl_id, const DXSpot *spots, const ScrollState &ss, const SBox &box,
+    int16_t app_color);
+
 
 typedef int (*PQSF)(const void *, const void *);        // pointer to qsort-style compare function
 

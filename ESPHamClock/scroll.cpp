@@ -49,7 +49,7 @@
 
 /* draw or erase the up scroll control as needed.
  */
-void ScrollState::drawScrollUpControl (const SBox &box, uint16_t color) const
+void ScrollState::drawScrollUpControl (const SBox &box, uint16_t arrow_color, uint16_t number_color) const
 {
         bool draw = okToScrollUp();
 
@@ -69,7 +69,7 @@ void ScrollState::drawScrollUpControl (const SBox &box, uint16_t color) const
         if (draw) {
             tft.setCursor (x2+1, y0+2);
             selectFontStyle (LIGHT_FONT, FAST_FONT);
-            tft.setTextColor (color);
+            tft.setTextColor (number_color);
             int nma = nMoreAbove();
             if (nma < 1000)
                 tft.print (nma);
@@ -77,12 +77,12 @@ void ScrollState::drawScrollUpControl (const SBox &box, uint16_t color) const
                 tft.print (">99");
         }
 
-        tft.fillTriangle (x0, y0, x1, y1, x2, y2, draw ? color : RA8875_BLACK);
+        tft.fillTriangle (x0, y0, x1, y1, x2, y2, draw ? arrow_color : RA8875_BLACK);
 }
 
 /* draw, else erase, the down scroll control and associated count n.
  */
-void ScrollState::drawScrollDownControl (const SBox &box, uint16_t color) const
+void ScrollState::drawScrollDownControl (const SBox &box, uint16_t arrow_color, uint16_t number_color) const
 {
         bool draw = okToScrollDown();
 
@@ -102,7 +102,7 @@ void ScrollState::drawScrollDownControl (const SBox &box, uint16_t color) const
         if (draw) {
             tft.setCursor (x1+1, y0+2);
             selectFontStyle (LIGHT_FONT, FAST_FONT);
-            tft.setTextColor (color);
+            tft.setTextColor (number_color);
             int nmb = nMoreBeneath();
             if (nmb < 1000)
                 tft.print (nmb);
@@ -110,7 +110,7 @@ void ScrollState::drawScrollDownControl (const SBox &box, uint16_t color) const
                 tft.print (">99");
         }
 
-        tft.fillTriangle (x0, y0, x1, y1, x2, y2, draw ? color : RA8875_BLACK);
+        tft.fillTriangle (x0, y0, x1, y1, x2, y2, draw ? arrow_color : RA8875_BLACK);
 }
 
 

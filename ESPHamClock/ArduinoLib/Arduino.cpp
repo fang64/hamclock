@@ -242,6 +242,22 @@ static void setUsrDateTime (const char *iso8601)
         usr_datetime = mktime (&tms);
 }
 
+/* log some misc sys info
+ */
+static void logSys()
+{
+        char cwd[1000];
+        char *cwdp = getcwd (cwd, sizeof(cwd));
+        if (cwdp)
+            printf ("CWD %s\n", cwdp);
+        printf ("process id %d\n", getpid());
+        printf ("built as %s\n", our_make);
+        printf ("working directory is %s\n", our_dir.c_str());
+        printf ("ruid %d euid %d\n", getuid(), geteuid());
+        if (pw_file)
+            capturePasswords (pw_file);
+}
+
 /* log easy OS info
  */
 static void logOS()
@@ -529,13 +545,8 @@ int main (int ac, char *av[])
         for (int i = 0; i < ac; i++)
             printf ("  argv[%d] = %s\n", i, av[i]);
 
-        // log our some info
-        printf ("process id %d\n", getpid());
-        printf ("built as %s\n", our_make);
-        printf ("working directory is %s\n", our_dir.c_str());
-        printf ("ruid %d euid %d\n", getuid(), geteuid());
-        if (pw_file)
-            capturePasswords (pw_file);
+        // log some sys info
+        logSys();
 
         // log os release, if available
         logOS();

@@ -69,7 +69,7 @@ class WatchList {
         /* add the given prefix
          * return whether it looks reasonable.
          */
-        bool addPrefix (const char *prefix)
+        bool addPrefix (const char *prefix, char ynot[], size_t ynot_len)
         {
             if (verbose > 1)
                 Serial.printf ("WLIST: adding pref '%s'\n", prefix);
@@ -77,13 +77,33 @@ class WatchList {
             size_t p_len = strlen(prefix);
 
             // just a number?
-            if (strspn (prefix, "0123456789") == p_len)
+            if (strspn (prefix, "0123456789") == p_len) {
+                snprintf (ynot, ynot_len, "just a number");
+                if (verbose)
+                    Serial.printf ("WLIST: pref can not be just a number: '%s'\n", prefix);
                 return (false);
+            }
 
             // weird chars?
-            for (size_t i = 0; i < p_len; i++)
-                if (!isalnum (prefix[i]) && prefix[i] != '/')
+            for (size_t i = 0; i < p_len; i++) {
+                if (!isalnum (prefix[i]) && prefix[i] != '/') {
+                    snprintf (ynot, ynot_len, "bad char %c", prefix[i]);
+                    if (verbose)
+                        Serial.printf ("WLIST: pref contains bogus character: '%s'\n", prefix);
                     return (false);
+                }
+            }
+
+            // slash other than end?
+            const char *slash = strchr (prefix, '/');
+            if (slash && slash[1] != '\0') {
+                snprintf (ynot, ynot_len, "bad /");
+                if (verbose)
+                    Serial.printf ("WLIST: pref / can only be at end: '%s'\n", prefix);
+                return (false);
+            }
+            
+            // ok!
 
             // start new spec if flagged earlier or we are first
             checkNewSpec();
@@ -350,11 +370,9 @@ class WatchList {
                     continue;
                 }
 
-                // pretty much anything else is assumed to be a prefix
-                if (!addPrefix (token)) {
-                    snprintf (ynot, n_ynot, "unknown: %s", token);
+                // probably a prefix
+                if (!addPrefix (token, ynot, n_ynot))
                     return (false);
-                }
             }
 
             // disallow empty
@@ -426,19 +444,24 @@ bool compileWatchList (WatchListId wl_id, const char *new_wlstr, char ynot[], si
     return (ok);
 }
 
-/* like compileWatchList but uses a temporary anonymous WatchList just to capture any compile errors
+/* like compileWatchList but uses a temporary anonymous WatchList just to capture any compile errors.
+ * N.B. _menu_text->label contains the WL state name, ->text contains the watchlist; feign success if WLA_OFF.
  */
-bool compileTestWatchList (const char *new_wlstr, char ynot[], size_t n_ynot)
+bool compileTestWatchList (struct _menu_text *tfp, char ynot[], size_t n_ynot)
 {
+    // just say yes if state is Off
+    if (lookupWatchListState(tfp->label) == WLA_OFF)
+        return (true);
+
+    // temporary compiler
     WatchList wl;
     
-    bool ok = wl.compile (new_wlstr, ynot, n_ynot);
+    bool ok = wl.compile (tfp->text, ynot, n_ynot);
 
-    Serial.printf ("WLIST anon: compiled %s\n", new_wlstr);
     if (ok)
         wl.print ("anon");
     else
-        Serial.printf ("WLIST anon: %s\n", ynot);
+        Serial.printf ("WLIST anon: state %s compiled %s: %s\n", tfp->label, tfp->text, ynot);
 
     return (ok);
 }

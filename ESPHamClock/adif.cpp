@@ -643,9 +643,9 @@ static bool parseADIF (char c, ADIFParser &adif, DXSpot &spot)
 }
 
 /* expand any ENV in the given file.
- * return malloced result -- caller must free!
+ * return malloced result -- N.B. caller must free!
  */
-static const char *expandENV (const char *fn)
+static char *expandENV (const char *fn)
 {
     // build fn with any embedded info expanded
     char *fn_exp = NULL;
@@ -704,14 +704,15 @@ static const char *expandENV (const char *fn)
  *
  ***********************************************************************************************************/
 
-/* save sort and bands
+/* save sort and file name
  */
-static void saveADIFSettings (void)
+static void saveADIFSettings (const char *fn)
 {
     NVWriteUInt8 (NV_ADIFSORT, (uint8_t) adif_sort);
+    setADIFFilename (fn);
 }
 
-/* load sort and bands
+/* load sort
  */
 static void loadADIFSettings (void)
 {
@@ -722,23 +723,11 @@ static void loadADIFSettings (void)
         adif_sort = (ADIFSorts) sort;
 }
 
-/* draw all currently visible spot then update scroll markers
+/* draw all currently visible spots then update scroll markers
  */
 static void drawAllVisADIFSpots (const SBox &box)
 {
-    // show all visible adif_spots
-    int min_i, max_i;
-    if (adif_ss.getVisIndices (min_i, max_i) > 0) {
-        for (int i = min_i; i <= max_i; i++) {
-            const DXSpot &spot = adif_spots[i];
-            uint16_t col = checkWatchListSpot (WLID_ADIF, spot) == WLS_HILITE ? RA8875_RED : RA8875_BLACK;
-            drawSpotOnList (box, spot, adif_ss.getDisplayRow(i), col);
-        }
-    }
-
-    // show scroll controls
-    adif_ss.drawScrollDownControl (box, ADIF_COLOR);
-    adif_ss.drawScrollUpControl (box, ADIF_COLOR);
+    drawVisibleSpots (WLID_ADIF, adif_spots, adif_ss, box, ADIF_COLOR);
 }
 
 /* shift the visible list to show older spots, if appropriate
@@ -833,24 +822,75 @@ static void addADIFSpot (DXSpot &spot)
     adif_spots[adif_ss.n_data++] = spot;
 }
 
+/* test whether the given file name is suitable for ADIF, else return brief reason.
+ */
+bool checkADIFFilename (const char *fn, char *ynot, size_t n_ynot)
+{
+    // edge tests
+    if (strchr (fn, ' ')) {
+        snprintf (ynot, n_ynot, "no blanks");
+        return (false);
+    }
+    size_t fn_l = strlen (fn);
+    if (fn_l == 0) {
+        snprintf (ynot, n_ynot, "empty");
+        return (false);
+    }
+    if (fn_l > NV_ADIFFN_LEN-1) {
+        snprintf (ynot, n_ynot, "too long");
+        return (false);
+    }
+
+    // worth trying for real
+    char *fn_exp = expandENV (fn);
+    FILE *fp = fopen (fn_exp, "r");
+    bool ok = fp != NULL;
+    fclose (fp);
+    if (!ok)
+        snprintf (ynot, n_ynot, "bad file");
+    free (fn_exp);
+    return (ok);
+}
+
+/* callback for testing adif file name in the given MenuText->text
+ */
+static bool testADIFFilename (struct _menu_text *tfp, char ynot[], size_t n_ynot)
+{
+    return (checkADIFFilename (tfp->text, ynot, n_ynot));
+}
+
+
 /* run the ADIF menu
  */
 static void runADIFMenu (const SBox &box)
 {
-    // set up the MENU_TEXT field -- N.B. must free mtext.text!
-    MenuText mtext;                                             // menu text prompt context
+    // set up the MENU_TEXT watch list field -- N.B. must free wl_mt.text
+    MenuText wl_mt;                                             // watch list field
     char wl_state[WLA_MAXLEN];                                  // wl state, menu may change
-    setupWLMenuText (WLID_ADIF, mtext, box, wl_state);
+    setupWLMenuText (WLID_ADIF, wl_mt, box, wl_state);
+
+    // set up the MENU_TEXT file name field -- N.B. must free fn_mt.text
+    MenuText fn_mt;                                             // file name field
+    memset (&fn_mt, 0, sizeof(fn_mt));
+    fn_mt.text = (char *) calloc (NV_ADIFFN_LEN, 1);            // full length text - N.B. must free!
+    fn_mt.t_mem = NV_ADIFFN_LEN;                                // total text memory available
+    snprintf (fn_mt.text, NV_ADIFFN_LEN,"%s",getADIFilename()); // init displayed file name
+    fn_mt.label = strdup("File:");                              // field label -- N.B. must free!
+    fn_mt.l_mem = strlen(fn_mt.label) + 1;                      // max label len
+    fn_mt.text_fp = testADIFFilename;                           // file name test
+    fn_mt.c_pos = fn_mt.w_pos = 0;                              // start at left
+    fn_mt.w_len = box.w/6 - WLA_MAXLEN - 2;                     // n chars to display, use most of the box
 
     // fill column-wise
 
     #define AM_INDENT  4
 
-    MenuItem mitems[4] = {
+    MenuItem mitems[5] = {
         {MENU_LABEL,                false, 0, AM_INDENT, "Sort:"},                      // 0
         {MENU_1OFN, adif_sort == ADS_AGE,  1, AM_INDENT, "Age"},                        // 1
         {MENU_1OFN, adif_sort == ADS_DIST, 1, AM_INDENT, "Dist"},                       // 2
-        {MENU_TEXT,   false,               3, AM_INDENT, wl_state, &mtext},             // 3
+        {MENU_TEXT,   false,               3, AM_INDENT, wl_state, &wl_mt},             // 3
+        {MENU_TEXT,   false,               4, AM_INDENT, fn_mt.label, &fn_mt},          // 4
     };
     #define MI_N NARRAY(mitems)
 
@@ -873,19 +913,24 @@ static void runADIFMenu (const SBox &box)
 
         // must recompile to update WL but runMenu already insured wl compiles ok
         char ynot[100];
-        if (!compileWatchList (WLID_ADIF, mtext.text, ynot, sizeof(ynot)))
-            fatalError ("ADIF failed recompling wl %s: %s", mtext.text, ynot);
-        setWatchList (WLID_ADIF, wl_state, mtext.text);
+        if (lookupWatchListState (wl_mt.label) != WLA_OFF
+                                && !compileWatchList (WLID_ADIF, wl_mt.text, ynot, sizeof(ynot)))
+            fatalError ("ADIF failed recompling wl %s: %s", wl_mt.text, ynot);
+        setWatchList (WLID_ADIF, wl_mt.label, wl_mt.text);
+        Serial.printf ("ADIF: set WL to %s %s\n", wl_mt.label, wl_mt.text);
 
         // save
-        saveADIFSettings();
+        Serial.printf ("ADIF: file name %s\n", fn_mt.text);
+        saveADIFSettings (fn_mt.text);
     }
 
     // refresh pane to engage choices or just to erase menu
     scheduleNewPlot (PLOT_CH_ADIF);
 
     // clean up 
-    free (mtext.text);
+    free (wl_mt.text);
+    free (fn_mt.text);
+    free (fn_mt.label);
 
 }
 
@@ -954,15 +999,12 @@ void updateADIF (const SBox &box, bool refresh)
 
     // get full file name, or show web hint
     const char *fn = getADIFilename();          // file name from Setup
-    const char *fn_exp;                         // name with any ENV expanded
-    bool fn_malloced;                           // whether fn_exp is malloced
+    char *fn_exp;                               // malloced name with any ENV expanded
     if (!fn || from_set_adif) {
-        fn = fn_exp = "set_adif";               // tell user spots are from web command
+        fn = fn_exp = strdup ("set_adif");      // tell user spots are from web command
         from_set_adif = true;                   // user can use set_adif even if no Setup name
-        fn_malloced = false;
     } else {
         fn_exp = expandENV (fn);                // malloced expanded file name
-        fn_malloced = true;
     }
 
     // error message, [0] set if used
@@ -1009,9 +1051,8 @@ void updateADIF (const SBox &box, bool refresh)
         drawADIFPane (box, fn_exp, n_read_bad);
     }
 
-    // clean up if our malloc
-    if (fn_malloced)
-        free ((void*)fn_exp);
+    // clean up our malloc
+    free (fn_exp);
 }
 
 /* draw each entry, if enabled

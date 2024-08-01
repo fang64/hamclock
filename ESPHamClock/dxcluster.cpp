@@ -27,8 +27,9 @@
 // timers
 #define KEEPALIVE_DT    600                     // send something if last_spot idle this long, secs
 #define BGCHECK_DT      5000                    // background checkDXCluster period, millis
-#define MAXUSE_DT       3600                    // remove spots memory if pane not used for this long, secs
+#define MAXUSE_DT       (5*60)                  // remove spots memory if pane not used for this long, secs
 #define MAXAGE_DT       3600                    // remove spots more than this old, secs
+#define MAXDUP_DT       (5*60)                  // remove dups this close in time, secs
 static time_t last_spot;                        // last time a spot arrived
 
 // connection info
@@ -83,17 +84,8 @@ static void drawClearListBtn (const SBox &box, bool draw)
  */
 static void drawAllVisDXCSpots (const SBox &box)
 {
-    int min_i, max_i;
-    if (dxc_ss.getVisIndices (min_i, max_i) > 0) {
-        for (int i = min_i; i <= max_i; i++) {
-            DXSpot &spot = dxwl_spots[i];
-            uint16_t bg_col = checkWatchListSpot (WLID_DX, spot) == WLS_HILITE ? RA8875_RED : RA8875_BLACK;
-            drawSpotOnList (box, spot, dxc_ss.getDisplayRow(i), bg_col);
-        }
-    }
+    drawVisibleSpots (WLID_DX, dxwl_spots, dxc_ss, box, DXC_COLOR);
 
-    dxc_ss.drawScrollDownControl (box, DXC_COLOR);
-    dxc_ss.drawScrollUpControl (box, DXC_COLOR);
     drawClearListBtn (box, dxc_ss.n_data > 0);
 }
 
@@ -180,29 +172,28 @@ static void addDXClusterSpot (DXSpot &new_spot)
     strtoupper (new_spot.rx_call);
     strtoupper (new_spot.tx_call);
 
-    // discard if looks to be same as any previous and remove any old spots along the way
+    // discard if looks to be same as a recent previous and remove any old spots along the way
     time_t t0 = myNow();
     int n_rm = 0;
     bool dup = false;
     for (int i = 0; i < n_dxspots; i++) {
         DXSpot &spot = dx_spots[i];
-        if (fabsf(new_spot.kHz-spot.kHz) < 0.1F && strcmp (new_spot.tx_call, spot.tx_call) == 0) {
-            dxcLog ("DXC: %s dup\n", new_spot.tx_call);
+        if (!dup && abs (new_spot.spotted - spot.spotted) < MAXDUP_DT 
+                                && fabsf(new_spot.kHz-spot.kHz) < 0.1F
+                                && strcmp (new_spot.tx_call, spot.tx_call) == 0) {
+            dxcLog ("DXC: %s dup within %d secs\n", new_spot.tx_call, MAXDUP_DT);
             dup = true;
-        }
-        if (t0 - spot.spotted > MAXAGE_DT) {
+        } else if (t0 - spot.spotted > MAXAGE_DT) {
             memmove (&dx_spots[i], &dx_spots[i+1], (n_dxspots - i - 1) * sizeof(DXSpot));
             n_rm += 1;
         }
     }
 
-    // resize if shrunk
+    // update n_dxspots if shrunk, don't bother to realloc.
+    // N.B. if do realloc beware non-portable return from realloc if n_dxspots becomes 0
     if (n_rm > 0) {
         dxcLog ("%d spots aged out\n", n_rm);
         n_dxspots -= n_rm;
-        dx_spots = (DXSpot *) realloc (dx_spots, n_dxspots * sizeof(DXSpot));
-        if (!dx_spots)
-            fatalError ("No memory for %d DX spots after rm %d", n_dxspots, n_rm);
     }
 
     // finished if dup
@@ -212,7 +203,7 @@ static void addDXClusterSpot (DXSpot &new_spot)
     // tweak position for unique picking
     ditherLL (new_spot.tx_ll);
 
-    // resize dx_spots for one more
+    // bump dx_spots for one more
     dx_spots = (DXSpot *) realloc (dx_spots, (n_dxspots+1) * sizeof(DXSpot));
     if (!dx_spots)
         fatalError ("No memory for %d DX spots", n_dxspots+1);
@@ -852,7 +843,7 @@ static void runDXClusterMenu (const SBox &box)
     // only menu item is the watch list
     #define DXCM_INDENT 3
     MenuItem mitems[1] = {
-        mitems[0] = {MENU_TEXT, false, 1, DXCM_INDENT, wl_state, &mtext}
+        {MENU_TEXT, false, 1, DXCM_INDENT, wl_state, &mtext},
     };
 
     SBox menu_b = box;                                  // copy, not ref!
@@ -865,9 +856,11 @@ static void runDXClusterMenu (const SBox &box)
 
         // must recompile to update wl but runMenu already insured wl compiles ok
         char ynot[100];
-        if (!compileWatchList (WLID_DX, mtext.text, ynot, sizeof(ynot)))
+        if (lookupWatchListState (mtext.label) != WLA_OFF
+                                && !compileWatchList (WLID_DX, mtext.text, ynot, sizeof(ynot)))
             fatalError ("dxc failed recompling wl %s: %s", mtext.text, ynot);
-        setWatchList (WLID_DX, wl_state, mtext.text);
+        setWatchList (WLID_DX, mtext.label, mtext.text);
+        dxcLog ("set WL to %s %s\n", mtext.label, mtext.text);
 
         // restart list
         rebuildDXWatchList();

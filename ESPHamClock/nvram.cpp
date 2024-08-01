@@ -3,7 +3,8 @@
  * N.B. be sure they stay in sync.
  *
  * Storage starts at NV_BASE. Items are stored contiguously without gaps. Each item begins with NV_COOKIE
- * followed by the number of bytes listed in nv_sizes[] whose order must match the NV_ defines.
+ * followed by the number of bytes listed in nv_sizes[]. The latter is a uint8_t thus no one size can be
+ * longer than 255 bytes.
  *
  * As a special case, we store two sets of path colors at the very end, just before FLASH_SECTOR_SIZE.
  * Each consists of NV_COOKIE followed by N_CSPR triples of uint8_t r, g and b bytes.
@@ -17,8 +18,8 @@
 
 // starting address of each color collection
 #define CSEL_TBLSZ      (N_CSPR*3)                              // table size, bytes
-#define CSEL_SET1_ADDR  (FLASH_SECTOR_SIZE - 2*(1+CSEL_TBLSZ))  // NV_COOKIE then first table
-#define CSEL_SET2_ADDR  (FLASH_SECTOR_SIZE - 1*(1+CSEL_TBLSZ))  // NV_COOKIE then second table 
+#define CSEL_SET2_ADDR  (FLASH_SECTOR_SIZE - (1+CSEL_TBLSZ))    // NV_COOKIE then second table 
+#define CSEL_SET1_ADDR  (CSEL_SET2_ADDR - (1+CSEL_TBLSZ))       // NV_COOKIE then first table
 
 
 /* number of bytes for each NV_Name.
@@ -258,12 +259,10 @@ static void initEEPROM()
 
     uint16_t ee_used, ee_size;
     reportEESize (ee_used, ee_size);
-    if (ee_used > ee_size) {
-        Serial.printf (_FX("EEPROM too large: %u > %u\n"), ee_used, ee_size);
-        while(1);       // timeout
-    }
+    if (ee_used > ee_size)
+        fatalError ("EEPROM too large: %u > %u", ee_used, ee_size);
     EEPROM.begin(ee_size);      
-    Serial.printf (_FX("EEPROM size %u + %u = %u, max %u\n"), NV_BASE, ee_used-NV_BASE, ee_used, ee_size);
+    Serial.printf ("EEPROM size %u + %u = %u, max %u\n", NV_BASE, ee_used-NV_BASE, ee_used, ee_size);
 
 // #define _SHOW_EEPROM
 #if defined(_SHOW_EEPROM)
@@ -271,17 +270,17 @@ static void initEEPROM()
     for (size_t i = 0; i < n; i++) {
         const uint8_t sz = nv_sizes[i];
         uint16_t start = NV_BASE+len;
-        Serial.printf (_FX("%3d %3d %3d %02X: "), i, len, sz, EEPROM.read(start));
+        Serial.printf ("%3d %3d %3d %02X: ", i, len, sz, EEPROM.read(start));
         start += 1;                     // skip cookie
         switch (sz) {
         case 1: {
             uint8_t i1 = EEPROM.read(start);
-            Serial.printf (_FX("%11d = 0x%02X\n"), i1, i1);
+            Serial.printf ("%11d = 0x%02X\n", i1, i1);
             }
             break;
         case 2: {
             uint16_t i2 = EEPROM.read(start) + 256*EEPROM.read(start+1);
-            Serial.printf (_FX("%11d = 0x%04X\n"), i2, i2);
+            Serial.printf ("%11d = 0x%04X\n", i2, i2);
             }
             break;
         case 4: {
@@ -289,7 +288,7 @@ static void initEEPROM()
                             + (1UL<<16)*EEPROM.read(start+2) + (1UL<<24)*EEPROM.read(start+3);
             float f4;
             memcpy (&f4, &i4, 4);
-            Serial.printf (_FX("%11d = 0x%08X = %g\n"), i4, i4, f4);
+            Serial.printf ("%11d = 0x%08X = %g\n", i4, i4, f4);
             }
             break;
         default:
@@ -332,22 +331,18 @@ static void nvramWriteBytes (NV_Name e, const uint8_t data[], uint8_t xbytes)
 
     initEEPROM();
 
-    uint8_t e_len;
-    uint16_t e_addr;
-    if (!nvramStartAddr (e, &e_addr, &e_len)) {
-        Serial.printf (_FX("NVBUG! Write: bad id %d\n"), e);
-        return;
-    }
+    uint8_t e_len = 0;
+    uint16_t e_addr = 0;
+    if (!nvramStartAddr (e, &e_addr, &e_len))
+        fatalError ("NVBUG! Write: bad id %d", e);
     // Serial.printf ("Write %d at %d\n", e_len, e_addr-NV_BASE);
-    if (xbytes && e_len != xbytes) {
-        Serial.printf (_FX("NVBUG! Write: %d %d != %d bytes\n"), e, e_len, xbytes);
-        return;
-    }
+    if (xbytes && e_len != xbytes)
+        fatalError ("NVBUG! Write: %d %d != %d bytes", e, e_len, xbytes);
     EEPROM.write (e_addr++, NV_COOKIE);
-    for (uint8_t i = 0; i < e_len; i++)
+    for (int i = 0; i < e_len; i++)
         EEPROM.write (e_addr++, *data++);
     if (!EEPROM.commit())
-        fatalError (_FX("EEPROM.commit failed"));
+        fatalError ("EEPROM.commit failed");
     // Serial.printf ("Read back cookie: 0x%02X\n", EEPROM.read(e_addr - e_len -1));
 }
 
@@ -360,19 +355,15 @@ static bool nvramReadBytes (NV_Name e, uint8_t *buf, uint8_t xbytes)
 
     initEEPROM();
 
-    uint8_t e_len;
-    uint16_t e_addr;
-    if (!nvramStartAddr (e, &e_addr, &e_len)) {
-        Serial.printf (_FX("NVBUG! Read: bad id %d\n"), e);
-        return (false);
-    }
-    if (xbytes && e_len != xbytes) {
-        Serial.printf (_FX("NVBUG! Read: %d %d != %d bytes\n"), e, e_len, xbytes);
-        return (false);
-    }
+    uint8_t e_len = 0;
+    uint16_t e_addr = 0;
+    if (!nvramStartAddr (e, &e_addr, &e_len))
+        fatalError ("NVBUG! Read: bad id %d", e);
+    if (xbytes && e_len != xbytes)
+        fatalError ("NVBUG! Read: %d %d != %d bytes", e, e_len, xbytes);
     if (EEPROM.read(e_addr++) != NV_COOKIE)
         return (false);
-    for (uint8_t i = 0; i < e_len; i++)
+    for (int i = 0; i < e_len; i++)
         *buf++ = EEPROM.read(e_addr++);
     return (true);
 }
@@ -559,5 +550,5 @@ void NVWriteColorTable (int tbl_i, const uint8_t r[N_CSPR], const uint8_t g[N_CS
     }
 
     if (!EEPROM.commit())
-        fatalError (_FX("EEPROM.commit colors failed"));
+        fatalError ("EEPROM.commit colors failed");
 }

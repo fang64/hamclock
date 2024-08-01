@@ -126,13 +126,13 @@ int runWiFiMeter(bool warn, bool &ignore_on)
 
     y += 60;
 
-    // dismiss button
-    SBox dismiss_b;
-    dismiss_b.x = 40;
-    dismiss_b.y = y;
-    dismiss_b.w = 100;
-    dismiss_b.h = 35;
-    drawStringInBox ("Resume", dismiss_b, false, RA8875_GREEN);
+    // resume button
+    SBox resume_b;
+    resume_b.x = 40;
+    resume_b.y = y;
+    resume_b.w = 100;
+    resume_b.h = 35;
+    drawStringInBox ("Resume", resume_b, false, RA8875_GREEN);
 
     // ignore button
     SBox ignore_b;
@@ -152,7 +152,7 @@ int runWiFiMeter(bool warn, bool &ignore_on)
 
     // signal strength scale
     SBox rssi_b;
-    rssi_b.x = dismiss_b.x + dismiss_b.w + 50;
+    rssi_b.x = resume_b.x + resume_b.w + 50;
     rssi_b.y = y;
     rssi_b.w = ignore_b.x - rssi_b.x - 50;
     rssi_b.h = 17;
@@ -239,17 +239,17 @@ int runWiFiMeter(bool warn, bool &ignore_on)
                 continue;
 
             // check controls
-            if (inBox (tap, dismiss_b)) {
+            if (inBox (tap, resume_b)) {
                 Serial.printf ("WiFiM: Resume\n");
+                drawStringInBox ("Resume", resume_b, true, RA8875_GREEN);
+                wdDelay (300);
                 done = true;
             } else if (inBox (tap, ignore_b)) {
                 ignore_on = !ignore_on;
                 drawStringInBox ("Ignore", ignore_b, ignore_on, RA8875_GREEN);
-                if (ignore_on) {
-                    Serial.printf ("WiFiM: Ignore\n");
-                    done = true;
-                }
+                Serial.printf ("WiFiM: Ignore %s\n", ignore_on ? "on" : "off");
             } else if (inBox (tap, reset_b)) {
+                Serial.printf ("WiFiM: Reset\n");
                 drawStringInBox ("Reset", reset_b, true, RA8875_GREEN);
                 wdDelay (300);
                 drawStringInBox ("Reset", reset_b, false, RA8875_GREEN);
