@@ -845,8 +845,9 @@ bool checkADIFFilename (const char *fn, char *ynot, size_t n_ynot)
     char *fn_exp = expandENV (fn);
     FILE *fp = fopen (fn_exp, "r");
     bool ok = fp != NULL;
-    fclose (fp);
-    if (!ok)
+    if (ok)
+        fclose (fp);
+    else
         snprintf (ynot, n_ynot, "bad file");
     free (fn_exp);
     return (ok);

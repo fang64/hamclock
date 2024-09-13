@@ -436,12 +436,12 @@ typedef enum {
     NV_CONTESTS,                // bit 1 to show date, bit use DE timezone
 
     NV_BCTOA,                   // VOACAP take off angle, degs
-    NV_ADIFFN,                  // ADIF file name, if any
+    NV_ADIFFN_OLD,              // deprecated when lengthened in v4.06
     NV_I2CFN,                   // I2C device filename
     NV_I2CON,                   // whether to use I2C
     NV_DXMAX_T,                 // time when n lost dx connections exceeded max
 
-    NV_POTAWLIST,               // POTA watch list
+    NV_POTAWLIST_OLD,           // deprecated when lengthened in v4.06
     NV_SCROLLDIR,               // 0=bottom 1=top
     NV_SCROLLLEN,               // deprecated in V4.04
     NV_DXCMD4,                  // dx cluster command 4
@@ -465,7 +465,7 @@ typedef enum {
     NV_PANY,                    // center y from 0 center, + up, @ zoom 1
     NV_POTAWLISTMASK,           // 0: off, 1: not, 2: on, 3: only
 
-    NV_SOTAWLIST,               // SOTA watch list
+    NV_SOTAWLIST_OLD,           // deprecated when lengthened in v4.06
     NV_ONCEALARM,               // one-time alarm time(). always in UTC
     NV_ONCEALARMMASK,           // bit 1 = armed, 2 = user wants UTC (else DE TZ)
     NV_PANEROTP,                // pane rotation period, seconds
@@ -481,6 +481,10 @@ typedef enum {
     NV_ADIFWLIST,               // ADIF watch list
     NV_ADIFSORT,                // 0 age 1 distance
     NV_ADIFBANDS,               // deprecated in V4.04 -- replaced by watch list 
+    NV_POTAWLIST,               // POTA watch list
+
+    NV_SOTAWLIST,               // SOTA watch list
+    NV_ADIFFN,                  // ADIF file name, if any
 
     NV_N
 
@@ -1803,13 +1807,16 @@ extern bool overAnyBeacon (const SCoord &s);
 // NV_ROTHOST_LEN needed above for setup.cpp
 // NV_RIGHOST_LEN needed above for setup.cpp
 // NV_FLRIGHOST_LEneeded above for setup.cpp
-#define NV_ADIFFN_LEN           30
+#define NV_ADIFFN_OLD_LEN       30
+#define NV_ADIFFN_LEN           50
 #define NV_I2CFN_LEN            30
 #define NV_DXLOGIN_LEN          12
 #define NV_DXCLCMD_LEN          35
 #define NV_DXWLIST_LEN          50
-#define NV_POTAWLIST_LEN        26
-#define NV_SOTAWLIST_LEN        26
+#define NV_POTAWLIST_OLD_LEN    26
+#define NV_SOTAWLIST_OLD_LEN    26
+#define NV_POTAWLIST_LEN        50
+#define NV_SOTAWLIST_LEN        50
 #define NV_ADIFWLIST_LEN        50
 
 

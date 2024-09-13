@@ -97,7 +97,7 @@ typedef enum {
 
 // convert 8-bit each (R,G,B) to 5R : 6G : 5G
 // would expect this to be in graphics lib but can't find it...
-#define RGB565(R,G,B)   ((((uint16_t)(R) & 0xF8) << 8) | (((uint16_t)(G) & 0xFC) << 3) | ((uint16_t)(B) >> 3))
+#define RGB565(R,G,B)   (uint16_t)(((((uint16_t)(R) & 0xF8) << 8) | (((uint16_t)(G) & 0xFC) << 3) | ((uint16_t)(B) >> 3)))
 
 // extract 8-bit colors from uint16_t RGB565 color in range 0-255
 #define RGB565_R(c)     (255*(((c) & 0xF800) >> 11)/((1<<5)-1))

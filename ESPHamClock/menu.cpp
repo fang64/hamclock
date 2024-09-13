@@ -54,12 +54,16 @@
 static const char ok_label[] = "Ok";
 static const char cancel_label[] = "Cancel";
 
-/* draw text and optionally the label and/or cursor in the given MenuItem in the given box and color.
+/* draw text and optionally the label and/or cursor for the given MenuItem in the given box.
  * N.B. mi is assumed to be of type MENU_TEXT.
  */
-static void drawMenuText (const MenuItem &mi, const SBox &pb, bool draw_label, bool cursor,
-uint16_t color, const char *text)
+static void drawMenuText (const MenuItem &mi, const SBox &pb, bool draw_label, bool draw_cursor)
 {
+    // require
+    if (mi.type != MENU_TEXT)
+        fatalError ("drawMenuText not %d: %d", (int)MENU_TEXT, (int)mi.type);
+
+    // handy
     MenuText *tfp = mi.textf;
 
     // beware clock can change these!
@@ -76,30 +80,62 @@ uint16_t color, const char *text)
             tft.drawRect (pb.x, pb.y, text_x - pb.x, pb.h, RA8875_GREEN);
         #endif // SHOW_BB
 
-        tft.setTextColor (MENU_FGC);
         tft.setCursor (pb.x + mi.indent, pb.y+2);
         tft.print (tfp->label);
     }
 
-    // color applies only to text portion
-    tft.setTextColor (color);
-
-    tft.fillRect (text_x, pb.y, pb.w - (text_x - pb.x), pb.h, MENU_BGC);        // also erases cursor
+    // erase all text, including cursor
+    tft.fillRect (text_x, pb.y, pb.w - (text_x - pb.x), pb.h, MENU_BGC);
 
     #if defined(SHOW_BB)
         drawSBox (pb, RA8875_GREEN);
         tft.drawRect (text_x, pb.y, pb.w - (text_x - pb.x), pb.h, RA8875_RED);
     #endif // SHOW_BB
 
+    // check left end
+    size_t t_len = strlen(tfp->text);
+    if (tfp->c_pos > t_len)
+        tfp->c_pos = t_len;
+    if (tfp->c_pos < tfp->w_pos)
+        tfp->w_pos = tfp->c_pos;
+
+    // check right end: insure cursor is both within the string and within the text window
+    if (tfp->c_pos > t_len)
+        tfp->c_pos = t_len;
+    if (tfp->c_pos > tfp->w_pos + tfp->w_len - 1)
+        tfp->w_pos = tfp->c_pos - tfp->w_len + 1;
+
+    // print starting at w_pos
     tft.setCursor (text_x, pb.y+2);
-    tft.printf ("%.*s", tfp->w_len, text);
+    tft.printf ("%.*s", tfp->w_len, tfp->text + tfp->w_pos);
 
     // draw cursor if desired (already erased above)
-    if (cursor) {
+    if (draw_cursor) {
         uint16_t c_x = text_x + MENU_FW*(tfp->c_pos-tfp->w_pos);
         uint16_t c_y = pb.y + pb.h - MENU_CD;
         tft.drawLine (c_x, c_y, c_x + MENU_FW, c_y, MENU_FOCC);
     }
+}
+
+/* briefly show the given message over the given MENU_TEXT
+ */
+static void drawMenuTextMsg (const MenuItem &mi, const SBox &pb, const char *msg)
+{
+    // overlay the given msg
+    uint16_t text_x = pb.x + mi.indent + MENU_FW*(mi.textf->l_mem-1);        // not EOS
+    tft.fillRect (text_x, pb.y, pb.w - (text_x - pb.x), pb.h, MENU_BGC);
+    tft.setCursor (text_x, pb.y+2);
+    selectFontStyle (LIGHT_FONT, FAST_FONT);
+    tft.setTextColor(MENU_ERRC);
+    tft.print (msg);
+
+    // delay then restore
+    wdDelay (3000);
+    tft.setTextColor (MENU_FGC);
+    drawMenuText (mi, pb, false, true);
+
+    // dont keep doing this
+    drainTouch();
 }
 
 /* draw selector symbol and label for the given menu item in the given pick box.
@@ -166,7 +202,7 @@ static void menuDrawItem (const MenuItem &mi, const SBox &pb, bool draw_label, b
 
     case MENU_TEXT:
         // redraw text and possibly the cursor and/or label
-        drawMenuText (mi, pb, draw_label, mi.set || kb_focus, MENU_FGC, &mi.textf->text[mi.textf->w_pos]);
+        drawMenuText (mi, pb, draw_label, mi.set || kb_focus);
         break;
     }
 
@@ -403,7 +439,7 @@ static int textFieldEdit (MenuInfo &menu, SBox *pick_boxes, int textf_i, const c
 
     bool debug = false;                                 // RBD
     if (debug)
-        printf ("TFE w = %2d c = %2d w = %2d %2d='%-*s' ... ",  tfp->w_len, tfp->c_pos, tfp->w_pos,
+        printf ("TFE l= %2d c= %2d w= %2d %2d='%-*s' ... ",  tfp->w_len, tfp->c_pos, tfp->w_pos,
                                 (int)t_len, (int)tfp->t_mem, tfp->text);
 
     switch (kb_char) {
@@ -414,13 +450,8 @@ static int textFieldEdit (MenuInfo &menu, SBox *pick_boxes, int textf_i, const c
     case CHAR_LEFT:
         if (debug)
             printf (" LEFT ");
-        // move cursor left if not at left edge else shift text right
-        if (tfp->c_pos > tfp->w_pos) {
+        if (tfp->c_pos > 0) {
             tfp->c_pos -= 1;
-            menuDrawItem (mi, pb, false, true);
-        } else if (tfp->w_pos > 0) {
-            tfp->w_pos -= 1;
-            tfp->c_pos -= 1;    // cursor appears to stay in position
             menuDrawItem (mi, pb, false, true);
         }
         break;
@@ -428,26 +459,8 @@ static int textFieldEdit (MenuInfo &menu, SBox *pick_boxes, int textf_i, const c
     case CHAR_RIGHT:
         if (debug)
             printf (" RIGT ");
-        if (tfp->c_pos - tfp->w_pos + 1 < tfp->w_len) {
-            // cursor is left of right edge ...
-            if (tfp->c_pos < t_len) {
-                // ... and more text follows so move right
-                tfp->c_pos += 1;
-                menuDrawItem (mi, pb, false, true);
-            } else if (tfp->w_pos > 0) {
-                // ... but no more text to right so shift text right if more left of window
-                tfp->w_pos -= 1;
-                menuDrawItem (mi, pb, false, true);
-            }
-        } else {
-            // cursor is against right edge ...
-            if (tfp->c_pos < t_len) {
-                // ... and more text follows so shift text right keeping cursor fixed
-                tfp->c_pos += 1;
-                tfp->w_pos += 1;
-                menuDrawItem (mi, pb, false, true);
-            }
-        }
+        tfp->c_pos += 1;
+        menuDrawItem (mi, pb, false, true);
         break;
 
     case CHAR_BS:
@@ -456,11 +469,8 @@ static int textFieldEdit (MenuInfo &menu, SBox *pick_boxes, int textf_i, const c
             printf (" DEL  ");
         // delete char left of cursor, if any
         if (tfp->c_pos > 0) {
-            memmove (&tfp->text[tfp->c_pos-1], &tfp->text[tfp->c_pos], tfp->t_mem - tfp->c_pos);  // w/EOS
+            memmove (&tfp->text[tfp->c_pos-1], &tfp->text[tfp->c_pos], t_len - tfp->c_pos + 1);  // w/EOS
             tfp->c_pos -= 1;
-            // if there is text off the left shift one char into view
-            if (tfp->w_pos > 0)
-                tfp->w_pos -= 1;
             menuDrawItem (mi, pb, false, true);
         }
         break;
@@ -468,29 +478,17 @@ static int textFieldEdit (MenuInfo &menu, SBox *pick_boxes, int textf_i, const c
     default:
         // insert kb_char at cursor pos if printable and more room left
         if (isprint(kb_char)) {
-            // if more room is available
             if (t_len < tfp->t_mem-1) {
-                // insert at c_pos
                 if (debug)
                     printf (" IN %c ", kb_char);
-                memmove (&tfp->text[tfp->c_pos+1], &tfp->text[tfp->c_pos], tfp->t_mem - tfp->c_pos - 1);
+                memmove (&tfp->text[tfp->c_pos+1], &tfp->text[tfp->c_pos], t_len - tfp->c_pos + 1); // w/EOS
                 tfp->text[tfp->c_pos] = tfp->to_upper ? toupper(kb_char) : kb_char;
-                if (tfp->c_pos < tfp->w_pos + tfp->w_len - 1) {
-                    // cursor is left of right edge so just move it right
-                    tfp->c_pos += 1;
-                } else {
-                    // cursor is at right edge, keep is fixed and shift text left
-                    tfp->c_pos += 1;
-                    tfp->w_pos += 1;
-                }
+                tfp->c_pos += 1;
                 menuDrawItem (mi, pb, false, true);
             } else {
                 if (debug)
                     printf (" FULL ");
-                drawMenuText (mi, pb, false, false, MENU_ERRC, "full");
-                wdDelay (2000);
-                menuDrawItem (mi, pb, false, true);
-                drainTouch();
+                drawMenuTextMsg (mi, pb, "full");
             }
         }
         break;
@@ -744,9 +742,7 @@ bool runMenu (MenuInfo &menu)
                 char ynot[50];
                 if (tfp->text_fp && !(tfp->text_fp)(tfp, ynot, sizeof(ynot))) {
                     SBox &pb = pick_boxes[focus_i];
-                    drawMenuText (mi, pb, false, false, MENU_ERRC, ynot);
-                    wdDelay (3000);
-                    drawMenuText (mi, pb, false, true, MENU_FGC, &tfp->text[tfp->w_pos]);
+                    drawMenuTextMsg (mi, pb, ynot);
                     ok = false;
                 }
             }

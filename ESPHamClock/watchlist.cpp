@@ -78,7 +78,7 @@ class WatchList {
 
             // just a number?
             if (strspn (prefix, "0123456789") == p_len) {
-                snprintf (ynot, ynot_len, "just a number");
+                snprintf (ynot, ynot_len, "lone number");
                 if (verbose)
                     Serial.printf ("WLIST: pref can not be just a number: '%s'\n", prefix);
                 return (false);
@@ -210,6 +210,7 @@ class WatchList {
             specs = NULL;
             n_specs = 0;
             verbose = 1;
+            finished_spec = false;
         }
 
         /* destructor: release storage

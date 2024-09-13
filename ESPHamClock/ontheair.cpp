@@ -405,7 +405,7 @@ static bool retrieveONTA (ONTAState *osp)
                                 dxcall, &hz, iso, dxgrid, &lat_d, &lng_d, id) != 7) {
                     // .. nope, something else
                     Serial.printf ("%s: bogus %s\n", osp->prog, line);
-                    continue;
+                    goto out;
                 }
 
                 // .. yup that was it

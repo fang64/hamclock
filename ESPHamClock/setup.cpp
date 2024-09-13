@@ -194,8 +194,9 @@ typedef struct {
     SBox v_box;                                 // value box
     const char *p_str;                          // prompt string
     char *v_str;                                // value string
-    uint8_t v_len;                              // size of v_str including EOS
+    uint8_t v_len;                              // total size of v_str memory including EOS
     uint8_t v_ci;                               // v_str index of cursor: insert here, delete char before
+    uint8_t v_wi;                               // v_str index of first character at left end of window
 } StringPrompt;
 
 
@@ -270,7 +271,7 @@ static StringPrompt string_pr[N_SPR] = {
 
     // "page 2" -- index 1
 
-    {1, {140, R2Y(1),  0, PR_H}, {140, R2Y(1), 660, PR_H}, NULL, dx_wlist, NV_DXWLIST_LEN, 0},
+    {1, {140, R2Y(1),  0, PR_H}, {140, R2Y(1), 650, PR_H}, NULL, dx_wlist, NV_DXWLIST_LEN, 0},
     {1, { 15, R2Y(2), 70, PR_H}, { 85, R2Y(2),  85, PR_H}, "port:", NULL, 0, 0},               // shadowed
     {1, { 15, R2Y(3), 70, PR_H}, { 85, R2Y(3), 260, PR_H}, "host:", dx_host, NV_DXHOST_LEN, 0},
     {1, { 15, R2Y(4), 70, PR_H}, { 85, R2Y(4), 260, PR_H}, "login:", dx_login, NV_DXLOGIN_LEN, 0},
@@ -303,11 +304,11 @@ static StringPrompt string_pr[N_SPR] = {
     {2, {310, R2Y(2), 60, PR_H}, {360, R2Y(2), 300, PR_H}, "host:", flrig_host, NV_FLRIGHOST_LEN, 0},
 
     {2, {100, R2Y(3), 60, PR_H}, {160, R2Y(3), 350, PR_H}, "host:", ntp_host, NV_NTPHOST_LEN, 0},
-    {2, {100, R2Y(4), 60, PR_H}, {160, R2Y(4), 350, PR_H}, "file:", adif_fn, NV_ADIFFN_LEN, 0},
+    {2, {100, R2Y(4), 60, PR_H}, {160, R2Y(4), 580, PR_H}, "file:", adif_fn, NV_ADIFFN_LEN, 0},
 
     {2, {215, R2Y(5),  0, PR_H}, {215, R2Y(5), 580, PR_H}, NULL, adif_wlist, NV_ADIFWLIST_LEN, 0},
-    {2, {215, R2Y(6),  0, PR_H}, {215, R2Y(6), 400, PR_H}, NULL, pota_wlist, NV_POTAWLIST_LEN, 0},
-    {2, {215, R2Y(7),  0, PR_H}, {215, R2Y(7), 400, PR_H}, NULL, sota_wlist, NV_SOTAWLIST_LEN, 0},
+    {2, {215, R2Y(6),  0, PR_H}, {215, R2Y(6), 580, PR_H}, NULL, pota_wlist, NV_POTAWLIST_LEN, 0},
+    {2, {215, R2Y(7),  0, PR_H}, {215, R2Y(7), 580, PR_H}, NULL, sota_wlist, NV_SOTAWLIST_LEN, 0},
 
 
     // "page 4" -- index 3
@@ -1543,12 +1544,12 @@ static void setInitialFocus()
     setFocus (sp0, bp0);
 }
 
-/* find pixel offset to beginning of the ith character within str
+/* find pixel offset to cursor location
  */
-static uint16_t getStringXi (const char *str, int i)
+static uint16_t getCursorX (const StringPrompt *sp)
 {
-    char copy[100];
-    snprintf (copy, sizeof(copy), "%.*s", i, str);
+    char copy[512];
+    snprintf (copy, sizeof(copy), "%.*s", sp->v_ci - sp->v_wi, sp->v_str + sp->v_wi);
     return (getTextWidth (copy));
 }
 
@@ -1556,28 +1557,27 @@ static uint16_t getStringXi (const char *str, int i)
  */
 static void drawCursor()
 {
-    uint16_t y, x1, x2;
+    uint16_t y, x1;
 
     if (cur_focus[cur_page].sp) {
         StringPrompt *sp = cur_focus[cur_page].sp;
         y = sp->v_box.y+sp->v_box.h-CURSOR_DROP;
-        x1 = sp->v_box.x + getStringXi (sp->v_str, sp->v_ci);
-        x2 = x1+PR_W;
+        x1 = sp->v_box.x + getCursorX (sp);
     } else if (cur_focus[cur_page].bp) {
         BoolPrompt *bp = cur_focus[cur_page].bp;
         y = bp->p_box.y+bp->p_box.h-CURSOR_DROP;
         if (bp->p_str) {
             // cursor in prompt
             x1 = bp->p_box.x;
-            x2 = bp->p_box.x+PR_W;
         } else {
             // cursor in state
             x1 = bp->s_box.x;
-            x2 = bp->s_box.x+PR_W;
         }
     } else {
         return;
     }
+
+    uint16_t x2 = x1 + PR_W;
 
     tft.drawLine (x1, y, x2, y, CURSOR_C);
     tft.drawLine (x1, y+1, x2, y+1, CURSOR_C);
@@ -1592,7 +1592,7 @@ static void eraseCursor()
     if (cur_focus[cur_page].sp) {
         StringPrompt *sp = cur_focus[cur_page].sp;
         y = sp->v_box.y+sp->v_box.h-CURSOR_DROP;
-        x1 = sp->v_box.x + getStringXi (sp->v_str, sp->v_ci);
+        x1 = sp->v_box.x + getCursorX (sp);
         x2 = x1+PR_W;
     } else if (cur_focus[cur_page].bp) {
         BoolPrompt *bp = cur_focus[cur_page].bp;
@@ -1636,32 +1636,45 @@ static void eraseSPValue (const StringPrompt *sp)
 }
 
 /* draw the value of the given StringPrompt.
- * also init v_ci if 0 but v_str is longer than 0.
- * N.B. we may shorten v_str to insure it fits within v_box.
+ * adjust v_ci and v_wi to insure cursor still within v_box.
+ * N.B. we assume v_box already erased
  */
 static void drawSPValue (StringPrompt *sp)
 {
     // prep writing into v_box
     tft.setTextColor (TX_C);
     tft.setCursor (sp->v_box.x, sp->v_box.y+sp->v_box.h-PR_D);
+    const uint16_t max_w = sp->v_box.w - PR_W;          // max visible string width, pixels
 
-    // insure value string and final cursor fits within box, shortening if necessary
-    size_t vl0 = strlen (sp->v_str);
-    (void) maxStringW (sp->v_str, sp->v_box.w-PR_W);
-    size_t vl1 = strlen (sp->v_str);
+    // printf ("drawSPValue '%-*s' c= %2d w= %2d .. ", sp->v_len, sp->v_str, sp->v_ci, sp->v_wi);
 
-    if (vl1 < vl0) {
-        // string was shortened to fit, show cursor under last character
-        eraseSPValue (sp);                              // start over
-        tft.printf ("%.*s", vl1, sp->v_str);       // show chars that fit
-    } else {
-        // more room available, cursor follows string
-        tft.print(sp->v_str);
+    // check left end
+    size_t v_len = strlen(sp->v_str);
+    if (sp->v_ci > v_len)
+        sp->v_ci = v_len;
+    if (sp->v_ci < sp->v_wi)
+        sp->v_wi = sp->v_ci;
+
+    // check right end
+    char *w_str = sp->v_str + sp->v_wi;                 // ptr to left v_str in box
+    char *w_dup = strdup (w_str);                       // copy for maxStringW
+    (void) maxStringW (w_dup, max_w);                   // truncate w_dup IN PLACE to fit within max_w
+    size_t str_l = strlen (w_dup);                      // get length that fits
+
+    // shift text to insure cursor still within box
+    if (sp->v_ci > sp->v_wi + str_l) {
+        sp->v_wi = sp->v_ci - str_l;
+        w_str = sp->v_str + sp->v_wi;
+        free (w_dup);
+        w_dup = strdup (w_str);
+        maxStringW (w_dup, max_w);
     }
 
-    // insure v_ci is still within range
-    if (sp->v_ci > vl1)
-        sp->v_ci = vl1;
+    // print and free
+    tft.print (w_dup);
+    free (w_dup);
+
+    // printf ("'%-*s' c= %2d w= %2d\n", sp->v_len, sp->v_str, sp->v_ci, sp->v_wi);
 
 #ifdef _MARK_BOUNDS
     drawSBox (sp->v_box, GRAY);
@@ -1769,7 +1782,7 @@ static void eraseBPPromptState (BoolPrompt *bp)
 
 
 /* show msg in the given field, or default if not supplied.
- * if restore the after showing the message, dwell a bit then restore the field.
+ * if restore then after showing the message, dwell a bit then restore the field.
  */
 static void flagErrField (StringPrompt *sp, bool restore = false, const char *msg = NULL)
 {
@@ -1792,6 +1805,9 @@ static void flagErrField (StringPrompt *sp, bool restore = false, const char *ms
         drawSPValue (sp);
         setFocus (sp, NULL);
         drawCursor();
+
+        // avoid reps
+        drainTouch();
 
     }
 }
@@ -3184,13 +3200,22 @@ static void initSetup()
     } else
         bool_pr[NTPSET_BPR].state = (nv_ntp != 0);
 
-    // init ADIF
 
-    if (!NVReadString (NV_ADIFFN, adif_fn)) {
-        adif_fn[0] = '\0';
+    // init ADIF, use old file name first time
+
+    char adiffn_old[NV_ADIFFN_OLD_LEN];
+    if (NVReadString (NV_ADIFFN_OLD, adiffn_old) && adiffn_old[0] != '\0') {
+        memset (adif_fn, 0, sizeof(adif_fn));
+        memcpy (adif_fn, adiffn_old, sizeof(adiffn_old));
+        memset (adiffn_old, 0, sizeof(adiffn_old));
+        NVWriteString (NV_ADIFFN_OLD, adiffn_old);
+    } else if (!NVReadString (NV_ADIFFN, adif_fn)) {
+        memset (adif_fn, 0, sizeof(adif_fn));
         NVWriteString (NV_ADIFFN, adif_fn);
     }
     bool_pr[ADIFSET_BPR].state = adif_fn[0] != '\0';
+
+
 
     // init I2C
 
@@ -3370,10 +3395,18 @@ static void initSetup()
 
     // init watch lists
 
-    if (!NVReadString(NV_POTAWLIST, pota_wlist)) {
+    // try old version first then replace to avoid in future
+    char pota_oldwl[NV_POTAWLIST_OLD_LEN];
+    if (NVReadString(NV_POTAWLIST_OLD, pota_oldwl) && pota_oldwl[0] != '\0') {
+        memset (pota_wlist, 0, sizeof(pota_wlist));
+        memcpy (pota_wlist, pota_oldwl, sizeof(pota_oldwl));
+        memset (pota_oldwl, 0, sizeof(pota_oldwl));
+        NVWriteString(NV_POTAWLIST_OLD, pota_oldwl);
+    } else if (!NVReadString(NV_POTAWLIST, pota_wlist)) {
         memset (pota_wlist, 0, sizeof(pota_wlist));
         NVWriteString(NV_POTAWLIST, pota_wlist);
     }
+
     uint8_t potawlist_mask;
     if (!NVReadUInt8(NV_POTAWLISTMASK, &potawlist_mask)) {
         potawlist_mask = 0;
@@ -3382,11 +3415,18 @@ static void initSetup()
     bool_pr[POTAWLISTA_BPR].state = (potawlist_mask & 1) == 1;
     bool_pr[POTAWLISTB_BPR].state = (potawlist_mask & 2) == 2;
 
-
-    if (!NVReadString(NV_SOTAWLIST, sota_wlist)) {
+    // try old version then replace to avoid in future
+    char sota_oldwl[NV_SOTAWLIST_OLD_LEN];
+    if (NVReadString(NV_SOTAWLIST_OLD, sota_oldwl) && sota_oldwl[0] != '\0') {
+        memset (sota_wlist, 0, sizeof(sota_wlist));
+        memcpy (sota_wlist, sota_oldwl, sizeof(sota_oldwl));
+        memset (sota_oldwl, 0, sizeof(sota_oldwl));
+        NVWriteString(NV_SOTAWLIST_OLD, sota_oldwl);
+    } else if (!NVReadString(NV_SOTAWLIST, sota_wlist)) {
         memset (sota_wlist, 0, sizeof(sota_wlist));
         NVWriteString(NV_SOTAWLIST, sota_wlist);
     }
+
     uint8_t sotawlist_mask;
     if (!NVReadUInt8(NV_SOTAWLISTMASK, &sotawlist_mask)) {
         sotawlist_mask = 0;
@@ -3799,7 +3839,6 @@ static void initDisplay()
     // set all v_ci to right ends
     for (int i = 0; i < N_SPR; i++)
         string_pr[i].v_ci = strlen (string_pr[i].v_str);
-        
 
     // force drawing first page
     cur_page = -1;
@@ -3902,25 +3941,24 @@ static void runSetup()
 
         } else if (cur_focus[cur_page].sp && c == CHAR_LEFT) {
 
-            // move cursor one left, if possible
-
+            // move cursor one left as possible
             StringPrompt *sp = cur_focus[cur_page].sp;
             if (sp->v_ci > 0) {
-                eraseCursor ();
+                eraseSPValue (sp);
                 sp->v_ci -= 1;
+                drawSPValue (sp);
                 drawCursor ();
             }
 
         } else if (cur_focus[cur_page].sp && c == CHAR_RIGHT) {
 
-            // move cursor one right, if there is more to the string
+            // move cursor one right as possible
 
             StringPrompt *sp = cur_focus[cur_page].sp;
-            if (sp->v_ci < strlen(sp->v_str)) {
-                eraseCursor ();
-                sp->v_ci += 1;
-                drawCursor ();
-            }
+            eraseSPValue (sp);
+            sp->v_ci += 1;
+            drawSPValue (sp);
+            drawCursor ();
 
         } else if (cur_focus[cur_page].sp && (c == CHAR_DEL || c == CHAR_BS)) {
 
@@ -3930,18 +3968,18 @@ static void runSetup()
             size_t vl = strlen (sp->v_str);
             if (vl > 0 && sp->v_ci > 0) {
 
-                eraseCursor ();
                 eraseSPValue (sp);
 
                 // remove v_str[v_ci-1]
-                memmove (&sp->v_str[sp->v_ci-1], &sp->v_str[sp->v_ci], vl - sp->v_ci + 1); // w/ EOS
+                memmove (&sp->v_str[sp->v_ci-1], &sp->v_str[sp->v_ci], vl - sp->v_ci + 1);      // w/ EOS
                 sp->v_ci -= 1;
 
                 drawSPValue (sp);
                 drawCursor ();
 
                 checkLLGEdit(sp);
-            }
+            } else
+                flagErrField (sp, true, "empty");
 
 
         } else if (cur_focus[cur_page].sp && isprint(c)) {
@@ -3954,19 +3992,18 @@ static void runSetup()
             size_t vl = strlen (sp->v_str);
             if (vl < sp->v_len-1U) {
 
-                eraseCursor ();
                 eraseSPValue (sp);
 
                 // make room by shifting right
-                memmove (&sp->v_str[sp->v_ci+1], &sp->v_str[sp->v_ci], vl - sp->v_ci);
+                memmove (&sp->v_str[sp->v_ci+1], &sp->v_str[sp->v_ci], vl - sp->v_ci + 1);      // w/EOS
                 sp->v_str[sp->v_ci++] = c;
-                sp->v_str[++vl] = '\0';
 
                 drawSPValue (sp);
                 drawCursor ();
 
                 checkLLGEdit(sp);
-            }
+            } else
+                flagErrField (sp, true, "full");
 
         } else if (tappedBool (s, &bp) || (c == CHAR_SPACE && cur_focus[cur_page].bp)) {
 
