@@ -97,10 +97,12 @@ static void drawMPSetup (time_t t0)
 
         // x axis time line and vertical grid lines, mark each even hour.
         // N.B. check every 15 minutes for oddball time zones (looking at you Australia)
+        int detz = getTZ (de_tz);
+        int dxtz = getTZ (dx_tz);
         tft.drawLine (MP_X0, dx_y-3, MP_X0+MP_PW, dx_y-3, BRGRAY);
         tft.drawLine (MP_X0, utc_y-3, MP_X0+MP_PW, utc_y-3, BRGRAY);
-        int prev_de_hr = hour (t0 + de_tz.tz_secs);
-        int prev_dx_hr = hour (t0 + dx_tz.tz_secs);
+        int prev_de_hr = hour (t0 + detz);
+        int prev_dx_hr = hour (t0 + dxtz);
         int prev_utc_hr = hour (t0);
         for (time_t t = 900*(t0/900+1); t < t0 + MP_DUR; t += 900) {
 
@@ -108,8 +110,8 @@ static void drawMPSetup (time_t t0)
             uint16_t x = MP_T2X(t);
 
             // get times in each zone
-            int de_hr = hour (t + de_tz.tz_secs);
-            int dx_hr = hour (t + dx_tz.tz_secs);
+            int de_hr = hour (t + detz);
+            int dx_hr = hour (t + dxtz);
             int utc_hr = hour (t);
 
             // plot each time zone every 2 hours
@@ -160,8 +162,8 @@ static void drawMPElPlot (time_t t0, time_t &t_start, time_t &t_end)
         bool prev_both_up = false;
 
         // handy
-        uint16_t x_step = MP_T2X(MP_DT) - MP_T2X(0);    // time step x change
-        uint16_t elm90y = MP_E2Y(deg2rad(-90));         // y of -90 el
+        const uint16_t x_step = MP_T2X(MP_DT) - MP_T2X(0);    // time step x change
+        const uint16_t elm90y = MP_E2Y(deg2rad(-90));         // y of -90 el
 
         // work across plot
         for (time_t t = t0; t <= t0 + MP_DUR; t += MP_DT) {
@@ -175,20 +177,20 @@ static void drawMPElPlot (time_t t0, time_t &t_start, time_t &t_end)
             uint16_t dx_y = MP_E2Y(dx_ac.el);
             uint16_t x = MP_T2X(t);
 
-            // check both_up
-            bool both_up = de_ac.el > 0 && dx_ac.el > 0;
+            // check both_up_now
+            bool both_up_now = de_ac.el > 0 && dx_ac.el > 0;
 
             // emphasize when both up
-            if (!prev_both_up && both_up) {
+            if (!prev_both_up && both_up_now) {
                 // approximate this starting half step left of x .. beware left edge
                 uint16_t left_x = x - x_step/2;
                 if (left_x < MP_X0)
                     left_x = MP_X0;
                 tft.fillRect (left_x, elm90y-MP_TT, x_step/2 + 1, MP_TT, MP_FC);
-            } else if (prev_both_up && both_up) {
+            } else if (prev_both_up && both_up_now) {
                 // mark entire step
                 tft.fillRect (prev_x, elm90y-MP_TT, x_step + 1, MP_TT, MP_FC);
-            } else if (prev_both_up && !both_up) {
+            } else if (prev_both_up && !both_up_now) {
                 // approximate this stopping half step right of prev_x .. beware right edge
                 uint16_t width = x_step/2;
                 if (x + width > MP_X0 + MP_PW)
@@ -203,7 +205,7 @@ static void drawMPElPlot (time_t t0, time_t &t_start, time_t &t_end)
             }
 
             // note when first both up or down
-            if (both_up) {
+            if (both_up_now) {
                 if (t_start == 0)
                     t_start = t;
             } else if (prev_both_up) {
@@ -215,7 +217,7 @@ static void drawMPElPlot (time_t t0, time_t &t_start, time_t &t_end)
             prev_x = x;
             prev_de_y = de_y;
             prev_dx_y = dx_y;
-            prev_both_up = both_up;
+            prev_both_up = both_up_now;
         }
 
         Serial.printf (_FX("MP: rough start %02d:%02d end %02d:%02d\n"),
@@ -240,25 +242,25 @@ static void drawMPBothUpTable (time_t t0, time_t t_start, time_t t_end)
 
             // find better start unless now
             if (t_start > t0) {
-                bool both_up = true;
-                for (better_start = t_start - MP_US; both_up; better_start -= MP_US) {
+                bool both_up_now = true;
+                for (better_start = t_start - MP_US; both_up_now; better_start -= MP_US) {
                     getLunarCir (better_start, de_ll, de_ac);
                     getLunarCir (better_start, dx_ll, dx_ac);
-                    both_up = de_ac.el > 0 && dx_ac.el > 0;
+                    both_up_now = de_ac.el > 0 && dx_ac.el > 0;
                 }
-                better_start += 2*MP_US;            // return to last known both_up
+                better_start += 2*MP_US;            // return to last known both_up_now
             } else {
                 better_start = t0;
             }
 
             // find better end
-            bool both_up = false;
-            for (better_end = t_end - MP_US; !both_up; better_end -= MP_US) {
+            bool both_up_now = false;
+            for (better_end = t_end - MP_US; !both_up_now; better_end -= MP_US) {
                 getLunarCir (better_end, de_ll, de_ac);
                 getLunarCir (better_end, dx_ll, dx_ac);
-                both_up = de_ac.el > 0 && dx_ac.el > 0;
+                both_up_now = de_ac.el > 0 && dx_ac.el > 0;
             }
-            better_end += 2*MP_US;              // return to last known !both_up
+            better_end += 2*MP_US;              // return to last known !both_up_now
 
             Serial.printf (_FX("MP: better start %02d:%02d end %02d:%02d\n"),
                                 hour(better_start), minute(better_start),
@@ -283,26 +285,28 @@ static void drawMPBothUpTable (time_t t0, time_t t_start, time_t t_end)
 
 
         // DE row
+        int detz = getTZ (de_tz);
         if (better_start == t0)  {
             snprintf (buf, sizeof(buf), _FX("DE    now    %02d:%02d"),
-                    hour(better_end+de_tz.tz_secs), minute(better_end+de_tz.tz_secs));
+                    hour(better_end+detz), minute(better_end+detz));
         } else {
             snprintf (buf, sizeof(buf), _FX("DE   %02d:%02d   %02d:%02d"),
-                    hour(better_start+de_tz.tz_secs), minute(better_start+de_tz.tz_secs),
-                    hour(better_end+de_tz.tz_secs), minute(better_end+de_tz.tz_secs));
+                    hour(better_start+detz), minute(better_start+detz),
+                    hour(better_end+detz), minute(better_end+detz));
         }
         tft.setTextColor (DE_COLOR);
         tft.setCursor (map_b.x+MP_NI, map_b.y+15);
         tft.print (buf);
 
         // DX row
+        int dxtz = getTZ (dx_tz);
         if (better_start == t0)  {
             snprintf (buf, sizeof(buf), _FX("DX    now    %02d:%02d"),
-                    hour(better_end+dx_tz.tz_secs), minute(better_end+dx_tz.tz_secs));
+                    hour(better_end+dxtz), minute(better_end+dxtz));
         } else {
             snprintf (buf, sizeof(buf), _FX("DX   %02d:%02d   %02d:%02d"),
-                    hour(better_start+dx_tz.tz_secs), minute(better_start+dx_tz.tz_secs),
-                    hour(better_end+dx_tz.tz_secs), minute(better_end+dx_tz.tz_secs));
+                    hour(better_start+dxtz), minute(better_start+dxtz),
+                    hour(better_end+dxtz), minute(better_end+dxtz));
         }
         tft.setTextColor (DX_COLOR);
         tft.setCursor (map_b.x+MP_NI, map_b.y+25);
@@ -346,14 +350,16 @@ static void drawMPPopup (const time_t t, const SBox &popup_b)
         // draw time, el and az at each location
         char buf[100];
 
-        snprintf (buf, sizeof(buf), _FX("DE  %02d:%02d  %3.0f %4.0f"), hour(t+de_tz.tz_secs),
-                minute(t+de_tz.tz_secs), rad2deg(de_ac.az), rad2deg(de_ac.el));
+        int detz = getTZ (de_tz);
+        snprintf (buf, sizeof(buf), _FX("DE  %02d:%02d  %3.0f %4.0f"), hour(t+detz),
+                minute(t+detz), rad2deg(de_ac.az), rad2deg(de_ac.el));
         tft.setCursor (popup_b.x+4, popup_b.y+14);
         tft.setTextColor(DE_COLOR);
         tft.print (buf);
 
-        snprintf (buf, sizeof(buf), _FX("DX  %02d:%02d  %3.0f %4.0f"), hour(t+dx_tz.tz_secs),
-                minute(t+dx_tz.tz_secs), rad2deg(dx_ac.az), rad2deg(dx_ac.el));
+        int dxtz = getTZ (dx_tz);
+        snprintf (buf, sizeof(buf), _FX("DX  %02d:%02d  %3.0f %4.0f"), hour(t+dxtz),
+                minute(t+dxtz), rad2deg(dx_ac.az), rad2deg(dx_ac.el));
         tft.setCursor (popup_b.x+4, popup_b.y+24);
         tft.setTextColor(DX_COLOR);
         tft.print (buf);

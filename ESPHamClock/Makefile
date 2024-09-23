@@ -47,10 +47,12 @@ OBJS = \
 	blinker.o \
 	brightness.o \
 	cachefile.o \
+	callsign.o \
 	clocks.o \
 	cities.o \
 	color.o \
         contests.o \
+	cputemp.o \
 	dxcluster.o \
 	earthmap.o \
 	earthsat.o \
@@ -69,6 +71,7 @@ OBJS = \
 	moon_imgs.o \
 	moonpane.o \
 	ncdxf.o \
+	nmea.o \
 	nvram.o \
 	ontheair.o \
 	passwd.o \

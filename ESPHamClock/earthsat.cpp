@@ -2004,8 +2004,8 @@ static void showNextSatEvents ()
             char buf[30];
 
             // convert to DE local time
-            time_t rt = rises[i] + de_tz.tz_secs;
-            time_t st = sets[i] + de_tz.tz_secs;
+            time_t rt = rises[i] + getTZ (de_tz);
+            time_t st = sets[i] + getTZ (de_tz);
             int up = st - rt;       // nextSatRSEvents assures us this will be > 0
 
             // detect crossing midnight by comparing weekday

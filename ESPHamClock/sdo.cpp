@@ -244,13 +244,12 @@ bool updateSDOPane (const SBox &box)
 
         // show which ever rise or set event comes next
         time_t rise, set;
+        int detz = getTZ (de_tz);
         getSolarRS (t0, de_ll, &rise, &set);
         if (rise > t0 && (set < t0 || rise - t0 < set - t0))
-            snprintf (str, sizeof(str), "R@%02d:%02d", hour(rise+de_tz.tz_secs),
-                                                              minute (rise+de_tz.tz_secs));
+            snprintf (str, sizeof(str), "R@%02d:%02d", hour(rise+detz), minute (rise+detz));
         else if (set > t0 && (rise < t0 || set - t0 < rise - t0))
-            snprintf (str, sizeof(str), "S@%02d:%02d", hour(set+de_tz.tz_secs),
-                                                              minute (set+de_tz.tz_secs));
+            snprintf (str, sizeof(str), "S@%02d:%02d", hour(set+detz), minute (set+detz));
         else
             strcpy (str, "No R/S");
         tft.setCursor (box.x+1, box.y+box.h-10);

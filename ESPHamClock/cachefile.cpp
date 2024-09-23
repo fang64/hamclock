@@ -14,7 +14,8 @@ FILE *openCachedFile (const char *fn, const char *url, long max_age)
         struct stat sbuf;
         if (fstat (fileno(fp), &sbuf) == 0 && myNow() - sbuf.st_mtime < max_age) {
             // new enough
-            Serial.printf ("Cache: using %s cache: age %ld < %ld\n", fn, myNow() - sbuf.st_mtime, max_age);
+            Serial.printf ("Cache: using %s cache: age %ld < %ld\n", fn,
+                                                (long)(myNow() - sbuf.st_mtime), max_age);
             return (fp);
         } else {
             fclose (fp);

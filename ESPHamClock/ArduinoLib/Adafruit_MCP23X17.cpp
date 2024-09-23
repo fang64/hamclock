@@ -606,7 +606,7 @@ void Adafruit_MCP23X17::digitalWrite(uint8_t mcp_pin, uint8_t value)
                 return;
             }
 
-            gpio_pin_set (handle, rpi_pin, value != 0);
+            gpio_pin_set (handle, rpi_pin, value ? GPIO_VALUE_HIGH : GPIO_VALUE_LOW);
         }
 
     #endif

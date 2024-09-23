@@ -163,7 +163,7 @@ static bool parseDT2UNIX (const char *date, const char *tim, time_t &unix)
     unix = makeTime(tm);
 
     if (verbose)
-        Serial.printf ("ADIF trace: spotted %s %s -> %ld\n", date, tim, unix);
+        Serial.printf ("ADIF trace: spotted %s %s -> %ld\n", date, tim, (long)unix);
 
     return (true);
 }
@@ -642,61 +642,6 @@ static bool parseADIF (char c, ADIFParser &adif, DXSpot &spot)
     return (adif.ps == ADIFPS_FINISHED);
 }
 
-/* expand any ENV in the given file.
- * return malloced result -- N.B. caller must free!
- */
-static char *expandENV (const char *fn)
-{
-    // build fn with any embedded info expanded
-    char *fn_exp = NULL;
-    int exp_len = 0;
-    for (const char *fn_walk = fn; *fn_walk; fn_walk++) {
-
-        // check for embedded terms
-
-        char *embed_value = NULL;
-        if (*fn_walk == '$') {
-            // expect ENV all caps, digits or _
-            const char *dollar = fn_walk;
-            const char *env = dollar + 1;
-            while (isupper(*env) || isdigit(*env) || *env=='_')
-                env++;
-            int env_len = env - dollar - 1;             // env now points to first invalid char; len w/o EOS
-            StackMalloc env_mem(env_len+1);             // +1 for EOS
-            char *env_tmp = (char *) env_mem.getMem();
-            memcpy (env_tmp, dollar+1, env_len);
-            env_tmp[env_len] = '\0';
-            embed_value = getenv(env_tmp);
-            fn_walk += env_len;
-
-        } else if (*fn_walk == '~') {
-            // expand ~ as $HOME
-            embed_value = getenv("HOME");
-            // fn_walk++ in for loop is sufficient
-        }
-
-        // append to fn_exp
-        if (embed_value) {
-            // add embedded value to fn_exp
-            int val_len = strlen (embed_value);
-            fn_exp = (char *) realloc (fn_exp, exp_len + val_len);
-            memcpy (fn_exp + exp_len, embed_value, val_len);
-            exp_len += val_len;
-        } else {
-            // no embedded found, just add fn_walk to fn_exp
-            fn_exp = (char *) realloc (fn_exp, exp_len + 1);
-            fn_exp[exp_len++] = *fn_walk;
-        }
-    }
-
-    // add EOS
-    fn_exp = (char *) realloc (fn_exp, exp_len + 1);
-    fn_exp[exp_len++] = '\0';
-
-    // ok
-    return (fn_exp);
-}
-
 
 /***********************************************************************************************************
  *
@@ -811,7 +756,7 @@ static void addADIFSpot (DXSpot &spot)
     if (verbose)
         Serial.printf ("ADIF trace: new spot: %s %s %s %s %g %g %s %g %ld\n", 
             spot.rx_call, spot.rx_grid, spot.tx_call, spot.tx_grid, spot.tx_ll.lat_d,
-            spot.tx_ll.lng_d, spot.mode, spot.kHz, spot.spotted);
+            spot.tx_ll.lng_d, spot.mode, spot.kHz, (long)spot.spotted);
 
     // insure room
     adif_spots = (DXSpot *) realloc (adif_spots, (adif_ss.n_data + 1) * sizeof(DXSpot));
@@ -973,7 +918,7 @@ void readADIFFile (GenReader &gr, long gr_len, int &n_good, int &n_bad)
                     // spot does not qualify
                     Serial.printf ("ADIF trace line %d: no watch: %s %s %s %s %g %g %s %g %ld\n", 
                             adif.line_n, spot.rx_call, spot.rx_grid, spot.tx_call, spot.tx_grid,
-                            spot.tx_ll.lat_d, spot.tx_ll.lng_d, spot.mode, spot.kHz, spot.spotted);
+                            spot.tx_ll.lat_d, spot.tx_ll.lng_d, spot.mode, spot.kHz, (long)spot.spotted);
             } else
                 n_read_bad++;
             updateClocks(false);

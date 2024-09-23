@@ -223,7 +223,7 @@ void drawDECalTime(bool center)
 
     // get time
     time_t utc = nowWO();
-    time_t local = utc + de_tz.tz_secs;
+    time_t local = utc + getTZ (de_tz);
     int hr = hour (local);
     int mn = minute (local);
     int dy = day(local);
@@ -654,7 +654,10 @@ static void drawML_DB (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 static void drawML_WX (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 {
     WXInfo wi;
-    if (getWorldWx (ll, wi)) {
+    if (getFastWx (ll, wi)) {
+
+        // previous could call updateClocks which changes font!
+        selectFontStyle (LIGHT_FONT, FAST_FONT);
 
         // temperature in desired units
         float tmp = useMetricUnits() ? wi.temperature_c : CEN2FAH(wi.temperature_c);
@@ -684,7 +687,8 @@ static void drawML_WX (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
  */
 static void drawML_LMT (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 {
-    time_t t = myNow() + getTZ(ll);
+    time_t t = myNow() + getFastTZ(ll);
+    selectFontStyle (LIGHT_FONT, FAST_FONT);
     tft.setCursor (tx, ty += dy);
     tft.printf ("LMT %02d:%02d", hour(t), minute(t));
 }
@@ -1074,7 +1078,7 @@ static void drawMapMenuButton()
     tft.drawRect (view_btn_b.x, view_btn_b.y, view_btn_b.w-1, view_btn_b.h-1, RA8875_WHITE);
 
     char style_mem[NV_COREMAPSTYLE_LEN];
-    const char *str = getMapStyle (style_mem);
+    const char *str = getCoreMapStyle (core_map, style_mem);
     selectFontStyle (LIGHT_FONT, FAST_FONT);
     uint16_t str_w = getTextWidth(str);
     tft.setCursor (view_btn_b.x+(view_btn_b.w-str_w)/2, view_btn_b.y+2);
@@ -1129,9 +1133,13 @@ static void drawMapMenu()
 {
 
     enum MIName {     // menu items -- N.B. must be in same order as mitems[]
-        MI_STY_TTL, MI_STR_CRY, MI_STY_TER, MI_STY_DRA, MI_STY_MUF, MI_STY_MRT, MI_STY_AUR, MI_STY_WXX, MI_STY_PRP,
-        MI_GRD_TTL, MI_GRD_NON, MI_GRD_TRO, MI_GRD_LLG, MI_GRD_MAI, MI_GRD_AZM, MI_GRD_CQZ, MI_GRD_ITU,
-        MI_PRJ_TTL, MI_PRJ_MER, MI_PRJ_AZM, MI_PRJ_AZ1, MI_PRJ_MOL,
+        MI_STY_TTL,
+            MI_STR_CRY, MI_STY_TER, MI_STY_DRA, MI_STY_MUF, MI_STY_MRT, MI_STY_AUR, MI_STY_WXX,
+            MI_STY_TOA, MI_STY_REL,
+        MI_GRD_TTL,
+            MI_GRD_NON, MI_GRD_TRO, MI_GRD_LLG, MI_GRD_MAI, MI_GRD_AZM, MI_GRD_CQZ, MI_GRD_ITU,
+        MI_PRJ_TTL,
+            MI_PRJ_MER, MI_PRJ_AZM, MI_PRJ_AZ1, MI_PRJ_MOL,
         MI_RSS_YES,
         MI_NON_YES,
         MI_CTY_YES,
@@ -1141,14 +1149,15 @@ static void drawMapMenu()
     #define SEC_INDENT 8
     MenuItem mitems[MI_N] = {
         {MENU_LABEL, false, 0, PRI_INDENT, "Style:"},
-            {MENU_AL1OFN, (map_rotset & (1<<CM_COUNTRIES)) != 0, 1, SEC_INDENT, coremap_names[CM_COUNTRIES]},
-            {MENU_AL1OFN, (map_rotset & (1<<CM_TERRAIN)) != 0,   1, SEC_INDENT, coremap_names[CM_TERRAIN]},
-            {MENU_AL1OFN, (map_rotset & (1<<CM_DRAP)) != 0,      1, SEC_INDENT, coremap_names[CM_DRAP]},
-            {MENU_AL1OFN, (map_rotset & (1<<CM_MUF_V)) != 0,     1, SEC_INDENT, coremap_names[CM_MUF_V]},
-            {MENU_AL1OFN, (map_rotset & (1<<CM_MUF_RT)) != 0,    1, SEC_INDENT, coremap_names[CM_MUF_RT]},
-            {MENU_AL1OFN, (map_rotset & (1<<CM_AURORA)) != 0,    1, SEC_INDENT, coremap_names[CM_AURORA]},
-            {MENU_AL1OFN, (map_rotset & (1<<CM_WX)) != 0,        1, SEC_INDENT, coremap_names[CM_WX]},
-            {MENU_IGNORE, false, 1, SEC_INDENT, NULL},     // MI_STY_PRP: see below
+            {MENU_AL1OFN, IS_CMROT(CM_COUNTRIES), 1, SEC_INDENT, cm_info[CM_COUNTRIES].name},
+            {MENU_AL1OFN, IS_CMROT(CM_TERRAIN),   1, SEC_INDENT, cm_info[CM_TERRAIN].name},
+            {MENU_AL1OFN, IS_CMROT(CM_DRAP),      1, SEC_INDENT, cm_info[CM_DRAP].name},
+            {MENU_AL1OFN, IS_CMROT(CM_MUF_V),     1, SEC_INDENT, cm_info[CM_MUF_V].name},
+            {MENU_AL1OFN, IS_CMROT(CM_MUF_RT),    1, SEC_INDENT, cm_info[CM_MUF_RT].name},
+            {MENU_AL1OFN, IS_CMROT(CM_AURORA),    1, SEC_INDENT, cm_info[CM_AURORA].name},
+            {MENU_AL1OFN, IS_CMROT(CM_WX),        1, SEC_INDENT, cm_info[CM_WX].name},
+            {MENU_IGNORE, false,                  1, SEC_INDENT, NULL}, // see below
+            {MENU_IGNORE, false,                  1, SEC_INDENT, NULL}, // see below
         {MENU_LABEL, false, 0, PRI_INDENT, "Grid:"},
             {MENU_1OFN, false, 2, SEC_INDENT, "None"},
             {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_TROPICS]},
@@ -1169,13 +1178,18 @@ static void drawMapMenu()
 
     // init selections with current states
 
-    // if propmap is in rotation add to menu
-    char propband[NV_COREMAPSTYLE_LEN];                 // N.B. must be persistent for lifetime of runMenu()
-    if (map_rotset & PROPMAP_ROT_BIT) {
-        // add propmap item to menu selected
-        mitems[MI_STY_PRP].type = MENU_AL1OFN;
-        mitems[MI_STY_PRP].set = true;
-        mitems[MI_STY_PRP].label = getPropMapStyle (propband);
+    // if TOA and/or REL are in rotation add to menu
+    char propname_toa[NV_COREMAPSTYLE_LEN];             // N.B. must be persistent for lifetime of runMenu()
+    char propname_rel[NV_COREMAPSTYLE_LEN];             // N.B. must be persistent for lifetime of runMenu()
+    if (IS_CMROT(CM_PMTOA)) {
+        mitems[MI_STY_TOA].type = MENU_AL1OFN;
+        mitems[MI_STY_TOA].set = true;
+        mitems[MI_STY_TOA].label = getCoreMapStyle (CM_PMTOA, propname_toa);
+    }
+    if (IS_CMROT(CM_PMREL)) {
+        mitems[MI_STY_REL].type = MENU_AL1OFN;
+        mitems[MI_STY_REL].set = true;
+        mitems[MI_STY_REL].label = getCoreMapStyle (CM_PMREL, propname_rel);
     }
 
     mitems[MI_GRD_NON].set = mapgrid_choice == MAPGRID_OFF;
@@ -1227,24 +1241,21 @@ static void drawMapMenu()
             scheduleNewCoreMap (CM_AURORA);
         if (mitems[MI_STY_WXX].set)
             scheduleNewCoreMap (CM_WX);
-        prop_map.active = mitems[MI_STY_PRP].set;
-        scheduleNewVOACAPMap (prop_map);
+        if (mitems[MI_STY_TOA].set)
+            scheduleNewCoreMap (CM_PMTOA);
+        if (mitems[MI_STY_REL].set)
+            scheduleNewCoreMap (CM_PMREL);
 
         // check for changes and confirm core_map
         if (map_rotset != prev_rotset) {
             // pick one and do full refresh if core_map no longer selected
-            if (!(map_rotset & (1<<core_map))) {
-                for (int i = 0; i < CM_N; i++) {
-                    if (map_rotset & (1<<i)) {
-                        core_map = (CoreMaps)i;
-                        break;
-                    }
-                }
+            if (!IS_CMROT(core_map)) {
+                insureCoreMap();
                 full_redraw = true;
             }
-            saveMapRotSet();
-            logMapRotSet();
+            saveCoreMaps();
         }
+        logMapRotSet();
 
         // check for different grid
         if (mitems[MI_GRD_NON].set && mapgrid_choice != MAPGRID_OFF) {
@@ -1912,7 +1923,7 @@ void drawDXTime()
     uint16_t vspace = dx_info_b.h/DX_INFO_ROWS;
 
     time_t utc = nowWO();
-    time_t local = utc + dx_tz.tz_secs;
+    time_t local = utc + getTZ (dx_tz);
     int hr = hour (local);
     int mn = minute (local);
     int dy = day(local);

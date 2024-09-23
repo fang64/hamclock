@@ -69,7 +69,7 @@ static const uint8_t nv_sizes[NV_N] = {
     1,                          // NV_ROTATE_SCRN
 
     NV_WIFI_SSID_LEN,           // NV_WIFI_SSID
-    NV_WIFI_PW_LEN_OLD,         // NV_WIFI_PASSWD_OLD
+    NV_WIFI_PW_OLD_LEN,         // NV_WIFI_PASSWD_OLD
     NV_CALLSIGN_LEN,            // NV_CALLSIGN
     NV_SATNAME_LEN,             // NV_SATNAME
     1,                          // NV_DE_SRSS
@@ -83,7 +83,7 @@ static const uint8_t nv_sizes[NV_N] = {
     2,                          // NV_DXPORT
     1,                          // NV_SWHUE
     4,                          // NV_TEMPCORR76
-    NV_GPSDHOST_LEN,            // NV_GPSDHOST
+    NV_GPSDHOST_OLD_LEN,        // NV_GPSDHOST_OLD
     4,                          // NV_KX3BAUD
 
     2,                          // NV_BCPOWER
@@ -104,7 +104,7 @@ static const uint8_t nv_sizes[NV_N] = {
     NV_WIFI_PW_LEN,             // NV_WIFI_PASSWD
     1,                          // NV_NTPSET
 
-    NV_NTPHOST_LEN,             // NV_NTPHOST
+    NV_NTPHOST_OLD_LEN,         // NV_NTPHOST_OLD
     1,                          // NV_GPIOOK
     2,                          // NV_SATPATHCOLOR
     2,                          // NV_SATFOOTCOLOR
@@ -238,6 +238,20 @@ static const uint8_t nv_sizes[NV_N] = {
 
     NV_SOTAWLIST_LEN,           // NV_SOTAWLIST
     NV_ADIFFN_LEN,              // NV_ADIFFN
+    NV_NTPHOST_LEN,             // NV_NTPHOST
+    NV_GPSDHOST_LEN,            // NV_GPSDHOST
+    NV_NMEAFILE_LEN,            // NV_NMEAFILE
+
+    1,                          // NV_USENMEA
+    2,                          // NV_NMEABAUD
+    1,                          // NV_BCTOABAND
+    1,                          // NV_BCRELBAND
+    1,                          // NV_AUTOMAP
+
+    1,                          // NV_DXCAGE
+    2,                          // NV_OA_FG_COLOR
+    2,                          // NV_OA_BG_COLOR
+    1,                          // NV_OA_BG_RAINBOW
 
 };
 
@@ -446,6 +460,14 @@ void NVWriteString (NV_Name e, const char *str)
     nvramWriteBytes (e, (uint8_t*)str, 0);
 }
 
+/* write the given time zone to the given NV_name
+ */
+void NVWriteTZ (NV_Name e, const TZInfo &tzi)
+{
+    int32_t secs = tzi.auto_tz ? NVTZ_AUTO : tzi.tz_secs;
+    NVWriteInt32 (e, secs);
+}
+
 /* read the given NV_Name float value, return whether found in NVRAM.
  */
 bool NVReadFloat (NV_Name e, float *fp)
@@ -495,6 +517,21 @@ bool NVReadString (NV_Name e, char *buf)
     return (nvramReadBytes (e, (uint8_t*)buf, 0));
 }
 
+/* read the given NV_Name TZInfo, return whether found in NVRAM.
+ */
+bool NVReadTZ (NV_Name e, TZInfo &tzi)
+{
+    int32_t secs;
+    if (!NVReadInt32 (e, &secs))
+        return (false);
+    if (secs == NVTZ_AUTO) {
+        tzi.auto_tz = true;
+    } else {
+        tzi.auto_tz = false;
+        tzi.tz_secs = secs;
+    }
+    return (true);
+}
 
 /* read CSEL color table i, return whether valid.
  */

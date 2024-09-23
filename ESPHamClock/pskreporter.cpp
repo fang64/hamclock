@@ -185,13 +185,13 @@ static void drawPSKPane (const SBox &box)
         if (TST_PSKBAND(i)) {
             uint16_t map_col = getMapColor(ham_bands[i].cid);
             uint16_t txt_col = getGoodTextColor(map_col);
-            tft.fillRect (x, y-1, TBCOLW, box.h/14, map_col);
+            tft.fillRect (x, y-LISTING_OS+1, TBCOLW, box.h/14, map_col);
             tft.setTextColor (txt_col);
             tft.setCursor (x+2, y);
             tft.print (report);
         } else {
             // disabled, always show but diminished
-            tft.fillRect (x, y-1, TBCOLW, box.h/14, RA8875_BLACK);
+            tft.fillRect (x, y-LISTING_OS+1, TBCOLW, box.h/14, RA8875_BLACK);
             tft.setTextColor (GRAY);
             tft.setCursor (x+2, y);
             tft.print (report);

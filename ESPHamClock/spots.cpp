@@ -208,7 +208,7 @@ void drawSpotOnList (const SBox &box, const DXSpot &spot, int row, uint16_t bg_c
     const uint16_t x = box.x+4;
     const uint16_t y = box.y + LISTING_Y0 + row*LISTING_DY;
     const uint16_t h = LISTING_DY - 2;
-    tft.fillRect (x, y-2, box.w-6, h, bg_col);
+    tft.fillRect (x, y-LISTING_OS, box.w-6, h, bg_col);
 
     // pretty freq, fixed 8 chars, bg matching band color assignment
     const char *f_fmt = spot.kHz < 1e6F ? "%8.1f" : "%8.0f";
@@ -216,7 +216,7 @@ void drawSpotOnList (const SBox &box, const DXSpot &spot, int row, uint16_t bg_c
     const uint16_t fbg_col = getBandColor ((long)(1000*spot.kHz)); // wants Hz
     const uint16_t ffg_col = getGoodTextColor(fbg_col);
     tft.setTextColor(ffg_col);
-    tft.fillRect (x, y-2, 50, h, fbg_col);
+    tft.fillRect (x, y-LISTING_OS, 50, h, fbg_col);
     tft.setCursor (x, y);
     tft.print (line);
 

@@ -83,7 +83,8 @@ static void ourSystem (const char *fmt, ...)
             // child
 
             // engage full perm
-            setuid (geteuid());
+            if (setuid (geteuid()) < 0)
+                printf ("setuid(%d): %s\n", geteuid(), strerror(errno));
 
             // arrange stdout/err to write into pipe_fd[1] to parent
             dup2 (pipe_fd[1], 1);

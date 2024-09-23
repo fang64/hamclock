@@ -25,6 +25,16 @@
 #if defined(__FreeBSD__)
   #define _IS_FREEBSD
 #endif
+
+#if defined (__APPLE__)
+    #define _IS_APPLE
+    #if defined(__aarch64__) || defined(__arm64__)
+        #define _IS_APPLE_M
+    #else
+        #define _IS_APPLE_x86
+    #endif
+#endif
+
     
 #if (defined(__arm__) || defined(__aarch64__)) && defined(_IS_LINUX)
   #if defined(__has_include)
@@ -116,6 +126,7 @@ extern int backend_port;
 extern int liveweb_ro_port;
 extern int liveweb_rw_port;
 extern int liveweb_max;
+extern int liveweb_to;
 extern const int liveweb_maxmax;
 extern int restful_port;
 extern bool skip_skip;

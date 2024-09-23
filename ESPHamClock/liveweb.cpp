@@ -28,6 +28,7 @@ char *liveweb_openurl;                                  // a url to attempt to o
 int liveweb_rw_port = LIVEWEB_RW_PORT;                  // r/w server port -- can be changed with -w
 int liveweb_ro_port = LIVEWEB_RO_PORT;                  // r/o server port -- can be changed with -r
 int liveweb_max = 10;                                   // max allowed connections < ws.h::MAX_CLIENTS
+int liveweb_to;                                         // timeout, minutes
 const int liveweb_maxmax = MAX_CLIENTS-1;               // max max for -help
 
 
@@ -385,9 +386,11 @@ static void getLivePNG (ws_cli_conn_t *client, char args[], size_t args_len)
 }
 
 /* client running liveweb-html.cpp is asking for incremental screen update.
- * we might also send a message to enable fullscreen once ready from setup.cpp. must be sent continuously
- *   because we can't tell when user reloaded their page.
- * we might also try to open liveweb_openurl
+ * we might also:
+ *   send a message to enable fullscreen once ready from setup.cpp. must be sent continuously
+ *     because we can't tell when user reloaded their page;
+ *   open liveweb_openurl
+ *   timeout if reach inactivity limit
  */
 static void getLiveUpdate (ws_cli_conn_t *client, char args[], size_t args_len)
 {
@@ -405,6 +408,25 @@ static void getLiveUpdate (ws_cli_conn_t *client, char args[], size_t args_len)
         liveweb_openurl = NULL;
     }
 
+    // close if time out
+    if (liveweb_to) {
+        // N.B. beware first connection before time is available
+        time_t n = myNow();
+        if (n > 0) {
+            if (client->action_t == 0) {
+                Serial.printf ("LIVE: reset session start to %ld\n", (long)n);
+                client->action_t = n;
+            }
+            if (n - client->action_t > liveweb_to*60) {         // mins to secs
+                Serial.printf ("LIVE: session timeout at %ld\n", (long)n);
+                ws_sendframe_txt (client, "Session timed out"); // N.B. must match liveweb html
+                ws_close_client (client);
+                return;
+            }
+        }
+    }
+
+    // finally: what we came here for :-)
     updateExistingClient (client);
 }
 
@@ -414,9 +436,13 @@ static void setLiveChar (ws_cli_conn_t *client, char args[], size_t args_len)
 {
     // ignore if this is from the r/o port
     if (client->port == liveweb_ro_port) {
-        Serial.printf ("LIVE: ignoring setLiveChar on r/o port %d\n", liveweb_ro_port);
+        if (live_verbose)
+            Serial.printf ("LIVE: ignoring setLiveChar on r/o port %d\n", liveweb_ro_port);
         return;
     }
+
+    // update action time
+    client->action_t = myNow();
 
     WebArgs wa;
     wa.nargs = 0;
@@ -495,9 +521,13 @@ static void setLiveTouch (ws_cli_conn_t *client, char args[], size_t args_len)
 {
     // ignore if this is from the r/o port
     if (client->port == liveweb_ro_port) {
-        Serial.printf ("LIVE: ignoring setLiveTouch on r/o port %d\n", liveweb_ro_port);
+        if (live_verbose)
+            Serial.printf ("LIVE: ignoring setLiveTouch on r/o port %d\n", liveweb_ro_port);
         return;
     }
+
+    // update action time
+    client->action_t = myNow();
 
     // define all possible args
     WebArgs wa;
@@ -640,7 +670,7 @@ static void ws_onopen(ws_cli_conn_t *client)
             memset (new_sip, 0, sizeof (*new_sip));
         } else {
             Serial.printf ("LIVE: hit max %d connections\n", liveweb_max);
-            ws_sendframe_txt (client, "Too many connections");
+            ws_sendframe_txt (client, "Too many connections");  // N.B. must match liveweb html
             ws_close_client (client);
         }
     }
@@ -657,6 +687,11 @@ static void ws_onopen(ws_cli_conn_t *client)
             n_roweb += 1;
         else
             n_rwweb += 1;
+
+
+        // init user action time
+        Serial.printf ("LIVE: new session starts at %ld\n", (long)myNow());
+        client->action_t = myNow();
     }
 
     // ok
@@ -828,5 +863,9 @@ void initLiveWeb (bool verbose)
             if (live_verbose)
                 Serial.printf ("LIVE: started r/o server thread on port %d\n", liveweb_ro_port);
         }
+
+        // log timeout, if any
+        if (liveweb_to > 0)
+            Serial.printf ("LIVE: timeout set to %d minutes\n", liveweb_to);
     }
 }

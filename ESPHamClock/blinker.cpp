@@ -11,8 +11,6 @@
  */
 
 
-#if defined (_IS_UNIX)
-
 /* perpetual thread that repeatedly reads the given blinker hz as a desired rate to blink the given pin.
  * N.B. we assume hz type is small enough to be atomic and doesn't need to be locked
  */
@@ -20,7 +18,7 @@ static void * blinkerThread (void *vp)
 {
     // get defining struct
     volatile ThreadBlinker &tb = *(ThreadBlinker *)vp;
-
+            
     // init output pin to false
     mcp.pinMode (tb.pin, OUTPUT);
     mcp.digitalWrite (tb.pin, tb.on_is_low);
@@ -93,62 +91,13 @@ void disableBlinker (volatile ThreadBlinker &tb)
     tb.disable = true;
 }
 
-
-#else   // ESP8266
-
-
-/* ESP has no threads but we still init the pin
- */
-void startBinkerThread (volatile ThreadBlinker &tb, int pin, bool on_is_low)
-{
-    if (!tb.started) {
-        tb.started = true;
-        tb.pin = pin;
-        tb.on_is_low = on_is_low;
-        mcp.pinMode (tb.pin, OUTPUT);
-        mcp.digitalWrite (tb.pin, tb.on_is_low);
-    }
-}
-
-/* ESP can't blink so just turn on or off
- */
-void setBlinkerRate (volatile ThreadBlinker &tb, int hz)
-{
-    if (hz == BLINKER_OFF_HZ)
-        mcp.digitalWrite (tb.pin, tb.on_is_low);
-    else
-        mcp.digitalWrite (tb.pin, !tb.on_is_low);
-}
-
-
-/* tell a blinker thread to end
- */
-void disableBlinker (volatile ThreadBlinker &tb)
-{
-    tb.disable = true;
-}
-
-#endif // _IS_UNIX
-
-/*
- *
- * /blinker
- *
- **********************************************************************************************/
-
-
-
-
 /**********************************************************************************************
  *
  * poller
  *
  */
 
-
-#if defined (_IS_UNIX)
-
-/* perpetual thread that repeatedly reads a digital pin at MCPPoller.hz.
+/* thread that repeatedly reads a digital pin at MCPPoller.hz.
  * then client can query as needed with readMCPPoller without waiting inline.
  */
 static void * pollerThread (void *vp)
@@ -202,44 +151,3 @@ void disableMCPPoller (volatile MCPPoller &mp)
 {
     mp.disable = true;
 }
-
-
-#else   // ESP8266
-
-
-/* ESP has no threads but we still init the pin
- */
-void startMCPPoller (volatile MCPPoller &mp, int pin, int hz)
-{
-    if (!mp.started) {
-        mp.started = true;
-        mp.pin = pin;
-        mp.hz = hz;
-        mcp.pinMode (mp.pin, INPUT_PULLUP);
-    }
-}
-
-/* ESP has no choice but to read inline every time
- */
-bool readMCPPoller (volatile const MCPPoller &mp)
-{
-    return (mcp.digitalRead (mp.pin));
-}
-
-
-/* tell a poller thread to end 
- */
-void disableMCPPoller (volatile MCPPoller &mp)
-{
-    mp.disable = true;
-}
-
-#endif // _IS_UNIX
-
-/*
- *
- * /poller
- *
- **********************************************************************************************/
-
-

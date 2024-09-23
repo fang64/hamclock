@@ -414,12 +414,12 @@ static void loadSWNV(void)
     if (!NVReadUInt32 (NV_ONCEALARM, &once_time)) {
         once_time = (uint32_t)nowWO();
         NVWriteUInt32 (NV_ONCEALARM, once_time);
-    } else {
-        // beware past alarms
-        if (once_time < (uint32_t)nowWO())
-            alarm_once.state = ALMS_OFF;
     }
     alarm_once.time = once_time;
+
+    // beware past alarms
+    if (once_time < (uint32_t)nowWO())
+        alarm_once.state = ALMS_OFF;
 }
 
 /* return ms countdown time remaining, if any
@@ -681,7 +681,7 @@ static void drawAlarmIndicators (bool label_too)
         tmElements_t tm;
         time_t t = alarm_once.time;
         if (!alarm_once.utc)
-            t += de_tz.tz_secs;
+            t += getTZ (de_tz);
         breakTime (t, tm);
         snprintf (buf, sizeof(buf), "%s %04d-%02d-%02d %02d:%02d", alarm_once.utc ? "UTC" : "DE  ",
                                         tm.Year+1970, tm.Month, tm.Day, tm.Hour, tm.Minute);
@@ -725,7 +725,7 @@ static void drawAlarmIndicators (bool label_too)
             tmElements_t tm;
             time_t t = alarm_once.time;
             if (!alarm_once.utc)
-                t += de_tz.tz_secs;
+                t += getTZ (de_tz);
             breakTime (t, tm);
             snprintf (buf, sizeof(buf), "A:%04d-%02d-%02d %02d:%02d", tm.Year+1970, tm.Month, tm.Day,
                                                                                 tm.Hour, tm.Minute);
@@ -938,7 +938,7 @@ static void drawBCDateInfo (int hr, int dy, int wd, int mo)
         tft.print ("LST");
     } else if (sws_display == SWD_BCDIGITAL && !(bc_bits & SW_UTCBIT)) {
         // UTC + TZ
-        tft.printf ("UTC%+g", de_tz.tz_secs/3600.0F);
+        tft.printf ("UTC%+g", getTZ (de_tz)/3600.0F);
     }
 }
 
@@ -1017,10 +1017,10 @@ static void drawDigitalBigClock (bool all)
         mn = lst;
         lst = (lst - mn)*60;                                    // now secs
         sc = lst;
-        t0 += de_tz.tz_secs;                                    // now local
+        t0 += getTZ (de_tz);                                    // now local
     } else {
         if (!(bc_bits & SW_UTCBIT))
-            t0 += de_tz.tz_secs;                                // now local
+            t0 += getTZ (de_tz);                                // now local
         hr = hour(t0);
         mn = minute(t0);
         sc = second(t0);
@@ -1257,7 +1257,7 @@ static void drawAnalogBigClock (bool all)
     static int16_t prev_scdx3, prev_scdy3;
 
     // get local time now, including any user offset
-    time_t lt0 = nowWO() + de_tz.tz_secs;
+    time_t lt0 = nowWO() + getTZ (de_tz);
 
     // wait for second to change unless all
     if (!all && lt0 == prev_lt0)
@@ -2014,7 +2014,7 @@ static void checkSWPageTouch()
                 alarm_daily.utc = !alarm_daily.utc;
 
                 // change to new timezone
-                int tz_mins = de_tz.tz_secs/60;                 // think of hhmm as just minutes
+                int tz_mins = getTZ (de_tz)/60;                 // think of hhmm as just minutes
                 if (alarm_daily.utc) {
                     // was local so subtract tz to get utc
                     alarm_daily.hrmn += (1440 - tz_mins);       // keep hrmn positive -- it's unsigned!
@@ -2234,7 +2234,7 @@ static bool dailyAlarmWentOff(void)
     if (alarm_daily.state == ALMS_ARMED) {
 
         // find hr mn now
-        time_t t = alarm_daily.utc ? nowWO() : nowWO() + de_tz.tz_secs;
+        time_t t = alarm_daily.utc ? nowWO() : nowWO() + getTZ (de_tz);
         int t_hr = hour(t);
         int t_mn = minute(t);
 
@@ -2264,7 +2264,7 @@ static bool dailyAlarmWentOff(void)
 static bool dailyAlarmIsOver(void)
 {
     // find hr mn now
-    time_t t = alarm_daily.utc ? nowWO() : nowWO() + de_tz.tz_secs;
+    time_t t = alarm_daily.utc ? nowWO() : nowWO() + getTZ (de_tz);
     int t_hr = hour(t);
     int t_mn = minute(t);
 
@@ -2677,7 +2677,7 @@ void getOneTimeAlarmState (AlarmState &as, time_t &t_utc, bool &utc, char str[],
     tmElements_t tm;
     time_t t = alarm_once.time;
     if (!alarm_once.utc)
-        t += de_tz.tz_secs;
+        t += getTZ (de_tz);
     breakTime (t, tm);
     snprintf (str, str_l, "%s %04d-%02d-%02d %02d:%02d", alarm_once.utc ? "UTC" : "DE  ",
                                         tm.Year+1970, tm.Month, tm.Day, tm.Hour, tm.Minute);
@@ -2708,7 +2708,7 @@ bool setOneTimeAlarmState (AlarmState as, bool utc, const char time_str[])
             free (with_secs);
         }
         if (!alarm_once.utc)
-            user_t -= de_tz.tz_secs;                                    // DE -> UTC
+            user_t -= getTZ (de_tz);                                    // DE -> UTC
         if (user_t <= nowWO())
             return (false);
 

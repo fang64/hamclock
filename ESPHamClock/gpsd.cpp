@@ -218,7 +218,7 @@ void updateGPSDLoc()
 
         // not crazy often
         static uint32_t to_t;
-        if (!timesUp (&to_t, 60000))
+        if (!timesUp (&to_t, FOLLOW_DT))
             return;
 
         // get loc
@@ -226,15 +226,11 @@ void updateGPSDLoc()
         if (!getGPSDLatLong(&ll))
             return;
 
-        // find approx distance from current de in miles, ignoring lng wrap
-        const float mpd = M_PIF*ERAD_M/180;             // miles per degree
-        float lat_chg = mpd * fabs (de_ll.lat_d - ll.lat_d);
-        float lng_chg = mpd * fabs (de_ll.lng_d - ll.lng_d) * cosf (de_ll.lat);;
-        float dist2 = lat_chg*lat_chg + lng_chg*lng_chg;
+        // dist from DE
+        float miles = ERAD_M*simpleSphereDist (de_ll, ll);
 
         // engage if large enough, consider 6 char grid is 5'x2.5' or about 6x3 mi at equator
-        #define _MIN_STEP 1                             // miles
-        if (dist2 > _MIN_STEP*_MIN_STEP)
+        if (miles > FOLLOW_MIND)
             newDE (ll, NULL);
 }
 

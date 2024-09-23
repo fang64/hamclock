@@ -130,10 +130,11 @@ bool s2llRobinson (const SCoord &s, LatLong &ll)
 #if defined(_UNIT_TEST)
 
 /* g++ -Wall -IArduinoLib -D_UNIT_TEST robinson.cpp && ./a.out
- * no output unless coordinates don't match back.
+ * errors will all be around the outer edge due to ll2sRobinson() edge approximation.
  */
 
 SBox map_b;
+PanZoom pan_zoom;
 
 void fatalError (const char *fmt, ...)
 {
@@ -169,6 +170,10 @@ int main (int ac, char *av[])
     map_b.w = 660;
     map_b.h = 330;
 
+    pan_zoom.zoom = 1;
+    pan_zoom.pan_x = 0;
+    pan_zoom.pan_y = 0;
+
     for (uint16_t y = map_b.y; y < map_b.y + map_b.h; y++) {
         for (uint16_t x = map_b.x; x < map_b.x + map_b.w; x++) {
             SCoord s = {x, y};
@@ -183,6 +188,8 @@ int main (int ac, char *av[])
             }
         }
     }
+
+    return (0);
 }
 
 #endif

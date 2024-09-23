@@ -32,28 +32,19 @@ static char *day_pixels, *night_pixels;                 // pixels mmap'ed
 // box in which to draw map scales
 SBox mapscale_b;
 
-// current CoreMap designation even if not currently being shown, if any
+// current CoreMap designation
 CoreMaps core_map = CM_NONE;                            // current core map, if any
 
-// current VOACAP prop map setting, if any
-PropMapSetting prop_map;
-
-// mask of 1<<CoreMap currently rotating. N.B. must always include 1<<core_map
+// mask of 1<<CoreMaps currently rotating. N.B. must always include 1<<core_map
 uint16_t map_rotset;
 
-// max age of cache file
-#define X(a,b,c)  b,                                    // expands COREMAPS to each age plus comma
-const int coremap_maxage[CM_N] = {
+// supporting info for each core map style
+#define X(a,b,c,d,e,f)  {b,c,d,e,f},                    // expands COREMAPS entries for CoreMapInfo
+CoreMapInfo cm_info[CM_N] = {
     COREMAPS
 };
 #undef X
 
-// central file name components for the core background maps -- not including voacap.
-#define X(a,b,c)  c,                                    // expands COREMAPS to each name plus comma
-const char *coremap_names[CM_N] = {
-    COREMAPS
-};
-#undef X
 
 // prop and muf style names
 static const char prop_style[] = "PropMap";
@@ -436,7 +427,6 @@ static void cleanupMaps (const char *style)
  */
 static bool installQueryMaps (const char *page, const char *msg, const char *style, const float MHz)
 {
-
         // get clock time
         time_t t = nowWO();
         int yr = year(t);
@@ -495,7 +485,7 @@ static bool installQueryMaps (const char *page, const char *msg, const char *sty
                 mapMsg (0, "%s", msg);
                 char full_page[300];
                 snprintf (full_page, sizeof(full_page), "/%s?%s", page, query);
-                Serial.printf ("downloading %s\n", full_page);
+                Serial.printf ("%s\n", full_page);
                 httpHCGET (client, backend_host, full_page);
                 ok = httpSkipHeader (client) && downloadMapFile (client, q_dfn, dtitle)
                                              && downloadMapFile (client, q_nfn, ntitle);
@@ -550,11 +540,11 @@ static File openMapFile (CoreMaps cm, const char *file, const char *title)
 
         // file is "bad" if too old
         age = myNow() - f.getCreationTime();
-        if (age > coremap_maxage[cm]) {
-            Serial.printf ("%s too old: %d > %d secs\n", file, age, coremap_maxage[cm]);
+        if (age > cm_info[cm].maxage) {
+            Serial.printf ("%s too old: %d > %d secs\n", file, age, cm_info[cm].maxage);
             goto out;
         } else
-            Serial.printf ("%s: %s %d secs old, max %d\n", title, file, age, coremap_maxage[cm]);
+            Serial.printf ("%s: %s %d secs old, max %d\n", title, file, age, cm_info[cm].maxage);
 
         // read header
         nr = f.read ((uint8_t*)hdr_buf, BHDRSZ);
@@ -590,14 +580,14 @@ static File openMapFile (CoreMaps cm, const char *file, const char *title)
             // download and open again if success
             if (wifiOk() && client.connect(backend_host, backend_port)) {
                 snprintf (hdr_buf, sizeof(hdr_buf), "/maps/%s", file);
-                Serial.printf ("%s: downloading\n", hdr_buf);
+                Serial.printf ("%s\n", hdr_buf);
                 httpHCGET (client, backend_host, hdr_buf);
                 if (httpSkipHeader(client) && downloadMapFile (client, file, title))
                     f = LittleFS.open (file, "r");
                 client.stop();
             }
             if (!f)
-                mapMsg (1000, "%s: network err", title);
+                mapMsg (1000, "%s: download failed", title);
         }
 
         // return result, open if good or closed if not
@@ -616,7 +606,7 @@ static bool installFileMaps (CoreMaps cm)
             fatalError ("installFileMaps(%d) invalid", cm);        // does not return
 
         // create names and titles
-        const char *style = coremap_names[cm];
+        const char *style = cm_info[cm].name;
         char dfile[LFS_NAME_MAX];
         char nfile[LFS_NAME_MAX];
         char dtitle[NV_COREMAPSTYLE_LEN+10];
@@ -638,55 +628,38 @@ static bool installFileMaps (CoreMaps cm)
         return (installFilePixels (dfile, nfile));
 }
 
-/* retrieve and install new MUF map for the current time.
- * return whether ok
- */
-static bool installMUFMaps()
-{
-        char msg[100];
-        snprintf (msg, sizeof(msg), "Calculating %s...", muf_v_style);
-        return (installQueryMaps ("fetchVOACAP-MUF.pl", msg, muf_v_style, 0));
-}
-
-/* retrieve and install VOACAP maps for the current time and given band.
- * return whether ok
- */
-static bool installPropMaps (void)
-{
-        char s[NV_COREMAPSTYLE_LEN];
-        char msg[100];
-        snprintf (msg, sizeof(msg), "Calculating %s %s...", getMapStyle(s), prop_style);
-
-        float MHz = propMap2MHz(prop_map.band);
-
-        if (prop_map.type == PROPTYPE_REL)
-            return (installQueryMaps ("fetchVOACAPArea.pl", msg, prop_style, MHz));
-        else if (prop_map.type == PROPTYPE_TOA)
-            return (installQueryMaps ("fetchVOACAP-TOA.pl", msg, prop_style, MHz));
-        else
-            fatalError ("unknow prop map type %d", prop_map.type);
-        return (false);
-}
-
-/* install fresh maps depending on prop_map and core_map.
+/* install fresh core_map.
  * return whether ok
  * N.B. drain pending clicks that may have accumulated during slow downloads.
  */
 bool installFreshMaps()
 {
+        char s[NV_COREMAPSTYLE_LEN];
+        char msg[100];
+        snprintf (msg, sizeof(msg), "Calculating %s...", getCoreMapStyle(core_map, s));
+
         bool ok = false;
 
-        if (prop_map.active)
-            ok = installPropMaps();
-        else {
-            bool core_ok = false;
-            if (core_map == CM_MUF_V)
-                core_ok = installMUFMaps();
-            else
-                core_ok = installFileMaps (core_map);
-            if (core_ok)
-                saveMapRotSet();
-            ok = core_ok;
+        switch (core_map) {
+        case CM_PMTOA:
+            ok = installQueryMaps("fetchVOACAP-TOA.pl", msg, prop_style,propBand2MHz(cm_info[CM_PMTOA].band));
+            break;
+        case CM_PMREL:
+            ok = installQueryMaps("fetchVOACAPArea.pl", msg, prop_style,propBand2MHz(cm_info[CM_PMREL].band));
+            break;
+        case CM_MUF_V:
+            ok = installQueryMaps ("fetchVOACAP-MUF.pl", msg, muf_v_style, 0);
+            break;
+        case CM_COUNTRIES:
+        case CM_TERRAIN:
+        case CM_DRAP:
+        case CM_MUF_RT:
+        case CM_AURORA:
+        case CM_WX:
+            ok = installFileMaps (core_map);
+            break;
+        case CM_N:              // lint
+            break;
         }
 
         drainTouch();
@@ -694,68 +667,78 @@ bool installFreshMaps()
         return (ok);
 }
 
-/* init core_map from NV, or set a default, and always disable prop_map.
+/* init core_map from NV, or set a default
  * return whether ok
  */
 void initCoreMaps()
 {
-        // initially no map is set
-        core_map = CM_NONE;
-        prop_map.active = false;
-
-        // set core from NV if present and valid
+        // init map from NV if present and valid
         char s[NV_COREMAPSTYLE_LEN];
+        core_map = CM_NONE;
         if (NVReadString (NV_COREMAPSTYLE, s)) {
             for (int i = 0; i < CM_N; i++) {
-                if (strcmp (coremap_names[i], s) == 0) {
+                if (strcmp (cm_info[i].name, s) == 0) {
                     core_map = (CoreMaps)i;
                     break;
                 }
             }
         }
 
-        // pick default if still not set
-        if (core_map == CM_NONE) {
-            NVWriteString (NV_COREMAPSTYLE, coremap_names[CM_TERRAIN]);
-            core_map = CM_TERRAIN;
-        }
-
-        // init map_rotset, insure core_map and no PROPMAP_ROT_BIT
+        // init map_rotset
         if (!NVReadUInt16 (NV_MAPROTSET, &map_rotset))
             map_rotset = 0;
-        map_rotset |= (1 << core_map);
-        map_rotset &= ~PROPMAP_ROT_BIT;
 
-        // log initial settins
+        // init BC bands
+        uint8_t band;
+        if (!NVReadUInt8 (NV_BCTOABAND, &band)) {
+            band = PROPBAND_NONE;
+            NVWriteUInt8 (NV_BCTOABAND, band);
+        }
+        if (band >= PROPBAND_NONE)
+            RM_CMROT (CM_PMTOA);
+        cm_info[CM_PMTOA].band = (PropMapBand) band;
+
+        if (!NVReadUInt8 (NV_BCRELBAND, &band)) {
+            band = PROPBAND_NONE;
+            NVWriteUInt8 (NV_BCRELBAND, band);
+        }
+        if (band >= PROPBAND_NONE)
+            RM_CMROT (CM_PMREL);
+        cm_info[CM_PMREL].band = (PropMapBand) band;
+
+        // insure sane
+        insureCoreMap();
+
+        // log initial settings
         logMapRotSet();
 }
 
-/* save map_rotset and core_map
+/* save map_rotset core_map and BC bands
  */
-void saveMapRotSet(void)
+void saveCoreMaps(void)
 {
         if ((int)core_map >= CM_N)
-            fatalError ("Bogus core_map %d\n", core_map);
+            fatalError ("saveMapRotSet() core_map %d\n", core_map);
 
-        // never include PROPMAP_ROT_BIT
-        NVWriteString (NV_COREMAPSTYLE, coremap_names[core_map]);
-        NVWriteUInt16 (NV_MAPROTSET, map_rotset & ~PROPMAP_ROT_BIT);
+        NVWriteString (NV_COREMAPSTYLE, cm_info[core_map].name);
+        NVWriteUInt16 (NV_MAPROTSET, map_rotset);
+        NVWriteUInt8 (NV_BCTOABAND, cm_info[CM_PMTOA].band);
+        NVWriteUInt8 (NV_BCRELBAND, cm_info[CM_PMREL].band);
 }
 
 /* log map_rotset and core_map
  */
 void logMapRotSet(void)
 {
-        char line[256];
-        int ll = 0;
+        char s[NV_COREMAPSTYLE_LEN];
+        char line[512];
+        size_t ll = 0;
         ll += snprintf (line+ll, sizeof(line)-ll, "Active Map styles: ");
-        if (map_rotset & PROPMAP_ROT_BIT) {
-            char buf[NV_COREMAPSTYLE_LEN];
-            ll += snprintf (line+ll, sizeof(line)-ll, "%s ", getPropMapStyle (buf));
+        for (int i = 0; i < CM_N; i++) {
+            int ci = (core_map + i) % CM_N;             // start with core_map
+            if (IS_CMROT(ci))
+                ll += snprintf (line+ll, sizeof(line)-ll, "%s ", getCoreMapStyle ((CoreMaps)ci, s));
         }
-        for (int i = 0; i < CM_N; i++)
-            if (map_rotset & (1 << i))
-                ll += snprintf (line+ll, sizeof(line)-ll, "%s ", coremap_names[i]);
         Serial.printf ("%s\n", line);
 }
 
@@ -817,31 +800,24 @@ FS_Info *getConfigDirInfo (int *n_info, char **fs_name, uint64_t *fs_size, uint6
         return (fs_array);
 }
 
-/* return name of prop_map style. regardless of whether currently active.
+/* return the given map style name
  */
-const char *getPropMapStyle (char s[NV_COREMAPSTYLE_LEN])
+const char *getCoreMapStyle (CoreMaps cm, char s[NV_COREMAPSTYLE_LEN])
 {
-        snprintf (s, NV_COREMAPSTYLE_LEN, "%dm/%s", propMap2Band (prop_map.band),
-                            prop_map.type == PROPTYPE_REL ? "REL" : "TOA");
-        return (s);
-}
+        const char *name = cm_info[cm].name;
 
-/* return the current map style, meaning core style or short prop map name.
- */
-const char *getMapStyle (char s[NV_COREMAPSTYLE_LEN])
-{
-        if (prop_map.active)
-            getPropMapStyle (s);
+        if (cm == CM_PMTOA || cm == CM_PMREL)
+            snprintf (s, NV_COREMAPSTYLE_LEN, "%dm/%s", propBand2Band (cm_info[cm].band), name);
         else
-            strcpy (s, coremap_names[core_map]);
+            snprintf (s, NV_COREMAPSTYLE_LEN, "%s", name);
 
         return (s);
 }
 
-/* return MHz for the given PropMapSetting.band
+/* return MHz for the given PropMapBand
  * N.B. match column headings in voacapx.out
  */
-float propMap2MHz (PropMapBand band)
+float propBand2MHz (PropMapBand band)
 {
         switch (band) {
         case PROPBAND_80M: return ( 3.6);
@@ -852,16 +828,16 @@ float propMap2MHz (PropMapBand band)
         case PROPBAND_15M: return (21.1);
         case PROPBAND_12M: return (24.9);
         case PROPBAND_10M: return (28.2);
-        default: fatalError ("bad MHz PMS %d", band);
+        default: fatalError ("propBand2MHz MHz %d", band);
         }
 
         // lint
         return (0);
 }
 
-/* return band for the given PropMapSetting.band
+/* return band for the given PropMapBand
  */
-int propMap2Band (PropMapBand band)
+int propBand2Band (PropMapBand band)
 {
         switch (band) {
         case PROPBAND_80M: return (80);
@@ -872,7 +848,7 @@ int propMap2Band (PropMapBand band)
         case PROPBAND_15M: return (15);
         case PROPBAND_12M: return (12);
         case PROPBAND_10M: return (10);
-        default: fatalError ("bad PMS %d", band);
+        default: fatalError ("propBand2Band %d", band);
         }
 
         // lint
@@ -885,15 +861,24 @@ int propMap2Band (PropMapBand band)
  */
 bool mapScaleIsUp(void)
 {
-    return (prop_map.active
-                || core_map == CM_DRAP
-                || core_map == CM_MUF_V
-                || core_map == CM_MUF_RT
-                || core_map == CM_AURORA
-                || core_map == CM_WX);
+    switch (core_map) {
+    case CM_DRAP:
+    case CM_MUF_V:
+    case CM_MUF_RT:
+    case CM_AURORA:
+    case CM_WX:
+    case CM_PMTOA:
+    case CM_PMREL:
+        return (true);
+    case CM_COUNTRIES:
+    case CM_TERRAIN:
+    case CM_N:          // lint
+        return (false);
+    }
+    return (false);
 }
 
-/* draw the appropriate scale at mapscale_b depending on core_map or prop_map, if any.
+/* draw the appropriate scale at mapscale_b depending on core_map, if any.
  * N.B. we move mapscale_b depending on rss_on
  */
 void drawMapScale()
@@ -906,7 +891,7 @@ void drawMapScale()
     } MapScalePoint;
 
     // CM_DRAP and CM_MUF_V and CM_MUF_RT
-    static PROGMEM const MapScalePoint d_scale[] = {    // see fetchDRAP.pl and fetchVOACAP-MUF.pl
+    static const MapScalePoint d_scale[] = {            // see fetchDRAP.pl and fetchVOACAP-MUF.pl
         {0,  0x000000, 0},
         {4,  0x4E138A, 0},
         {9,  0x001EF5, 0},
@@ -918,7 +903,7 @@ void drawMapScale()
     };
 
     // CM_AURORA
-    static PROGMEM const MapScalePoint a_scale[] = {    // see fetchAurora.pl
+    static const MapScalePoint a_scale[] = {            // see fetchAurora.pl
         {0,   0x282828, 0},
         {25,  0x00FF00, 1},
         {50,  0xFFFF00, 1},
@@ -927,7 +912,7 @@ void drawMapScale()
     };
 
     // CM_WX
-    static PROGMEM const MapScalePoint w_scale[] = {    // see fetchWordWx.pl
+    static const MapScalePoint w_scale[] = {            // see fetchWordWx.pl
         // values are degs C
         {-50,  0xD1E7FF, 1},
         {-40,  0xB5D5FF, 1},
@@ -942,15 +927,15 @@ void drawMapScale()
         {50,   0x5B0023, 1},
     };
 
-    // PROPTYPE_TOA
-    static PROGMEM const MapScalePoint t_scale[] = {    // see fetchVOACAP-TOA.pl
+    // CM_PMTOA
+    static const MapScalePoint t_scale[] = {            // see fetchVOACAP-TOA.pl
         {0,    0x0000F0, 0},
         {6,    0xF0B060, 1},
         {30,   0xF00000, 1},
     };
 
-    // PROPTYPE_REL
-    static PROGMEM const MapScalePoint r_scale[] = {    // see fetchVOACAPArea.pl
+    // CM_PMREL
+    static const MapScalePoint r_scale[] = {            // see fetchVOACAPArea.pl
         {0,    0x666666, 0},
         {21,   0xEE6766, 0},
         {40,   0xEEEE44, 1},
@@ -966,53 +951,44 @@ void drawMapScale()
     unsigned n_labels = 0;                              // n labels in scale
     const char *title = NULL;                           // scale title
 
-    if (prop_map.active) {
-
-        switch (prop_map.type) {
-        case PROPTYPE_TOA:
-            msp = t_scale;
-            n_scale = NARRAY(t_scale);
-            n_labels = 7;
-            title = "DE TOA, degs";
-            break;
-        case PROPTYPE_REL:
-            msp = r_scale;
-            n_scale = NARRAY(r_scale);
-            n_labels = 6;
-            title = "% Reliability";
-            break;
-        }
-
-    } else {
-
-        switch (core_map) {
-        case CM_MUF_V:          // fallthru
-        case CM_MUF_RT:         // fallthru
-        case CM_DRAP:
-            msp = d_scale;
-            n_scale = NARRAY(d_scale);
-            n_labels = 8;
-            title = "MHz";
-            break;
-        case CM_AURORA:
-            msp = a_scale;
-            n_scale = NARRAY(a_scale);
-            n_labels = 11;
-            title = "% Chance";
-            break;
-        case CM_WX:
-            msp = w_scale;
-            n_scale = NARRAY(w_scale);
-            n_labels = useMetricUnits() ? 11 : 10;
-            title = "Degs C";
-            break;
-        case CM_COUNTRIES:
-        case CM_TERRAIN:
-        case CM_N:                                              // lint
-            // no scale
-            return;
-        }
-
+    switch (core_map) {
+    case CM_COUNTRIES:
+    case CM_TERRAIN:
+    case CM_N:                                          // lint
+        // no scale
+        return;
+    case CM_MUF_V:          // fallthru
+    case CM_MUF_RT:         // fallthru
+    case CM_DRAP:
+        msp = d_scale;
+        n_scale = NARRAY(d_scale);
+        n_labels = 8;
+        title = "MHz";
+        break;
+    case CM_AURORA:
+        msp = a_scale;
+        n_scale = NARRAY(a_scale);
+        n_labels = 11;
+        title = "% Chance";
+        break;
+    case CM_WX:
+        msp = w_scale;
+        n_scale = NARRAY(w_scale);
+        n_labels = useMetricUnits() ? 11 : 10;
+        title = "Degs C";
+        break;
+    case CM_PMTOA:
+        msp = t_scale;
+        n_scale = NARRAY(t_scale);
+        n_labels = 7;
+        title = "DE TOA, degs";
+        break;
+    case CM_PMREL:
+        msp = r_scale;
+        n_scale = NARRAY(r_scale);
+        n_labels = 6;
+        title = "% Reliability";
+        break;
     }
 
 
@@ -1055,27 +1031,25 @@ void drawMapScale()
 
     // determine marker location, if used
     uint16_t marker_x = 0;
-    if (!prop_map.active) {
-        float v = 0;
-        bool v_ok = false;
-        if (core_map == CM_DRAP) {
-            (void) checkForNewDRAP();
-            if (space_wx[SPCWX_DRAP].value_ok) {
-                v = space_wx[SPCWX_DRAP].value;
-                v_ok = true;
-            }
-        } else if (core_map == CM_AURORA) {
-            (void) checkForNewAurora();
-            if (space_wx[SPCWX_AURORA].value_ok) {
-                v = space_wx[SPCWX_AURORA].value;
-                v_ok = true;
-            }
+    float v = 0;
+    bool v_ok = false;
+    if (core_map == CM_DRAP) {
+        (void) checkForNewDRAP();
+        if (space_wx[SPCWX_DRAP].value_ok) {
+            v = space_wx[SPCWX_DRAP].value;
+            v_ok = true;
         }
-        if (v_ok) {
-            // find marker but beware range overflow and leave room for full width
-            float clamp_v = CLAMPF (v, _MS_MINV, _MS_MAXV);
-            marker_x = CLAMPF (_MS_V2X(clamp_v), mapscale_b.x + 3, mapscale_b.x + mapscale_b.w - 4);
+    } else if (core_map == CM_AURORA) {
+        (void) checkForNewAurora();
+        if (space_wx[SPCWX_AURORA].value_ok) {
+            v = space_wx[SPCWX_AURORA].value;
+            v_ok = true;
         }
+    }
+    if (v_ok) {
+        // find marker but beware range overflow and leave room for full width
+        float clamp_v = CLAMPF (v, _MS_MINV, _MS_MAXV);
+        marker_x = CLAMPF (_MS_V2X(clamp_v), mapscale_b.x + 3, mapscale_b.x + mapscale_b.w - 4);
     }
 
     // draw labels inside mapscale_b but may need to build F scale for WX
@@ -1090,7 +1064,7 @@ void drawMapScale()
     const char *my_title;
 
     // prep values and center x locations
-    if (!prop_map.active && core_map == CM_WX && !useMetricUnits()) {
+    if (core_map == CM_WX && !useMetricUnits()) {
 
         // switch to F scale
         my_title = "Degs F";
@@ -1184,40 +1158,74 @@ void eraseMapScale ()
     rss_on = rs;
 }
 
-/* log and show message over map_b.
+/* log and show message in a nice box over map_b.
  */
 void mapMsg (uint32_t dwell_ms, const char *fmt, ...)
 {
     // format msg
     va_list ap;
     va_start(ap, fmt);
-    char msg[200];
+    char msg[500];
     vsnprintf (msg, sizeof(msg), fmt, ap);
     va_end(ap);
 
     // log
-    Serial.println (msg);
+    Serial.printf ("mapMsg: %s\n", msg);
 
-    // show over map
+    // get msg width
     selectFontStyle (LIGHT_FONT, FAST_FONT);
     tft.setTextColor (RA8875_WHITE);
-    size_t msg_l = getTextWidth(msg);
+    uint16_t msg_w = getTextWidth(msg);
+
+    // set constant box size but allow larger
+    const uint16_t margin = 50;
+    uint16_t box_w = map_b.w - 200;
+    if (msg_w + margin > box_w) {
+        box_w = map_b.w - 20;
+        msg_w = maxStringW (msg, box_w-margin);
+    }
+
+    // draw both centered
     uint16_t msg_y = map_b.y + map_b.h/10;
-    tft.fillRect (map_b.x + map_b.w/4, msg_y, map_b.w/2, 30, RA8875_BLUE);
-    tft.setCursor (map_b.x + (map_b.w-msg_l)/2, msg_y + 12);
+    tft.fillRect (map_b.x + (map_b.w-box_w)/2, msg_y, box_w, 30, RA8875_BLUE);
+    tft.setCursor (map_b.x + (map_b.w-msg_w)/2, msg_y + 12);
     tft.print(msg);
     tft.drawPR();
 
-    // dwell
-    wdDelay(dwell_ms);
+    // dwell with clocks
+    while (dwell_ms > 200) {
+        usleep (200000);
+        updateClocks (false);
+        dwell_ms -= 200;
+    }
 }
 /* return whether background maps are rotating
  */
 bool mapIsRotating()
 {
     // rotating if more than 1 bit is on
-    return (map_rotset && (map_rotset & (map_rotset-1U)));
+    return ((map_rotset & (map_rotset-1U)) != 0);       // removes lowest set bit
 }
+
+/* make sure core_map is set to one of the entries in map_rotset, else set a default
+ */
+void insureCoreMap()
+{
+    // done if core_map is already in the set
+    if (IS_CMROT(core_map))
+        return;
+
+    // pick another
+    core_map = CM_NONE;
+    for (int i = 0; i < CM_N && core_map == CM_NONE; i++)
+        if (IS_CMROT(i))
+            core_map = (CoreMaps)i;
+
+    // if none at all, set a default
+    if (core_map == CM_NONE)
+        DO_CMROT(CM_COUNTRIES);
+}
+
 
 /* return next map refresh time: if rotating use getMapRotationPeriod() else the given interval
  */
@@ -1231,50 +1239,22 @@ time_t nextMapUpdate (int interval)
     return (next_t);
 }
 
-/* update prop_map and/or core_map per map_rotset.
+/* update core_map per map_rotset.
  * N.B. we assume mapIsRotating() is rtue.
  */
 void rotateNextMap()
 {
-    if (map_rotset & PROPMAP_ROT_BIT) {
-        if (!prop_map.active) {
-            // prop_map is in rotset but not active now
-
-            // look for "smaller" CoreMap bit
-            int new_cm;
-            for (new_cm = (int)(core_map); --new_cm >= 0; )
-                if (map_rotset & (1<<new_cm))
-                    break;
-
-            // engage next core_map else time for prop_map
-            if (new_cm >= 0)
-                core_map = (CoreMaps) new_cm;
-            else
-                prop_map.active = true;
-        } else {
-            // prop_map is active so time to restart the "largest" CoreMaps bit
-            int new_cm;
-            for (new_cm = CM_N; --new_cm >= 0; )
-                if (map_rotset & (1<<new_cm))
-                    break;
-            if (new_cm < 0)
-                fatalError ("Bogus map_rotset 0x%x\n", map_rotset);
-            core_map = (CoreMaps) new_cm;
-            prop_map.active = false;
+    // rotate to the "next" CoreMaps bit after core_map
+    int new_cm = -1;
+    for (int i = 1; i < CM_N; i++) {
+        int ci = (core_map + i) % CM_N;
+        if (IS_CMROT(ci)) {
+            new_cm = ci;
+            break;
         }
-    } else {
-        // prop_map is not involved, just rotate to the "next" CoreMaps bit after core_map
-        int new_cm = -1;
-        for (int i = 1; i < CM_N; i++) {
-            int ci = (core_map + i) % CM_N;
-            if (map_rotset & (1 << ci)) {
-                new_cm = ci;
-                break;
-            }
-        }
-        if (new_cm < 0)
-            fatalError ("Bogus map rotation set: 0x%x\n", map_rotset);
-        core_map = (CoreMaps) new_cm;
     }
+    if (new_cm < 0)
+        fatalError ("Bogus map rotation set: 0x%x\n", map_rotset);
+    core_map = (CoreMaps) new_cm;
 }
 

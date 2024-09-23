@@ -14,9 +14,6 @@ char remote_addr[16];                           // INET_ADDRSTRLEN
 // user's date and time, UNIX only
 time_t usr_datetime;
 
-// world wx table update, new data every hour but N.B. make it longer than OTHER_MAPS_INTERVAL
-#define WWX_INTERVAL    (2300)                  // polling interval, secs
-
 // ADIF pane
 #define ADIF_INTERVAL   2                       // polling interval, secs
 
@@ -37,7 +34,6 @@ uint16_t bc_powers[] = {1, 5, 10, 50, 100, 500, 1000};
 const int n_bc_powers = NARRAY(bc_powers);
 static const char bc_page[] = "/fetchBandConditions.pl";
 static time_t bc_time;                          // nowWO() when bc_matrix was loaded
-static time_t map_time;                         // nowWO() when map was loaded
 BandCdtnMatrix bc_matrix;                       // percentage reliability for each band
 uint16_t bc_power;                              // VOACAP power setting
 float bc_toa;                                   // VOACAP take off angle
@@ -105,7 +101,7 @@ static PlotPane revert_pane;                    // which pane is being temporari
 static time_t next_rotation[PANE_N];            // next pane rotation
 time_t next_update[PANE_N];                     // next function call
 static time_t next_map;                         // next map check
-static time_t next_wwx;                         // next world weather check
+static time_t map_time;                         // nowWO() when map was loaded
 static bool fresh_redraw[PLOT_CH_N];            // whether full pane redraw is required
 
 
@@ -269,9 +265,9 @@ out:
         normalizeLL (de_ll);
         NVWriteFloat (NV_DE_LAT, de_ll.lat_d);
         NVWriteFloat (NV_DE_LNG, de_ll.lng_d);
-        setNVMaidenhead(NV_DE_GRID, de_ll);
-        de_tz.tz_secs = getTZ (de_ll);
-        NVWriteInt32(NV_DE_TZ, de_tz.tz_secs);
+        setNVMaidenhead (NV_DE_GRID, de_ll);
+        setTZAuto (de_tz);
+        NVWriteTZ (NV_DE_TZ, de_tz);
 
 
     } else {
@@ -430,6 +426,7 @@ void initSys()
             geolocateIP (init_locip);
         else
             tftMsg (true, 0, "no network for geo IP");
+
     } else if (useGPSDLoc()) {
         LatLong ll;
         if (getGPSDLatLong(&ll)) {
@@ -451,6 +448,28 @@ void initSys()
 
         } else
             tftMsg (true, 1000, "GPSD: no Lat/Long");
+
+    } else if (useNMEALoc()) {
+        LatLong ll;
+        if (getNMEALatLong(ll)) {
+
+            // good -- set de_ll
+            de_ll = ll;
+            normalizeLL (de_ll);
+            NVWriteFloat (NV_DE_LAT, de_ll.lat_d);
+            NVWriteFloat (NV_DE_LNG, de_ll.lng_d);
+            setNVMaidenhead(NV_DE_GRID, de_ll);
+
+            // leave user's tz offset
+            // de_tz.tz_secs = getTZ (de_ll);
+            // NVWriteInt32(NV_DE_TZ, de_tz.tz_secs);
+
+            tftMsg (true, 0, "NMEA: %.2f%c %.2f%c",
+                                fabsf(de_ll.lat_d), de_ll.lat_d < 0 ? 'S' : 'N',
+                                fabsf(de_ll.lng_d), de_ll.lng_d < 0 ? 'W' : 'E');
+
+        } else
+            tftMsg (true, 1000, "NMEA: no Lat/Long");
     }
 
 
@@ -467,8 +486,14 @@ void initSys()
         else
             tftMsg (true, 1000, "GPSD: no time");
 
+    } else if (useNMEATime()) {
+        if (getNMEAUTC())
+            tftMsg (true, 0, "NMEA: time ok");
+        else
+            tftMsg (true, 1000, "NMEA: no time");
+
     } else if (useOSTime()) {
-        tftMsg (true, 0, "Time from OS");
+        tftMsg (true, 0, "Time is from computer");
 
     } else if (WiFi.status() == WL_CONNECTED) {
 
@@ -576,10 +601,80 @@ void initSys()
     }
 }
 
+/* perform the active algorithm for the given autoMap.
+ * turn on if passes above hi threshold and saw_lo, turn off if passes below lo threshold and saw_hi.
+ */
+static void doAutoMap (CoreMaps cm, float value_now, float thresh_hi, float thresh_lo)
+{
+    CoreMapInfo &cmi = cm_info[cm];
+
+    if (value_now > thresh_hi) {
+
+        if (!cmi.saw_hi && cmi.saw_lo) {
+            // just went hi and came up from lo so turn on
+            if (IS_CMROT(cm)) {
+                Serial.printf ("AUTOMAP: %s already on: %g > %g > %g\n",
+                                                                cmi.name, value_now, thresh_hi, thresh_lo);
+            } else {
+                Serial.printf ("AUTOMAP: turning on %s: %g > %g > %g\n",
+                                                                cmi.name, value_now, thresh_hi, thresh_lo);
+                scheduleNewCoreMap (cm);
+            }
+        }
+
+        // update state
+        cmi.saw_hi = true;
+        cmi.saw_lo = false;         // require a new transition
+
+    } else if (value_now < thresh_lo) {
+
+        if (!cmi.saw_lo && cmi.saw_hi) {
+            // just went lo and came down from hi so turn off but beware edge cases
+            if (!IS_CMROT(cm)) {
+                Serial.printf ("AUTOMAP: %s already off: %g < %g < %g\n",
+                                                                cmi.name, value_now, thresh_lo, thresh_hi);
+            } else if (mapIsRotating()) {
+                // turn off cm but make sure there's still at least one on
+                RM_CMROT (cm);
+                insureCoreMap();
+                scheduleNewCoreMap (core_map);
+                Serial.printf ("AUTOMAP: turning off %s: %g < %g\n", cmi.name, value_now, thresh_lo);
+            } else {
+                Serial.printf ("AUTOMAP: leaving lone %s on: %g < %g < %g\n",
+                                                                cmi.name, value_now, thresh_lo, thresh_hi);
+            }
+        }
+
+        // update state
+        cmi.saw_lo = true;
+        cmi.saw_hi = false;         // require a new transition
+    }
+}
+
+/* manage maps associated with high levels of space weather indices.
+ */
+static void checkAutoMap()
+{
+    // out fast if not on
+    if (!autoMap())
+        return;
+
+    DRAPData drap;
+    if (retrieveDRAP(drap) && space_wx[SPCWX_DRAP].value_ok)
+        doAutoMap (CM_DRAP, space_wx[SPCWX_DRAP].value, DRAP_AUTOMAP_ON, DRAP_AUTOMAP_OFF);
+
+    AuroraData a;
+    if (retrieveAurora(a) && space_wx[SPCWX_AURORA].value_ok)
+        doAutoMap (CM_AURORA, space_wx[SPCWX_AURORA].value, AURORA_AUTOMAP_ON, AURORA_AUTOMAP_OFF);
+}
+
 /* check if time to update background map, either rotating or stale
  */
 void checkBGMap(void)
 {
+    // check for any auto maps
+    checkAutoMap();
+
     // for sure update if later than next_map; there are other reasons too
     bool time_to_refresh = myNow() > next_map;
 
@@ -591,88 +686,48 @@ void checkBGMap(void)
     PlotPane bc_pp = findPaneChoiceNow (PLOT_CH_BC);
     bool bc_up = bc_pp != PANE_NONE && bc_matrix.ok;
 
-    // check VOACAP first
-    if (prop_map.active) {
+    // note whether core_map is one of the BC maps and whether it's time for it to update
+    bool bc_map = CM_PMACTIVE();
+    bool bc_now = bc_up && bc_map && tdiff(map_time,bc_time) >= 3600;
 
-        // update if time or to stay in sync with BC or it's been over an hour
-        if (time_to_refresh || (bc_up && tdiff(map_time,bc_time)>=3600) || tdiff(nowWO(),map_time)>=3600) {
+    // update if time or to stay in sync with BC or it's been over an hour
+    if (time_to_refresh || bc_now || tdiff(nowWO(),map_time)>=3600) {
 
-            // show busy if BC up
-            if (bc_up)
-                plotBandConditions (plot_b[bc_pp], 1, NULL, NULL);
+        // show busy if BC up and we are updating its map
+        if (bc_up && bc_map)
+            plotBandConditions (plot_b[bc_pp], 1, NULL, NULL);
 
-            // update prop map, schedule next
-            bool ok = installFreshMaps();
-            if (ok) {
-                next_map = nextMapUpdate(VOACAP_INTERVAL);      // schedule normal refresh
-                map_time = nowWO();                             // map is now current
-                initEarthMap();                                 // restart fresh
+        // update map, schedule next
+        bool ok = installFreshMaps();
+        if (ok) {
+            if (core_map == CM_DRAP)
+                next_map = nextMapUpdate(DRAPMAP_INTERVAL);
+            else if (core_map == CM_MUF_RT)
+                next_map = nextMapUpdate(MUF_RT_INTERVAL);
+            else if (bc_map)
+                next_map = nextMapUpdate(VOACAP_INTERVAL);
+            else
+                next_map = nextMapUpdate(OTHER_MAPS_INTERVAL);
 
-                // sync DRAP plot too if in use
-                PlotPane drap_pp = findPaneChoiceNow(PLOT_CH_DRAP);
-                if (drap_pp != PANE_NONE)
-                    next_update[drap_pp] = myNow();
+            // fresh
+            map_time = nowWO();                                         // map is now current
+            initEarthMap();                                             // restart fresh
 
-            } else {
-                next_map = nextWiFiRetry("VOACAP");             // schedule retry
-                map_time = bc_time;                             // match bc to avoid immediate retry
-            }
-
-            // show result of effort if BC up
-            if (bc_up)
-                plotBandConditions (plot_b[bc_pp], ok ? 0 : -1, NULL, NULL);
-
-            time_t dt = next_map - myNow();
-            Serial.printf ("Next VOACAP map check in %ld s at %ld\n", dt, millis()/1000+dt);
+        } else {
+            next_map = nextWiFiRetry (cm_info[core_map].name);          // schedule retry
+            if (bc_map)
+                map_time = bc_time;                                     // match bc to avoid immediate retry
+            else
+                map_time = nowWO()+10;                                  // avoid immediate retry
         }
 
-    } else if (core_map != CM_NONE) {
+        // show result of effort if BC up even if not now a BC map
+        if (bc_up)
+            plotBandConditions (plot_b[bc_pp], ok ? 0 : -1, NULL, NULL);
 
-        // update if time or it's been over an hour
-        if (time_to_refresh || tdiff(nowWO(),map_time)>=3600) {
-
-            // update map, schedule next
-            bool ok = installFreshMaps();
-            if (ok) {
-                // schedule next refresh
-                if (core_map == CM_DRAP)
-                    next_map = nextMapUpdate(DRAPMAP_INTERVAL);
-                else if (core_map == CM_MUF_RT)
-                    next_map = nextMapUpdate(MUF_RT_INTERVAL);
-                else
-                    next_map = nextMapUpdate(OTHER_MAPS_INTERVAL);
-
-                // update corresponding world wx data
-                if (core_map == CM_WX) {
-                    fetchWorldWx();
-                    next_wwx = myNow() + WWX_INTERVAL;
-                }
-
-                // note time of map
-                map_time = nowWO();                             // map is now current
-
-                // start
-                initEarthMap();
-
-            } else {
-                next_map = nextWiFiRetry(coremap_names[core_map]); // schedule retry
-                map_time = nowWO()+10;                          // avoid immediate retry
-            }
-
-            // insure BC band is off
-            if (bc_up)
-                plotBandConditions (plot_b[bc_pp], 0, NULL, NULL);
-
-            time_t dt = next_map - myNow();
-            Serial.printf ("Next %s map check in %ld s at %ld\n", coremap_names[core_map],
-                                        dt, millis()/1000+dt);
-        }
-
-    } else {
-
-        // eh??
-        fatalError ("no map");
-
+        time_t dt = next_map - myNow();
+        Serial.printf ("Next %s map check in %ld s at %ld\n", cm_info[core_map].name,
+                                    (long)dt, (long)(millis()/1000+dt));
     }
 }
 
@@ -1043,7 +1098,7 @@ time_t getNTPUTC (NTPServer *ntp)
     // crack and advance to next whole second
     time_t unix_s = crackBE32 (&buf[40]) - 2208988800UL;        // packet transmit time - (1970 - 1900)
     if ((uint32_t)unix_s > 0x7FFFFFFFUL) {                      // sanity check beyond unsigned value
-        Serial.printf ("NTP: crazy large UNIX time: %ld\n", unix_s);
+        Serial.printf ("NTP: crazy large UNIX time: %ld\n", (long)unix_s);
         ntp_udp.stop();
         return (0UL);
     }
@@ -1061,7 +1116,7 @@ time_t getNTPUTC (NTPServer *ntp)
 
     // one more sanity check
     if (unix_s < 1577836800L) {          // Jan 1 2020
-        Serial.printf ("NTP: crazy small UNIX time: %ld\n", unix_s);
+        Serial.printf ("NTP: crazy small UNIX time: %ld\n", (long)unix_s);
         ntp_udp.stop();
         return (0UL);
     }
@@ -1080,11 +1135,11 @@ bool getTCPChar (WiFiClient &client, char *cp)
         uint32_t t0 = millis();
         while (!client.available()) {
             if (!client) {
-                // Serial.print (F("getTCPChar EOF\n"));
+                Serial.print ("getTCPChar EOF\n");
                 return (false);
             }
             if (!client.connected()) {
-                // Serial.print (F("getTCPChar disconnect\n"));
+                Serial.print ("getTCPChar disconnect\n");
                 return (false);
             }
             if (timesUp(&t0,10000)) {
@@ -1192,7 +1247,7 @@ void sendUserAgent (WiFiClient &client)
             *mp++ = 'N';
         if (mapIsRotating())
             *mp++ = 'R';
-        (void) getMapStyle(mp);
+        (void) getCoreMapStyle(core_map, mp);
 
         // kx3 baud else gpio on/off
         int gpio = getKX3Baud();
@@ -1316,7 +1371,8 @@ void sendUserAgent (WiFiClient &client)
             // new for LV7:
             scrollTopToBottom(),
             0, // nMoreSroll rm V4.04
-            rankSpaceWx(), showNewDXDEWx(), getPaneRotationPeriod(), pw_file != NULL, n_roweb>0, pz,
+            1, // rankSpaceWx rm V4.07
+            showNewDXDEWx(), getPaneRotationPeriod(), pw_file != NULL, n_roweb>0, pz,
             plotops[PANE_0], screenIsLocked(), showPIP(), (int)getGrayDisplay(), wl,
             0, 0);
 
@@ -1635,7 +1691,7 @@ static bool updateBzBt (const SBox &box)
 static bool updateBandConditions(const SBox &box, bool force)
 {
     // update if asked to or out of sync with prop map or it's just been a while
-    bool update_bc = force || (prop_map.active && tdiff(bc_time,map_time) >= 3600)
+    bool update_bc = force || (CM_PMACTIVE() && tdiff(bc_time,map_time) >= 3600)
                            || (tdiff (nowWO(), bc_time) >= 3600)
                            || myNow() >= bc_matrix.next_update;
 
@@ -1810,7 +1866,8 @@ bool checkBCTouch (const SCoord &s, const SBox &b)
         if (power_changed) {
             bc_power = new_power;
             NVWriteUInt16 (NV_BCPOWER, bc_power);
-            scheduleNewVOACAPMap(prop_map);
+            if (CM_PMACTIVE())
+                scheduleNewCoreMap(core_map);
         }
         (void) updateBandConditions (b, power_changed);
 
@@ -1844,7 +1901,8 @@ bool checkBCTouch (const SCoord &s, const SBox &b)
         if (mode_changed) {
             bc_modevalue = new_modevalue;
             NVWriteUInt8 (NV_BCMODE, bc_modevalue);
-            scheduleNewVOACAPMap(prop_map);
+            if (CM_PMACTIVE())
+                scheduleNewCoreMap(core_map);
         }
         (void) updateBandConditions (b, mode_changed);
 
@@ -1880,7 +1938,8 @@ bool checkBCTouch (const SCoord &s, const SBox &b)
         if (toa_changed) {
             bc_toa = new_toa;
             NVWriteFloat (NV_BCTOA, bc_toa);
-            scheduleNewVOACAPMap(prop_map);
+            if (CM_PMACTIVE())
+                scheduleNewCoreMap(core_map);
         }
         (void) updateBandConditions (b, toa_changed);
 
@@ -1889,7 +1948,8 @@ bool checkBCTouch (const SCoord &s, const SBox &b)
         // toggle short/long path -- update DX info too
         show_lp = !show_lp;
         NVWriteUInt8 (NV_LP, show_lp);
-        scheduleNewVOACAPMap(prop_map);
+        if (CM_PMACTIVE())
+            scheduleNewCoreMap(core_map);
         drawDXInfo ();
         (void) updateBandConditions (b, true);
     
@@ -1904,27 +1964,50 @@ bool checkBCTouch (const SCoord &s, const SBox &b)
 
         // check tapping a row in the table. if so toggle band and type.
 
-        PropMapSetting new_prop_map = prop_map;
-        PropMapBand tap_band = (PropMapBand) ((b.y + b.h - 20 - s.y) / ((b.h - 47)/BMTRX_COLS));
-        PropMapType tap_type = s.x < b.x + b.w/2 ? PROPTYPE_REL : PROPTYPE_TOA;
-        if (prop_map.active && tap_band == prop_map.band && tap_type == prop_map.type) {
-            // tapped same prop map, turn off active VOACAP selection
-            new_prop_map.active = false;
-        } else if (tap_band >= 0 && tap_band < PROPBAND_N) {
-            // tapped a different VOACAP selection
-            new_prop_map.active = true;
-            new_prop_map.band = tap_band;
-            new_prop_map.type = tap_type;
-        }
+        int tap_band = (b.y + b.h - 20 - s.y) / ((b.h - LISTING_Y0)/BMTRX_COLS);
+        if (tap_band >= 0 && tap_band < PROPBAND_N) {
 
-        // update
-        scheduleNewVOACAPMap(new_prop_map);
-        if (!new_prop_map.active) {
-            scheduleNewCoreMap (core_map);
-            plotBandConditions (b, 0, NULL, NULL);  // indicate no longer active
-        }
-        logMapRotSet();
+            // note whether map needs refresh which means core_map changed
+            bool refresh_map = false;
 
+            // check which side
+            if (s.x < b.x + b.w/2) {
+                // tapped on left for REL map
+                if (IS_CMROT(CM_PMREL) && cm_info[CM_PMREL].band == tap_band) {
+                    // tapped same VOACAP selection so turn off
+                    refresh_map = core_map == CM_PMREL;         // refresh if going away
+                    RM_CMROT (CM_PMREL);
+                    insureCoreMap();
+                } else {
+                    // tapped a different VOACAP selection
+                    refresh_map = true;                         // new band
+                    cm_info[CM_PMREL].band = (PropMapBand)tap_band;
+                    DO_CMROT (CM_PMREL);
+                }
+            } else {
+                // tapped on right for TOA map
+                if (IS_CMROT(CM_PMTOA) && cm_info[CM_PMTOA].band == tap_band) {
+                    // tapped same VOACAP selection so turn off, insure one is still on
+                    refresh_map = core_map == CM_PMTOA;         // refresh if going away
+                    RM_CMROT (CM_PMTOA);
+                    insureCoreMap();
+                } else {
+                    // tapped a different VOACAP selection
+                    refresh_map = true;                         // new band
+                    cm_info[CM_PMTOA].band = (PropMapBand)tap_band;
+                    DO_CMROT (CM_PMTOA);
+                }
+            }
+
+            // update
+            if (refresh_map)
+                scheduleNewCoreMap (core_map);
+            plotBandConditions (b, 0, NULL, NULL);
+
+            // save
+            saveCoreMaps();
+            logMapRotSet();
+        }
     }
 
     // ours just because tap was below title
@@ -2189,15 +2272,6 @@ void updateWiFi(void)
     // freshen RSS
     checkRSS();
 
-    // freshen world weather table unless wx map is doing it
-    if (t0 >= next_wwx) {
-        if (!prop_map.active && core_map == CM_WX)
-            next_map = 0;                               // this causes checkMap() to call fetchWorldWx()
-        else
-            fetchWorldWx();
-        next_wwx = myNow() + WWX_INTERVAL;
-    }
-
     // maps are checked after each full earth draw -- see drawMoreEarth()
 
     // check for server commands
@@ -2274,7 +2348,6 @@ void initWiFiRetry()
     memset (fresh_redraw, 1, sizeof(fresh_redraw));     // works ok even if bools aren't bytes
 
     // a few more misc
-    next_wwx = 0;
     next_map = 0;
     brb_next_update = 0;
     scheduleRSSNow();
@@ -2356,44 +2429,19 @@ void scheduleNewPlot (PlotChoice pc)
     }
 }
 
-/* called to schedule an immediate update of the given VOACAP map.
- * leave core_map unchanged to use later if VOACAP turned off.
- */
-void scheduleNewVOACAPMap (PropMapSetting &pm)
-{
-    bool active_changed = prop_map.active != pm.active;
-    prop_map = pm;
-    if (prop_map.active || active_changed)
-        next_map = 0;
-
-    // update rotation set
-    if (prop_map.active)
-        map_rotset |= PROPMAP_ROT_BIT;
-    else
-        map_rotset &= ~PROPMAP_ROT_BIT;
-
-    // persist
-    saveMapRotSet();
-}
-
-/* called to schedule an immediate update of the give core map.
- * always turns off any VOACAP map.
+/* called to schedule an update of the give core map.
  */
 void scheduleNewCoreMap (CoreMaps cm)
 {
     if (cm == CM_NONE)
         fatalError ("Bug! setting no core map");
 
-    prop_map.active = false;
-    core_map = cm;
+    // update and signal go
+    DO_CMROT(cm);
     next_map = 0;
 
-    // update rotation set
-    map_rotset |= (1 << cm);
-    map_rotset &= ~PROPMAP_ROT_BIT;
-
     // persist
-    saveMapRotSet();
+    saveCoreMaps();
 }
 
 /* schedule a refresh of the current map

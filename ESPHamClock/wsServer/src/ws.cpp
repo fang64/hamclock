@@ -21,6 +21,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
@@ -47,6 +48,19 @@ typedef int socklen_t;
 
 #include "utf8.h"
 #include "ws.h"
+
+/**
+ * @brief Issues an error message and aborts the program.
+ *
+ * @param fmt printf-style format and error message.
+ */
+#if defined(__GNUC__)
+extern void fatalError (const char *fmt, ...) __attribute__ ((format (__printf__, 1, 2)));
+#else
+extern void fatalError (const char *fmt, ...);
+#endif
+
+
 
 /**
  * pass sock and port to ws_accept()
@@ -134,18 +148,6 @@ struct ws_frame_data
  * @brief Global mutex.
  */
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-
-/**
- * @brief Issues an error message and aborts the program.
- *
- * @param s Error message.
- */
-#define panic(s)   \
-	do             \
-	{              \
-		perror(s); \
-		exit(-1);  \
-	} while (0);
 
 /**
  * @brief Shutdown and close a given socket.
@@ -377,7 +379,7 @@ static int start_close_timeout(ws_cli_conn_t *client)
 	if (pthread_create(&client->thrd_tout, NULL, close_timeout, client))
 	{
 		pthread_mutex_unlock(&client->mtx_state);
-		panic("Unable to create timeout thread\n");
+		fatalError("Unable to create timeout thread");
 	}
 	client->close_thrd = true;
 out:
@@ -1550,13 +1552,13 @@ static void *ws_accept(void *data)
 				set_client_address(&client_socks[i]);
 
 				if (pthread_mutex_init(&client_socks[i].mtx_state, NULL))
-					panic("Error on allocating close mutex");
+					fatalError("Error on allocating close mutex");
 				if (pthread_cond_init(&client_socks[i].cnd_state_close, NULL))
-					panic("Error on allocating condition var\n");
+					fatalError("Error on allocating condition var");
 				if (pthread_mutex_init(&client_socks[i].mtx_snd, NULL))
-					panic("Error on allocating send mutex");
+					fatalError("Error on allocating send mutex");
 				if (pthread_mutex_init(&client_socks[i].mtx_ping, NULL))
-					panic("Error on allocating ping/pong mutex");
+					fatalError("Error on allocating ping/pong mutex");
 				break;
 			}
 		}
@@ -1567,7 +1569,7 @@ static void *ws_accept(void *data)
 		{
 			if (pthread_create(
 					&client_thread, NULL, ws_establishconnection, &client_socks[i]))
-				panic("Could not create the client thread!");
+				fatalError("Could not create the client thread");
 
 			pthread_detach(client_thread);
 		}
@@ -1608,7 +1610,7 @@ int ws_socket(struct ws_events *evs, uint16_t port, int thread_loop,
 
 	/* Checks if the event list is a valid pointer. */
 	if (evs == NULL)
-		panic("Invalid event list!");
+		fatalError("Invalid event list");
 
 	/* Copy events. */
 	memcpy(&cli_events, evs, sizeof(struct ws_events));
@@ -1616,7 +1618,7 @@ int ws_socket(struct ws_events *evs, uint16_t port, int thread_loop,
 #ifdef _WIN32
 	WSADATA wsaData;
 	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
-		panic("WSAStartup failed!");
+		fatalError("WSAStartup failed");
 
 	/**
 	 * Sets stdout to be non-buffered.
@@ -1634,14 +1636,14 @@ int ws_socket(struct ws_events *evs, uint16_t port, int thread_loop,
 	/* Create socket. */
 	sock = socket(AF_INET, SOCK_STREAM, 0);
 	if (sock < 0)
-		panic("Could not create socket");
+		fatalError("Could not create socket: %s", strerror(errno));
 
 	/* Reuse previous address. */
 	reuse = 1;
 	if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse,
 			sizeof(reuse)) < 0)
 	{
-		panic("setsockopt(SO_REUSEADDR) failed");
+		fatalError("setsockopt(SO_REUSEADDR) failed: %s", strerror(errno));
 	}
 
 	/* Prepare the sockaddr_in structure. */
@@ -1651,7 +1653,7 @@ int ws_socket(struct ws_events *evs, uint16_t port, int thread_loop,
 
 	/* Bind. */
 	if (bind(sock, (struct sockaddr *)&server, sizeof(server)) < 0)
-		panic("Bind failed");
+		fatalError("Bind port %d failed: %s", port, strerror(errno));
 
 	/* Listen. */
 	listen(sock, MAX_CLIENTS);
@@ -1671,7 +1673,7 @@ int ws_socket(struct ws_events *evs, uint16_t port, int thread_loop,
 	else
 	{
 		if (pthread_create(&accept_thread, NULL, ws_accept, (void *)info_p))
-			panic("Could not create the client thread!");
+			fatalError("Could not create the client thread");
 		pthread_detach(accept_thread);
 	}
 

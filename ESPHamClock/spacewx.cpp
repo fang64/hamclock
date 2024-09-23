@@ -1294,11 +1294,11 @@ bool checkForNewSpaceWx()
     bool na = checkForNewNOAASWx();
     bool au = checkForNewAurora();
 
-    // check whether any
+    // check whether any changed
     bool any_new = sf || kp || xr || bz || dr || sw || ss || na || au;
 
-    // if so, redo ranking if desired
-    if (any_new && rankSpaceWx())
+    // if so redo ranking
+    if (any_new)
         sortSpaceWx();
 
     return (any_new);

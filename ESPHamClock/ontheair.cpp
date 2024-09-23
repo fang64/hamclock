@@ -14,7 +14,7 @@ const char *onta_names[ONTA_N] = {
 
 // config
 #define POTA_COLOR      RGB565(150,250,255)             // title and spot text color
-#define SOTA_COLOR      RGB565(250,0,0)                 // title and spot text color
+#define SOTA_COLOR      RGB565(255,120,120)             // title and spot text color -- beware scroll red
 #define LL_PANE_0       23                              // line length for PANE_0
 #define LL_PANE_123     27                              // line length for others
 
@@ -145,10 +145,11 @@ static void drawONTAVisSpots (const SBox &box, const ONTAState *osp)
 {
     // can't quite use drawVisibleSpots() because of unique formatting :-(
 
-    tft.fillRect (box.x+1, box.y + LISTING_Y0-1, box.w-2, box.h - LISTING_Y0 - 1, RA8875_BLACK);
-    selectFontStyle (LIGHT_FONT, FAST_FONT);
+    // init and reset to black
     uint16_t x = box.x + 1;
     uint16_t y0 = box.y + LISTING_Y0;
+    tft.fillRect (box.x+1, y0-LISTING_OS, box.w-2, box.h - (LISTING_Y0-LISTING_OS), RA8875_BLACK);
+    selectFontStyle (LIGHT_FONT, FAST_FONT);
 
     // show vis spots and note if any would be red above and below
     bool any_older = false;
@@ -174,13 +175,13 @@ static void drawONTAVisSpots (const SBox &box, const ONTAState *osp)
 
                 // highlight overall bg if on watch list
                 if (checkWatchListSpot (osp->wl, spot) == WLS_HILITE)
-                    tft.fillRect (x, y-1, box.w-2, LISTING_DY-3, RA8875_RED);
+                    tft.fillRect (x, y-LISTING_OS, box.w-2, LISTING_DY-2, RA8875_RED);
 
                 // show freq with proper band map color background
                 uint16_t bg_col = getBandColor ((long)(spot.kHz*1000));           // wants Hz
                 uint16_t txt_col = getGoodTextColor (bg_col);
                 tft.setTextColor(txt_col);
-                tft.fillRect (x, y-1, freq_len*6, LISTING_DY-3, bg_col);
+                tft.fillRect (x, y-LISTING_OS, freq_len*6, LISTING_DY-2, bg_col);
                 tft.setCursor (x, y);
                 tft.printf ("%*.*s", freq_len, freq_len, line);
 

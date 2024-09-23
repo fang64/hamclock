@@ -23,10 +23,11 @@ const char *auxtime_names[AUXT_N] = {
 // run flag and progression
 static bool hide_clocks;                        // run but don't display
 static int prev_yr, prev_mo, prev_dy, prev_hr, prev_mn, prev_sc, prev_wd;
-static bool time_running_bw;                    // set if see time running backwards -- it can happen!
+static bool time_running_bw;                    // set if see time running backwards -- yes it can happen!
+static bool time_is_stuck;                      // set if see time not changing -- yes it can happen!
 
 // TimeLib's now() stays at real UTC, but user can adjust time offset
-static int32_t utc_offset;                      // nowWO() offset from UTC, secs
+static int utc_offset;                          // nowWO() offset from UTC, secs
 
 // display 
 #define UTC_W           14                      // UTC button width in upper right corner of clock_b
@@ -46,7 +47,7 @@ static void drawUTCButton()
     selectFontStyle (BOLD_FONT, FAST_FONT);
     char msg[4];
 
-    if (utc_offset == 0) {
+    if (utc_offset == 0 && !time_running_bw && !time_is_stuck) {
         // at UTC for sure
         tft.fillRect (clock_b.x+clock_b.w-UTC_W, clock_b.y, UTC_W, UTC_H, HMS_C);
         tft.setTextColor(RA8875_BLACK);
@@ -70,6 +71,8 @@ static void drawUTCButton()
 }
 
 /* function given to TimeLib's setSyncProvider() to resync its time base occasionally.
+ * use whichever source has been configured.
+ * return 0 if trouble so now() will unset status timeSet.
  */
 static time_t getTime(void)
 {
@@ -79,7 +82,7 @@ static time_t getTime(void)
     // log string
     const char *time_src;
 
-    // new value
+    // new value from configured source
     time_t t;
 
     if (usr_datetime > 0) {
@@ -94,6 +97,9 @@ static time_t getTime(void)
     } else if (useGPSDTime()) {
         time_src = getGPSDHost();
         t = getGPSDUTC();
+    } else if (useNMEATime()) {
+        time_src = getNMEAFile();
+        t = getNMEAUTC();
     } else {
         NTPServer *ntp = findBestNTP();         // include user's if set
         time_src = ntp->server;
@@ -102,7 +108,7 @@ static time_t getTime(void)
 
     if (t) {
         Serial.printf ("time: getTime from %s: %ld %04d-%02d-%02d %02d:%02d:%02dZ\n",
-                time_src, t, year(t), month(t), day(t), hour(t), minute(t), second(t));
+                time_src, (long)t, year(t), month(t), day(t), hour(t), minute(t), second(t));
     } else
         Serial.printf ("time: getTime from %s failed\n", time_src);
 
@@ -145,7 +151,7 @@ static void prHM6 (const time_t t)
 
 /* common portion for drawing the rise set info in the given box.
  */
-static void drawRiseSet(time_t t0, time_t trise, time_t tset, SBox &b, uint8_t srss, int32_t tz_secs)
+static void drawRiseSet(time_t t0, time_t trise, time_t tset, SBox &b, uint8_t srss, int tz_secs)
 {
     resetWatchdog();
 
@@ -191,8 +197,8 @@ static void drawRiseSet(time_t t0, time_t trise, time_t tset, SBox &b, uint8_t s
 
             // draw until rise and set
 
-            int32_t rdt = t0 - trise;
-            int32_t sdt = t0 - tset;
+            int rdt = t0 - trise;
+            int sdt = t0 - tset;
 
             tft.setCursor (b.x, b.y+8);
             if (night_now) {
@@ -340,14 +346,14 @@ static void drawAnalogClock (time_t delocal_t)
         if (trise == 0 || tset == 0)
             tft.print ("NoRise");
         else
-            prHM6 (trise+de_tz.tz_secs);
+            prHM6 (trise + getTZ (de_tz));
 
         // set
         tft.setCursor (de_info_b.x + de_info_b.w - (6*charw+indent),  de_info_b.y + de_info_b.h - rowh);
         if (trise == 0 || tset == 0)
             tft.print (" NoSet");
         else
-            prHM6 (tset+de_tz.tz_secs);
+            prHM6 (tset + getTZ (de_tz));
     }
 }
 
@@ -721,7 +727,7 @@ void drawCalendar(bool force)
 
     // find local time
     tmElements_t tm;
-    time_t tnow = nowWO() + de_tz.tz_secs;
+    time_t tnow = nowWO() + getTZ (de_tz);
     breakTime (tnow, tm);                       // break into components
     // Serial.printf ("cal force= %d YMD %d %d %d\n", force, tm.Year, tm.Month, tm.Day);
 
@@ -857,26 +863,47 @@ time_t nowWO()
 }
 
 
-/* there is circumstantial evidence that now() can return 0 or values less than previous.
+/* now() can return small values until time sync or even run backwards if NTP packets get reordered.
  * that raises havoc so this wrapper hides that and makes note.
  */
 time_t myNow()
 {
+    static uint32_t prev_m;
     static time_t prev_t;
+    uint32_t m = millis();
     time_t t = now();
 
+    // now just counts up from 0 until first sync
+    if (t < 1000000000L)
+        t = 0;
+
+    // check progress
     if (t < prev_t) {
         if (!time_running_bw)
             Serial.printf ("time: running backwards: %ld -> %ld\n", (long)prev_t, (long)t);
         time_running_bw = true;
-        return (prev_t);
+
+    } else if (t == prev_t) {
+        if (prev_m && m - prev_m > 2000) {
+            if (!time_is_stuck)
+                Serial.printf ("time: stuck at %ld\n", (long)t);
+            time_is_stuck = true;
+        }
+
     } else {
+        if (time_is_stuck)
+            Serial.printf ("time: unstuck at %ld\n", (long)t);
+        time_is_stuck = false;
         if (time_running_bw)
             Serial.printf ("time: running forwards now: %ld -> %ld\n", (long)prev_t, (long)t);
         time_running_bw = false;
-        prev_t = t;
-        return (t);
     }
+
+    // history
+    prev_t = t;
+    prev_m = m;
+
+    return (t);
 }
 
 
@@ -885,15 +912,15 @@ time_t myNow()
  */
 bool clockTimeOk()
 {
-    bool time_ok = useOSTime() || (timeStatus() == timeSet && !time_running_bw);
+    bool time_ok = useOSTime() || (timeStatus() == timeSet && !time_running_bw && !time_is_stuck);
     if (!time_ok)
         startSyncProvider(false);
     return (time_ok);
 }
 
-/* return current offset from UTC 
+/* return current user offset from UTC 
  */
-int32_t utcOffset()
+int utcOffset()
 {
     return (utc_offset);
 }
@@ -949,11 +976,12 @@ void updateClocks(bool all)
     }
 
     // check time
-    static bool time_was_bad = true;                    // used to erase ? when confirmed ok again
+    static bool time_was_bad;
     if (clockTimeOk()) {
         if (time_was_bad) {
 
             // just came back on, show and update state
+            Serial.printf ("time: back ok\n");
             drawUTCButton();
             tft.fillRect(clock_b.x+2*clock_b.w/3+34, clock_b.y, 25, HMS_H+4, RA8875_BLACK); // erase ?
 
@@ -963,6 +991,7 @@ void updateClocks(bool all)
         if (!time_was_bad) {
 
             // just went bad, show and update state
+            Serial.printf ("time: error\n");
             drawUTCButton();
             selectFontStyle (BOLD_FONT, LARGE_FONT);
             tft.setTextColor(HMS_C);
@@ -1034,7 +1063,7 @@ void updateClocks(bool all)
             break;
         case DETIME_ANALOG:     // fallthru
         case DETIME_ANALOG_DTTM:
-            drawAnalogClock (t_wo + de_tz.tz_secs);
+            drawAnalogClock (t_wo + getTZ (de_tz));
             break;
         case DETIME_INFO:
             drawDECalTime(false);
@@ -1042,7 +1071,7 @@ void updateClocks(bool all)
             break;
         case DETIME_DIGITAL_12: // fallthru
         case DETIME_DIGITAL_24: // fallthru
-            drawDigitalClock (t_wo + de_tz.tz_secs);
+            drawDigitalClock (t_wo + getTZ (de_tz));
             break;
         default:
             fatalError ("unknown de fmt %d", de_time_fmt);
@@ -1074,7 +1103,7 @@ void drawDESunRiseSetInfo()
     getSolarRS (t0, de_ll, &trise, &tset);
 
     tft.setTextColor(DE_COLOR);
-    drawRiseSet (t0, trise, tset, desrss_b, desrss, de_tz.tz_secs);
+    drawRiseSet (t0, trise, tset, desrss_b, desrss, getTZ (de_tz));
 }
 
 /* draw DX sun rise and set info.
@@ -1091,7 +1120,7 @@ void drawDXSunRiseSetInfo()
     getSolarRS (t0, dx_ll, &trise, &tset);
 
     tft.setTextColor(DX_COLOR);
-    drawRiseSet (t0, trise, tset, dxsrss_b, dxsrss, dx_tz.tz_secs);
+    drawRiseSet (t0, trise, tset, dxsrss_b, dxsrss, getTZ(dx_tz));
 
 }
 
@@ -1121,9 +1150,9 @@ bool checkClockTouch (SCoord &s)
         uint16_t dy = s.y - clock_b.y;
 
         // get time state now
-        uint32_t real_utc = myNow();
-        uint32_t user_utc = real_utc + utc_offset;          // don't use nowWO
-        int32_t off0 = utc_offset;
+        time_t real_utc = myNow();
+        time_t user_utc = real_utc + utc_offset;                // don't use nowWO
+        int off0 = utc_offset;
 
         // check a few special cases but mostly we put up a menu to allow editing time
 
@@ -1133,7 +1162,7 @@ bool checkClockTouch (SCoord &s)
 
             if (utc_offset != 0 || !clockTimeOk()) {
                 utc_offset = 0;
-                startSyncProvider(false);
+                startSyncProvider(true);
             }
 
         } else if (dx < 7*clock_b.w/8) {
@@ -1282,7 +1311,7 @@ bool checkClockTouch (SCoord &s)
  */
 int DEWeekday(void)
 {
-    time_t de_local = nowWO() + de_tz.tz_secs;
+    time_t de_local = nowWO() + getTZ (de_tz);
     return (weekday (de_local));
 }
 
@@ -1311,29 +1340,35 @@ void changeTime (time_t t)
     scheduleNewPlot(PLOT_CH_BC);
 }
 
-/* show menu of timezone offsets +- a few hours from nominal.
- * if user taps ok update tzi.tz_secs and return true, else false.
+/* show menu of timezone offsets +- a few hours from nominal plus option for auto.
+ * if user taps ok update tzi and return true, else false.
  */
 bool TZMenu (TZInfo &tzi, const LatLong &ll)
 {
-    // get nominal TZ for this location
-    int32_t tz0_secs = getTZ (ll);
+    // get TZ for this location and likely step sizes for neighboring zones
+    int tz0_secs = getTZ (tzi);
+    int step_secs = getFastTZStep(ll);
 
-    // create menu
-    int step = getTZStep(ll);
-    #define N_NEW_TZ 5
-    #define MAX_NEW_TZ 20
-    #define TZ_MENU_INDENT 5
-    MenuItem mitems[N_NEW_TZ];
-    char tz_label[N_NEW_TZ][MAX_NEW_TZ];
-    for (int i = 0; i < N_NEW_TZ; i++) {
-        int32_t tz = tz0_secs + step*(i-N_NEW_TZ/2);
-        snprintf (tz_label[i], MAX_NEW_TZ, "UTC%+g", tz/3600.0F);
+    // config
+    #define N_NEW_TZ    5                       // number of discrete TZ choices
+    #define N_TZMENU    (N_NEW_TZ+1)            // total number of menu items: choices + Auto last
+    #define CURRENT_I   (N_NEW_TZ/2)            // index to show current offset
+    #define TZAUTO_I    N_NEW_TZ                // index of the Auto choice, ie, last
+    #define MAX_NEW_TZ  20                      // max choice strlen
+
+    // create menu -- first N_NEW_TZ followed by Auto
+    MenuItem mitems[N_TZMENU];                  // menu items
+    char tz_label[N_TZMENU][MAX_NEW_TZ];        // labels good for lifetime of runMenu()
+    for (int i = 0; i < N_TZMENU; i++) {
+        if (i == TZAUTO_I)
+            snprintf (tz_label[i], MAX_NEW_TZ, "Auto");
+        else
+            snprintf (tz_label[i], MAX_NEW_TZ, "UTC%+g", (tz0_secs + step_secs*(i-CURRENT_I))/3600.0F);
         MenuItem &mi = mitems[i];
         mi.type = MENU_1OFN;
         mi.group = 1;
-        mi.set = tz == tzi.tz_secs;
-        mi.indent = TZ_MENU_INDENT;
+        mi.set = tzi.auto_tz ? (i == TZAUTO_I) : (i == CURRENT_I);
+        mi.indent = 4;
         mi.label = tz_label[i];
     }
 
@@ -1345,35 +1380,35 @@ bool TZMenu (TZInfo &tzi, const LatLong &ll)
 
     // run
     SBox ok_b;
-    MenuInfo menu = {menu_b, ok_b, UF_NOCLOCKS, M_NOCANCEL, 1, N_NEW_TZ, mitems};
+    MenuInfo menu = {menu_b, ok_b, UF_NOCLOCKS, M_NOCANCEL, 1, N_TZMENU, mitems};
     bool menu_ok = runMenu (menu);
 
-    // erase our box regardless
-    fillSBox (menu_b, RA8875_BLACK);
+    // engage if ok
+    if (menu_ok) {
 
-    // done if cancelled
-    if (!menu_ok)
-        return (false);
-
-    // update tzi from set item
-    for (int i = 0; i < N_NEW_TZ; i++) {
-        if (mitems[i].set) {
-            tzi.tz_secs = tz0_secs + step*(i-N_NEW_TZ/2);
-            break;
+        // update tzi from set item
+        for (int i = 0; i < N_TZMENU; i++) {
+            if (mitems[i].set) {
+                if (i == TZAUTO_I)
+                    setTZAuto (tzi);
+                else
+                    setTZSecs (tzi, tz0_secs + step_secs*(i-CURRENT_I));
+                break;
+            }
         }
     }
 
-    return (true);
+    return (menu_ok);
 }
 
 /* draw a TZ control box with current state
  */
-void drawTZ (const TZInfo &tzi)
+void drawTZ (TZInfo &tzi)
 {
     // format as UTC + hours
     char buf[32];
     uint16_t w, h;
-    snprintf (buf, sizeof(buf), "UTC%+g", tzi.tz_secs/3600.0F);
+    snprintf (buf, sizeof(buf), "UTC%+g", getTZ (tzi)/3600.0F);
     selectFontStyle (BOLD_FONT, FAST_FONT);
     getTextBounds (buf, &w, &h);
 
@@ -1440,17 +1475,17 @@ char *formatAge (time_t age, char *line, int line_l, int cols)
 
         // show 2 digits then s, m, h, d, M, y
         if (age < 60) {
-            snprintf (line, line_l, "%2lds", age);
+            snprintf (line, line_l, "%2lds", (long)age);
         } else if (age < (60*60)) {
-            snprintf (line, line_l, "%2ldm", age/60);
+            snprintf (line, line_l, "%2ldm", (long)age/60);
         } else if (age < 3600*24) {
-            snprintf (line, line_l, "%2ldh", age/3600);
+            snprintf (line, line_l, "%2ldh", (long)age/3600);
         } else if (age < 100L*3600*24) {
-            snprintf (line, line_l, "%2ldd", age/(3600L*24));
+            snprintf (line, line_l, "%2ldd", (long)age/(3600L*24));
         } else if (age < 365L*3600*24) {
-            snprintf (line, line_l, "%2ldM", age/(31L*3600*24));
+            snprintf (line, line_l, "%2ldM", (long)age/(31L*3600*24));
         } else {
-            snprintf (line, line_l, "%2ldy", age/(365L*3600*24));
+            snprintf (line, line_l, "%2ldy", (long)age/(365L*3600*24));
         }
 
         break;
@@ -1459,9 +1494,9 @@ char *formatAge (time_t age, char *line, int line_l, int cols)
 
         // show seconds thru years(!)
         if (age < 60) {
-            snprintf (line, line_l, "%3lds", age);
+            snprintf (line, line_l, "%3lds", (long)age);
         } else if (age < (60*60)) {
-            snprintf (line, line_l, "%3ldm", age/60);
+            snprintf (line, line_l, "%3ldm", (long)age/60);
         } else if (age < (24*60*60-1800)) {
             float hours = age/3600.0F;
             if (hours < 9.95F)

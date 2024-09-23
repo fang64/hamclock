@@ -95,7 +95,9 @@ int get_handshake_response(char *hsrequest, char **hsresponse)
 	for (s = strtok_r(hsrequest, "\r\n", &saveptr); s != NULL;
 		 s = strtok_r(NULL, "\r\n", &saveptr))
 	{
-		if (strstr(s, WS_HS_REQ) != NULL)
+                // from HamClock:
+                extern const char *strcistr (const char *haystack, const char *needle);
+		if (strcistr(s, WS_HS_REQ) != NULL)
 			break;
 	}
 

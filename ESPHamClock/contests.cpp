@@ -144,8 +144,8 @@ static void formatTimeLine (const SBox &box, time_t t1, time_t t2, char str[], s
         // DE timezone uses AM PM notation
 
         // break out in DE timezone
-        t1 += de_tz.tz_secs;
-        t2 += de_tz.tz_secs;
+        t1 += getTZ (de_tz);
+        t2 += getTZ (de_tz);
         struct tm tm1 = *gmtime (&t1);
         struct tm tm2 = *gmtime (&t2);
 

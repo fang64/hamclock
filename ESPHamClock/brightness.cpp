@@ -72,7 +72,7 @@ const char *brb_names[BRB_N] = {
 #define SFONT_H         7                       // small font height
 #define MARKER_H        3                       // scaler marker height
 #define SCALE_W         5                       // scale width
-#define FOLLOW_DT       300                     // read phot this often, ms; should be > LTR3XX_MEASRATE_200
+#define PHOT_DT         300                     // read phot this often, ms; should be > LTR3XX_MEASRATE_200
 
 static int16_t bpwm;                            // current brightness PWM value 0 .. BPWM_MAX
 static uint16_t phot;                           // current photoresistor value 0 .. PHOT_MAX
@@ -149,7 +149,7 @@ static void setDisplayBrightness(bool log)
 
             if (!been_here || want_on != was_on) {
 
-                #if defined(__APPLE__)
+                #if defined(_IS_APPLE)
 
                     static const char apple_on[] = "caffeinate -u -t 1";
                     static const char apple_off[] = "pmset displaysleepnow";
@@ -265,39 +265,6 @@ static uint16_t readPhot()
                 new_phot = PHOT_MAX;
         }
     }
-
-#if defined(_SUPPORT_PHOT)
-
-    else {
-
-        static bool tried_photocell;
-        static bool found_photocell;
-
-        // adc increases when darker, we want increase when brighter
-        uint16_t raw_phot = PHOT_MAX - analogRead (PHOT_PIN);
-
-        if (!tried_photocell) {
-
-            // init and spin up smoothing
-            new_phot = raw_phot;
-            for (int i = 0; i < 20; i++) {
-                new_phot = PHOT_BLEND*raw_phot + (1-PHOT_BLEND)*new_phot;
-                raw_phot = PHOT_MAX - analogRead (PHOT_PIN);
-            }
-            tried_photocell = true;
-
-            // consider found if value at neigher extreme
-            found_phot = found_photocell = new_phot > NO_TOL && new_phot < PHOT_MAX-NO_TOL;
-        }
-
-        if (found_photocell) {
-
-            // blend in another reading
-            new_phot = PHOT_BLEND*raw_phot + (1-PHOT_BLEND)*new_phot;
-        }
-    }
-
-#endif  // _SUPPORT_PHOT
 
     // Serial.printf (_FX("Phot %d\n"), new_phot);                                         // RBF
     return (new_phot);
@@ -716,7 +683,7 @@ static void checkOnOffTimers()
 
         // check for time to turn on or off.
         // get local time
-        time_t local = utc + de_tz.tz_secs;
+        time_t local = utc + getTZ (de_tz);
         int hr = hour (local);
         int mn = minute (local);
         uint16_t mins_now = hr*60 + mn;
@@ -996,7 +963,7 @@ void followBrightness()
 
         // not too fast (eg, while not updating map after new DE)
         static uint32_t follow_ms;
-        if (!timesUp (&follow_ms, FOLLOW_DT))
+        if (!timesUp (&follow_ms, PHOT_DT))
             return;
 
         // always check on/off first

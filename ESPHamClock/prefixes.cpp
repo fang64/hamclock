@@ -745,7 +745,8 @@ void splitCallSign (const char *call, char home_call[NV_CALLSIGN_LEN], char dx_c
         // dx is the shorter side unless it looks like a common shorthand or seems suspicious
 
         if (r_len <= 1 || !strcmp(right,"MM") || !strcmp(right,"AM")
-                      || !strcmp (right, "QRP") || (int)strspn(right,"0123456789") == r_len) {
+                       || (r_len > 2 && (int)strcspn(right,"0123456789") == r_len)      // 3+ all alpha
+                       || (int)strspn(right,"0123456789") == r_len) {                   // 2+ all digit
 
             // disregard suspicious right side
             snprintf (home_call, NV_CALLSIGN_LEN, "%.*s", l_len, left);
@@ -789,21 +790,24 @@ void findCallPrefix (const char *call, char prefix[MAX_PREF_LEN])
     char home_call[NV_CALLSIGN_LEN];
     char dx_call[NV_CALLSIGN_LEN];
     splitCallSign (call, home_call, dx_call);
-    size_t dxcall_len = strlen(dx_call);
 
-    // find rmd "right-most digit" in dx_call
-    const char *rmd = &dx_call[dxcall_len];
-    while (--rmd >= dx_call && !isdigit(*rmd))
-        continue;
+    // find rmd "right-most-digit" in dx_call
+    const char *rmd = NULL;
+    for (const char *cp = dx_call; *cp != '\0'; cp++)
+        if (isdigit(*cp))
+            rmd = cp;
 
-    // if no rmd or it's the first char, then use it plus one more else prefix is what lies in front of rmd
-    if (rmd <= dx_call) {
+    // if no rmd:            use all; will likely fail call2LL()
+    // if rmd is first char: use first two chars
+    // else:                 use up to and including rmd
+    if (!rmd)
+        snprintf (prefix, MAX_PREF_LEN, "%.*s", MAX_PREF_LEN-1, dx_call);
+    else if (rmd == dx_call)
         snprintf (prefix, MAX_PREF_LEN, "%.2s", dx_call);
-    } else {
-        snprintf (prefix, MAX_PREF_LEN, "%.*s", (int)(rmd - dx_call + 1), dx_call);     // include rmd itself
-    }
+    else
+        snprintf (prefix, MAX_PREF_LEN, "%.*s", (int)(rmd - dx_call + 1), dx_call);
 
-    // printf ("************************ %s %s\n", call, prefix);
+    // printf ("************************ %10s %s\n", call, prefix);          // RBF
 }
 
 
@@ -865,9 +869,9 @@ static void addCtyLine (char *line)
  */
 static bool loadCtyFile(void)
 {
-    // out fast if cache still valid or not time to retry
-    if (cty_list != NULL && myNow() < next_refresh)
-        return (true);
+    // out fast until next refresh
+    if (myNow() < next_refresh)
+        return (cty_list != NULL);
 
     // open cached file
     FILE *fp = openCachedFile (cty_fn, cty_page, MAX_CTY_AGE);
@@ -879,8 +883,12 @@ static bool loadCtyFile(void)
     // (re)build cty_list
     initCty();
     char line[100];
-    while (fgets (line, sizeof(line), fp))
+    while (fgets (line, sizeof(line), fp)) {
+        char *nl = strchr (line, '\n');
+        if (nl)
+            *nl = '\0';
         addCtyLine (line);
+    }
 
     // done
     fclose (fp);

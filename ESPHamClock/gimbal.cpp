@@ -26,7 +26,7 @@
 
 // set desired trace level: 0 is none, higher is more. global so can be set from command line.
 // x must be complete printf including ()
-int gimbal_trace_level = 1;
+int gimbal_trace_level = 0;
 #define GIMBAL_TRACE(l,x)  do {if((l)<=gimbal_trace_level) Serial.printf x; } while(0)
 
 

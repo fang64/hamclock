@@ -7,12 +7,19 @@
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <pthread.h>
 
 #include "Arduino.h"
 
 class Serial {
 
+    private:
+
+        pthread_mutex_t serial_lock;
+
     public:
+
+        Serial(void);
 
 	void begin (int baud);
 

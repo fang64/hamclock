@@ -52,6 +52,7 @@ char live_html[] =  R"_raw_html_(
         var pointerdown_y = 0;          // location of pointerdown event
         var pointermove_ms = 0;         // Date.now when pointermove event
         var want_fs, tried_fs;          // whether user wants full screen and has succeeded once
+        var wsclose_reload = 1;         // whether to reload if lose ws connection
         var cvs, ctx;                   // handy
 
         // define functions, onLoad follows near the bottom
@@ -284,8 +285,9 @@ char live_html[] =  R"_raw_html_(
         var msg_drawn;
         function drawMsgOnce (msg) {
             if (!msg_drawn) {
+                console.log (msg);
                 ctx.fillStyle = "black";
-                ctx.fillRect (0, 0, 1000, 1000);
+                ctx.fillRect (0, 0, 10000, 10000);
                 ctx.fillStyle = "orange";
                 ctx.font = "25px sans-serif";
                 ctx.fillText (msg, 50, 50);
@@ -359,7 +361,9 @@ char live_html[] =  R"_raw_html_(
             };
             ws.onclose = function () {
                 console.log('WS connection closed.');
-                reloadThisPage();
+                // reload on server die but not intentional actions
+                if (wsclose_reload)
+                    reloadThisPage();
             };
             ws.onerror = function (e) {
                 console.log('WS connection failed: ', e);
@@ -416,6 +420,19 @@ char live_html[] =  R"_raw_html_(
                         if (!window.open(url))
                             console.log ("Failed to open ", url);
                     }
+
+                    else if (e.data === 'Too many connections') {       // N.B. string must match liveweb.cpp
+                        // close and don't reload
+                        drawMsgOnce (e.data);
+                        wsclose_reload = 0;
+                    }
+
+                    else if (e.data === 'Session timed out') {          // N.B. string must match liveweb.cpp
+                        // close and don't reload
+                        drawMsgOnce (e.data);
+                        wsclose_reload = 0;
+                    }
+
 
                     else
                         drawMsgOnce (e.data);
@@ -485,7 +502,7 @@ char live_html[] =  R"_raw_html_(
                 // N.B. event.button 0 means button 1 !
                 var mods = event.ctrlKey || event.metaKey;
                 var button = ((event.button == 0 && mods) || event.button == 1) ? 1 : 0;
-                console.log (event.button + "+" + mods + " -> " + button);
+                console.log ("button " + event.button + " + " + mods + " -> " + button);
 
                 // compose and send
                 let msg = 'set_touch?x=' + m.x + '&y=' + m.y + '&button=' + button;

@@ -34,14 +34,15 @@ WiFiClient::WiFiClient(int fd)
 	socket = fd;
 	n_peek = 0;
         next_peek = 0;
+        eof = false;
 }
 
 // return whether this socket is active and make sure it's closed if not
 WiFiClient::operator bool()
 {
         bool is_active = socket != -1 && !eof;
-        if (_trace_client && is_active)
-            printf ("WiFiCl: fd %d is active\n", socket);
+        if (_trace_client > 1)
+            printf ("WiFiCl: bool fd %d: active?%d eof?%d\n", socket, is_active, eof);
         if (!is_active)
             stop();
 	return (is_active);
@@ -147,13 +148,17 @@ bool WiFiClient::connect(const char *host, int port)
         /* handle write errors inline */
         signal (SIGPIPE, SIG_IGN);
 
-        /* ok */
+        /* ok start fresh */
         if (_trace_client)
             printf ("WiFiCl: new %s:%d fd %d\n", host, port, sockfd);
         freeaddrinfo (aip);
+
+        // init much like constructors
 	socket = sockfd;
 	n_peek = 0;
         next_peek = 0;
+        eof = false;
+
         return (true);
 }
 
@@ -176,13 +181,14 @@ void WiFiClient::stop()
 {
 	if (socket >= 0) {
             if (_trace_client)
-                printf ("WiFiCl: fd %d is now closed\n", socket);
+                printf ("WiFiCl: stopping fd %d\n", socket);
 	    shutdown (socket, SHUT_RDWR);
 	    close (socket);
 	    socket = -1;
 	    n_peek = 0;
             next_peek = 0;
-	}
+	} else if (_trace_client > 1)
+            printf ("WiFiCl: fd %d already stopped\n", socket);
 }
 
 bool WiFiClient::connected()
@@ -227,8 +233,11 @@ int WiFiClient::available()
 
 int WiFiClient::read()
 {
-	if (available())
+	if (available()) {
+            if (_trace_client > 1)
+                printf ("WiFiCl: read(%d) returning %c %d\n", socket, peek[next_peek], peek[next_peek]);
             return (peek[next_peek++]);
+        }
 	return (-1);
 }
 
@@ -404,7 +413,10 @@ bool WiFiClient::readArray (char buf[], int n)
                 return (false);
             }
             if (nr == 0) {
+                if (_trace_client)
+                    printf ("WiFiCl: readArray(%d) EOF\n", socket);
                 eof = true;
+                stop();
                 return (false);
             }
             buf += nr;

@@ -4,6 +4,10 @@
 #include "Arduino.h"
 #include "Serial.h"
 
+Serial::Serial(void)
+{
+    pthread_mutex_init (&serial_lock, NULL);
+}
 
 void Serial::begin (int baud)
 {
@@ -61,6 +65,8 @@ void Serial::println (int i)
 
 int Serial::printf (const char *fmt, ...)
 {
+    pthread_mutex_lock (&serial_lock);
+
     // prefix with millis()
     // N.B. don't call now() because getNTPUTC calls print which can get recursive
     uint32_t m = millis();
@@ -72,6 +78,8 @@ int Serial::printf (const char *fmt, ...)
     int n = vprintf (fmt, ap);
     va_end (ap);
     fflush (stdout);
+
+    pthread_mutex_unlock (&serial_lock);
 
     // lint
     return (n);

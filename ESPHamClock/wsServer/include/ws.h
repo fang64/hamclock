@@ -250,6 +250,9 @@ extern "C" {
                 int32_t last_pong_id;
                 int32_t current_ping_id;
                 pthread_mutex_t mtx_ping;
+
+                /* time of most recent user action */
+                time_t action_t;
         };
 
 	/* handy client connection type. */
