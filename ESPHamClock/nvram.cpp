@@ -148,11 +148,11 @@ static const uint8_t nv_sizes[NV_N] = {
 
     NV_FLRIGHOST_LEN,           // NV_FLRIGHOST
     2,                          // NV_FLRIGPORT
-    NV_DXCLCMD_LEN,             // NV_DXCMD0
-    NV_DXCLCMD_LEN,             // NV_DXCMD1
-    NV_DXCLCMD_LEN,             // NV_DXCMD2
+    NV_DXCLCMD_OLD_LEN,         // NV_DXCMD0_OLD
+    NV_DXCLCMD_OLD_LEN,         // NV_DXCMD1_OLD
+    NV_DXCLCMD_OLD_LEN,         // NV_DXCMD2_OLD
 
-    NV_DXCLCMD_LEN,             // NV_DXCMD3
+    NV_DXCLCMD_OLD_LEN,         // NV_DXCMD3_OLD
     1,                          // NV_DXCMDUSED not used as of V3.06
     1,                          // NV_PSK_MODEBITS
     4,                          // NV_PSK_BANDS
@@ -197,16 +197,16 @@ static const uint8_t nv_sizes[NV_N] = {
     NV_POTAWLIST_OLD_LEN,       // NV_POTAWLIST_OLD
     1,                          // NV_SCROLLDIR
     1,                          // NV_SCROLLLEN
-    NV_DXCLCMD_LEN,             // NV_DXCMD4
-    NV_DXCLCMD_LEN,             // NV_DXCMD5
+    NV_DXCLCMD_OLD_LEN,         // NV_DXCMD4_OLD
+    NV_DXCLCMD_OLD_LEN,         // NV_DXCMD5_OLD
 
-    NV_DXCLCMD_LEN,             // NV_DXCMD6
-    NV_DXCLCMD_LEN,             // NV_DXCMD7
-    NV_DXCLCMD_LEN,             // NV_DXCMD8
-    NV_DXCLCMD_LEN,             // NV_DXCMD9
-    NV_DXCLCMD_LEN,             // NV_DXCMD10
+    NV_DXCLCMD_OLD_LEN,         // NV_DXCMD6_OLD
+    NV_DXCLCMD_OLD_LEN,         // NV_DXCMD7_OLD
+    NV_DXCLCMD_OLD_LEN,         // NV_DXCMD8_OLD
+    NV_DXCLCMD_OLD_LEN,         // NV_DXCMD9_OLD
+    NV_DXCLCMD_OLD_LEN,         // NV_DXCMD10_OLD
 
-    NV_DXCLCMD_LEN,             // NV_DXCMD11
+    NV_DXCLCMD_OLD_LEN,         // NV_DXCMD11_OLD
     2,                          // NV_DXCMDMASK
     1,                          // NV_DXWLISTMASK
     1,                          // NV_RANKSW
@@ -252,6 +252,21 @@ static const uint8_t nv_sizes[NV_N] = {
     2,                          // NV_OA_FG_COLOR
     2,                          // NV_OA_BG_COLOR
     1,                          // NV_OA_BG_RAINBOW
+    NV_DXCLCMD_LEN,             // NV_DXCMD0
+
+    NV_DXCLCMD_LEN,             // NV_DXCMD1
+    NV_DXCLCMD_LEN,             // NV_DXCMD2
+    NV_DXCLCMD_LEN,             // NV_DXCMD3
+    NV_DXCLCMD_LEN,             // NV_DXCMD4
+    NV_DXCLCMD_LEN,             // NV_DXCMD5
+
+    NV_DXCLCMD_LEN,             // NV_DXCMD6
+    NV_DXCLCMD_LEN,             // NV_DXCMD7
+    NV_DXCLCMD_LEN,             // NV_DXCMD8
+    NV_DXCLCMD_LEN,             // NV_DXCMD9
+    NV_DXCLCMD_LEN,             // NV_DXCMD10
+
+    NV_DXCLCMD_LEN,             // NV_DXCMD11
 
 };
 
@@ -345,8 +360,6 @@ static bool nvramStartAddr (NV_Name e, uint16_t *e_addr, uint8_t *e_len)
  */
 static void nvramWriteBytes (NV_Name e, const uint8_t data[], uint8_t xbytes)
 {
-    resetWatchdog();
-
     initEEPROM();
 
     uint8_t e_len = 0;
@@ -369,8 +382,6 @@ static void nvramWriteBytes (NV_Name e, const uint8_t data[], uint8_t xbytes)
  */
 static bool nvramReadBytes (NV_Name e, uint8_t *buf, uint8_t xbytes)
 {
-    resetWatchdog();
-
     initEEPROM();
 
     uint8_t e_len = 0;
@@ -547,7 +558,6 @@ bool NVReadColorTable (int tbl_i, uint8_t r[N_CSPR], uint8_t g[N_CSPR], uint8_t 
         return (false);
 
     // prep
-    resetWatchdog();
     initEEPROM();
 
     // check cookie
@@ -577,7 +587,6 @@ void NVWriteColorTable (int tbl_i, const uint8_t r[N_CSPR], const uint8_t g[N_CS
         return;
 
     // prep
-    resetWatchdog();
     initEEPROM();
 
     // write cookie

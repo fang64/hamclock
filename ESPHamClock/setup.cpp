@@ -1946,7 +1946,7 @@ static void flagErrField (StringPrompt *sp, bool restore = false, const char *ms
     // show a copy to insure it fits
     if (!msg)
         msg = "Err";
-    char *msg_dup = strdup (msg);
+    char *msg_dup = strdup (msg);                       // N.B. free!
     (void) maxStringW (msg_dup, sp->v_box.w);
     tft.setCursor (sp->v_box.x, sp->v_box.y+sp->v_box.h-PR_D);
     tft.print (msg_dup);
@@ -3373,6 +3373,22 @@ static bool getWPACreds()
 #endif // _IS_LINUX
 }
 
+
+/* set dxcl_cmds[cmds_i] from new else old NV
+ */
+static void initDXCMD (NV_Name old_e, NV_Name new_e, int cmds_i)
+{
+    // check old first then invalidate
+    if (NVReadString(old_e, dxcl_cmds[cmds_i]) && dxcl_cmds[cmds_i][0] != '\0') {
+        char s[2] = "";
+        NVWriteString(old_e, s);
+    } else if (!NVReadString(new_e, dxcl_cmds[cmds_i])) {
+        char s[2] = "";
+        NVWriteString(new_e, s);
+    }
+}
+
+
 /* load all setup values from nvram or set default values:
  */
 static void initSetup()
@@ -3524,8 +3540,8 @@ static void initSetup()
         NVWriteUInt16(NV_RIGPORT, rig_port);
     }
     uint8_t nv_rig;
-    if (!NVReadUInt8 (NV_RIGUSE, &nv_rig)) {
-        nv_rig = bool_pr[RIGUSE_BPR].state = false;
+    if (!NVReadUInt8 (NV_RIGUSE, &nv_rig) || (nv_rig != 0 && nv_rig != 1)) {
+        bool_pr[RIGUSE_BPR].state = false;
         NVWriteUInt8 (NV_RIGUSE, 0);
     } else
         bool_pr[RIGUSE_BPR].state = (nv_rig != 0);
@@ -3542,8 +3558,8 @@ static void initSetup()
         NVWriteUInt16(NV_ROTPORT, rot_port);
     }
     uint8_t nv_rot;
-    if (!NVReadUInt8 (NV_ROTUSE, &nv_rot)) {
-        nv_rot = bool_pr[ROTUSE_BPR].state = false;
+    if (!NVReadUInt8 (NV_ROTUSE, &nv_rot) || (nv_rot != 0 && nv_rot != 1)) {
+        bool_pr[ROTUSE_BPR].state = false;
         NVWriteUInt8 (NV_ROTUSE, 0);
     } else
         bool_pr[ROTUSE_BPR].state = (nv_rot != 0);
@@ -3560,8 +3576,8 @@ static void initSetup()
         NVWriteUInt16(NV_FLRIGPORT, flrig_port);
     }
     uint8_t nv_flrig;
-    if (!NVReadUInt8 (NV_FLRIGUSE, &nv_flrig)) {
-        nv_flrig = bool_pr[FLRIGUSE_BPR].state = false;
+    if (!NVReadUInt8 (NV_FLRIGUSE, &nv_flrig) || (nv_flrig != 0 && nv_flrig != 1)) {
+        bool_pr[FLRIGUSE_BPR].state = false;
         NVWriteUInt8 (NV_FLRIGUSE, 0);
     } else
         bool_pr[FLRIGUSE_BPR].state = (nv_flrig != 0);
@@ -3596,55 +3612,20 @@ static void initSetup()
     bool_pr[DXWLISTB_BPR].state = (dxwlist_mask & 2) == 2;
 
 
+    // DX commands -- accept previous
 
-    if (!NVReadString(NV_DXCMD0, dxcl_cmds[0])) {
-        memset (dxcl_cmds[0], 0, sizeof(dxcl_cmds[0]));
-        NVWriteString(NV_DXCMD0, dxcl_cmds[0]);
-    }
-    if (!NVReadString(NV_DXCMD1, dxcl_cmds[1])) {
-        memset (dxcl_cmds[1], 0, sizeof(dxcl_cmds[1]));
-        NVWriteString(NV_DXCMD1, dxcl_cmds[1]);
-    }
-    if (!NVReadString(NV_DXCMD2, dxcl_cmds[2])) {
-        memset (dxcl_cmds[2], 0, sizeof(dxcl_cmds[2]));
-        NVWriteString(NV_DXCMD2, dxcl_cmds[2]);
-    }
-    if (!NVReadString(NV_DXCMD3, dxcl_cmds[3])) {
-        memset (dxcl_cmds[3], 0, sizeof(dxcl_cmds[3]));
-        NVWriteString(NV_DXCMD3, dxcl_cmds[3]);
-    }
-    if (!NVReadString(NV_DXCMD4, dxcl_cmds[4])) {
-        memset (dxcl_cmds[4], 0, sizeof(dxcl_cmds[4]));
-        NVWriteString(NV_DXCMD4, dxcl_cmds[4]);
-    }
-    if (!NVReadString(NV_DXCMD5, dxcl_cmds[5])) {
-        memset (dxcl_cmds[5], 0, sizeof(dxcl_cmds[5]));
-        NVWriteString(NV_DXCMD5, dxcl_cmds[5]);
-    }
-    if (!NVReadString(NV_DXCMD6, dxcl_cmds[6])) {
-        memset (dxcl_cmds[6], 0, sizeof(dxcl_cmds[6]));
-        NVWriteString(NV_DXCMD6, dxcl_cmds[6]);
-    }
-    if (!NVReadString(NV_DXCMD7, dxcl_cmds[7])) {
-        memset (dxcl_cmds[7], 0, sizeof(dxcl_cmds[7]));
-        NVWriteString(NV_DXCMD7, dxcl_cmds[7]);
-    }
-    if (!NVReadString(NV_DXCMD8, dxcl_cmds[8])) {
-        memset (dxcl_cmds[8], 0, sizeof(dxcl_cmds[8]));
-        NVWriteString(NV_DXCMD8, dxcl_cmds[8]);
-    }
-    if (!NVReadString(NV_DXCMD9, dxcl_cmds[9])) {
-        memset (dxcl_cmds[9], 0, sizeof(dxcl_cmds[9]));
-        NVWriteString(NV_DXCMD9, dxcl_cmds[9]);
-    }
-    if (!NVReadString(NV_DXCMD10, dxcl_cmds[10])) {
-        memset (dxcl_cmds[10], 0, sizeof(dxcl_cmds[10]));
-        NVWriteString(NV_DXCMD10, dxcl_cmds[10]);
-    }
-    if (!NVReadString(NV_DXCMD11, dxcl_cmds[11])) {
-        memset (dxcl_cmds[11], 0, sizeof(dxcl_cmds[11]));
-        NVWriteString(NV_DXCMD11, dxcl_cmds[11]);
-    }
+    initDXCMD (NV_DXCMD0_OLD, NV_DXCMD0, 0);
+    initDXCMD (NV_DXCMD1_OLD, NV_DXCMD1, 1);
+    initDXCMD (NV_DXCMD2_OLD, NV_DXCMD2, 2);
+    initDXCMD (NV_DXCMD3_OLD, NV_DXCMD3, 3);
+    initDXCMD (NV_DXCMD4_OLD, NV_DXCMD4, 4);
+    initDXCMD (NV_DXCMD5_OLD, NV_DXCMD5, 5);
+    initDXCMD (NV_DXCMD6_OLD, NV_DXCMD6, 6);
+    initDXCMD (NV_DXCMD7_OLD, NV_DXCMD7, 7);
+    initDXCMD (NV_DXCMD8_OLD, NV_DXCMD8, 8);
+    initDXCMD (NV_DXCMD9_OLD, NV_DXCMD9, 9);
+    initDXCMD (NV_DXCMD10_OLD, NV_DXCMD10, 10);
+    initDXCMD (NV_DXCMD11_OLD, NV_DXCMD11, 11);
 
     uint8_t nv_wsjt;
     if (!NVReadUInt8 (NV_WSJT_DX, &nv_wsjt)) {
@@ -4660,7 +4641,7 @@ static void saveParams2NV()
     NVWriteString (NV_ADIFWLIST, adif_wlist);
     NVWriteUInt8 (NV_ADIFWLISTMASK, bool_pr[ADIFWLISTA_BPR].state | (bool_pr[ADIFWLISTB_BPR].state << 1));
 
-    // N.B. these are NOT contiguous so can not look through N_DXCLCMDS
+    // N.B. these are NOT contiguous so can not loop through N_DXCLCMDS
     NVWriteString (NV_DXCMD0, dxcl_cmds[0]);
     NVWriteString (NV_DXCMD1, dxcl_cmds[1]);
     NVWriteString (NV_DXCMD2, dxcl_cmds[2]);

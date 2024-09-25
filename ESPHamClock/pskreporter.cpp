@@ -236,15 +236,10 @@ static bool retrievePSK (void)
     bool use_call = (psk_mask & PSKMB_CALL) != 0;
     bool of_de = (psk_mask & PSKMB_OFDE) != 0;
 
-    // set name to call or 4x grid
-    char name[20];
-    if (use_call) {
-        strcpy (name, getCallsign());
-    } else {
-        char de_maid[MAID_CHARLEN];
-        getNVMaidenhead (NV_DE_GRID, de_maid);
-        snprintf (name, sizeof(name), "%.4s", de_maid);
-    }
+    // handy 4x DE maid if needed
+    char de_maid[MAID_CHARLEN];
+    getNVMaidenhead (NV_DE_GRID, de_maid);
+    de_maid[4] = '\0';
 
     // build query
     char query[100];
@@ -258,7 +253,7 @@ static bool retrievePSK (void)
     snprintf (query+qlen, sizeof(query)-qlen, "?%s%s=%s&maxage=%d",
                                         of_de ? "of" : "by",
                                         use_call ? "call" : "grid",
-                                        name,
+                                        use_call ? getCallsign() : de_maid,
                                         psk_maxage_mins*60 /* wants seconds */);
     Serial.printf (_FX("PSK: query: %s\n"), query);
 
@@ -308,7 +303,7 @@ static bool retrievePSK (void)
 
             // RBN does not provide tx_grid but it must be us. N.B. this will be blank from rbndaemon
             if (isrbn)
-                strcpy (new_r.tx_grid, name);
+                strcpy (new_r.tx_grid, de_maid);
 
             // convert grids to ll
             if (!maidenhead2ll (new_r.tx_ll, new_r.tx_grid)) {
@@ -392,7 +387,7 @@ out:
                         n_reports,
                         (ispsk ? "PSK" : (iswspr ? "WSPR" : "RBN")),
                         of_de ? "of" : "by",
-                        name);
+                        use_call ? getCallsign() : de_maid);
 
     // already logged any problems
     return (ok);

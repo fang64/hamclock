@@ -1446,8 +1446,10 @@ void formatSexa (float dt_hrs, int &a, char &sep, int &b)
 char *formatAge (time_t age, char *line, int line_l, int cols)
 {
     // eh?
-    if (age < 0)
+    if (age < 0) {
+        Serial.printf ("formatAge(%ld,%d) resetting negative age to zero\n", age, cols);
         age = 0;
+    }
 
     switch (cols) {
 

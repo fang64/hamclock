@@ -672,7 +672,7 @@ void pollRadio(void)
     // show any pending messages
     if (pthread_mutex_lock (&msg_lock) == 0) {
         if (thread_msg) {
-            mapMsg (ERRDWELL_MS, thread_msg);
+            mapMsg (ERRDWELL_MS, "%s", thread_msg);
             free (thread_msg);
             thread_msg = NULL;
         }

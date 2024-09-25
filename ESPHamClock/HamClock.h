@@ -390,11 +390,11 @@ typedef enum {
 
     NV_FLRIGHOST,               // flrig tcp host
     NV_FLRIGPORT,               // flrig tcp port
-    NV_DXCMD0,                  // dx cluster command 0
-    NV_DXCMD1,                  // dx cluster command 1
-    NV_DXCMD2,                  // dx cluster command 2
+    NV_DXCMD0_OLD,              // deprecated when lengthened in 4.08
+    NV_DXCMD1_OLD,              // deprecated when lengthened in 4.08
+    NV_DXCMD2_OLD,              // deprecated when lengthened in 4.08
 
-    NV_DXCMD3,                  // dx cluster command 3
+    NV_DXCMD3_OLD,              // deprecated when lengthened in 4.08
     NV_DXCMDUSED,               // deprecated as of V3.06
     NV_PSK_MODEBITS,            // live spots mode: bit 0: on=psk off=wspr bit 1: on=bycall off=bygrid
     NV_PSK_BANDS,               // live spots bands: bit mask 0 .. 11 160 .. 2m
@@ -439,16 +439,16 @@ typedef enum {
     NV_POTAWLIST_OLD,           // deprecated when lengthened in v4.06
     NV_SCROLLDIR,               // 0=bottom 1=top
     NV_SCROLLLEN,               // deprecated in V4.04
-    NV_DXCMD4,                  // dx cluster command 4
-    NV_DXCMD5,                  // dx cluster command 5
+    NV_DXCMD4_OLD,              // deprecated when lengthened in 4.08
+    NV_DXCMD5_OLD,              // deprecated when lengthened in 4.08
 
-    NV_DXCMD6,                  // dx cluster command 6
-    NV_DXCMD7,                  // dx cluster command 7
-    NV_DXCMD8,                  // dx cluster command 8
-    NV_DXCMD9,                  // dx cluster command 9
-    NV_DXCMD10,                 // dx cluster command 10
+    NV_DXCMD6_OLD,              // deprecated when lengthened in 4.08
+    NV_DXCMD7_OLD,              // deprecated when lengthened in 4.08
+    NV_DXCMD8_OLD,              // deprecated when lengthened in 4.08
+    NV_DXCMD9_OLD,              // deprecated when lengthened in 4.08
+    NV_DXCMD10_OLD,             // deprecated when lengthened in 4.08
 
-    NV_DXCMD11,                 // dx cluster command 11
+    NV_DXCMD11_OLD,             // deprecated when lengthened in 4.08
     NV_DXCMDMASK,               // bitmask of dx cluster commands in use
     NV_DXWLISTMASK,             // 0: off, 1: not, 2: on, 3: only
     NV_RANKSW,                  // deprecated as of 4.07
@@ -494,6 +494,21 @@ typedef enum {
     NV_OA_FG_COLOR,             // ON AIR foreground color as RGB 565
     NV_OA_BG_COLOR,             // ON AIR background color as RGB 565 unless...
     NV_OA_BG_RAINBOW,           // set if ON AIR background is to be rainbow
+    NV_DXCMD0,                  // dx cluster command 0
+
+    NV_DXCMD1,                  // dx cluster command 1
+    NV_DXCMD2,                  // dx cluster command 2
+    NV_DXCMD3,                  // dx cluster command 3
+    NV_DXCMD4,                  // dx cluster command 4
+    NV_DXCMD5,                  // dx cluster command 5
+
+    NV_DXCMD6,                  // dx cluster command 6
+    NV_DXCMD7,                  // dx cluster command 7
+    NV_DXCMD8,                  // dx cluster command 8
+    NV_DXCMD9,                  // dx cluster command 9
+    NV_DXCMD10,                 // dx cluster command 10
+
+    NV_DXCMD11,                 // dx cluster command 11
 
     NV_N
 
@@ -1876,7 +1891,8 @@ extern bool checkNMEAFilename (const char *fn, char *ynot, size_t n_ynot);
 #define NV_ADIFFN_LEN           50
 #define NV_I2CFN_LEN            30
 #define NV_DXLOGIN_LEN          NV_CALLSIGN_LEN
-#define NV_DXCLCMD_LEN          35
+#define NV_DXCLCMD_OLD_LEN      35
+#define NV_DXCLCMD_LEN          60
 #define NV_DXWLIST_LEN          50
 #define NV_POTAWLIST_OLD_LEN    26
 #define NV_SOTAWLIST_OLD_LEN    26

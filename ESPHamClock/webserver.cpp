@@ -4490,11 +4490,16 @@ static bool runDemoChoice (DemoChoice choice, bool &slow, char msg[], size_t msg
         break;
 
     case DEMO_MAPSTYLE:
-        core_map = (CoreMaps)(((int)core_map + 1) % CM_N);
-        scheduleNewCoreMap (core_map);
-        slow = true;
-        ok = true;
-        demoMsg (ok, choice, msg, msg_len, "Map %s", cm_info[core_map].name);
+        {
+            char s[NV_COREMAPSTYLE_LEN];
+            core_map = (CoreMaps)(random(CM_N));                                // random style
+            if (CM_PMACTIVE())
+                cm_info[core_map].band = (PropMapBand)random(PROPBAND_N);       // random prop band
+            demoMsg (ok, choice, msg, msg_len, "Map %s", getCoreMapStyle (core_map, s));
+            scheduleNewCoreMap (core_map);
+            slow = true;
+            ok = true;
+        }
         break;
 
     case DEMO_NCDXF:

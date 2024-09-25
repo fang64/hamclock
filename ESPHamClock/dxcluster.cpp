@@ -11,6 +11,8 @@
  * We actually keep two lists:
  *   dx_spots: the complete raw list, not sorted; length in n_dxspots
  *   dxwl_spots: watchlist-filterd and time-sorted for display; length in dxc_ss.n_data
+ * 
+ * can inject spots from local file for debugging, see getNextDXCLine()
  */
 
 #include "HamClock.h"
@@ -490,14 +492,14 @@ static void requestRecentSpots (void)
     const char *msg = NULL;
 
     if (cl_type == CT_DXSPIDER)
-        msg = "sh/mydx real 30\n";
+        msg = "sh/dx filter real 30";
     else if (cl_type == CT_ARCLUSTER)
-        msg = "show/dx/30 @\n";
+        msg = "show/dx/30 @";
     else if (cl_type == CT_VE7CC)
-        msg = "show/myfdx\n";   // always 30, does not accept a count
+        msg = "show/myfdx";   // always 30, does not accept a count
 
     if (msg)
-        dxcSendMsg (msg);
+        dxcSendMsg ("%s\n", msg);
 }
 
 /* free both spots lists memory
@@ -588,7 +590,7 @@ static bool connectDXCluster (const SBox &box)
             // don't try to read with getTCPLine because first line is "login: " without trailing nl
             const char *login = getDXClusterLogin();
             dxcLog ("logging in as %s\n", login);
-            dxcSendMsg (login);
+            dxcSendMsg ("%s\n", login);
 
             // look for clue about type of cluster along the way
             uint16_t bl;
@@ -639,7 +641,7 @@ static bool connectDXCluster (const SBox &box)
             getDXClCommands (dx_cmds, dx_on);
             for (int i = 0; i < N_DXCLCMDS; i++) {
                 if (dx_on[i] && strlen(dx_cmds[i]) > 0)
-                    dxcSendMsg(dx_cmds[i]);
+                    dxcSendMsg("%s\n", dx_cmds[i]);
             }
 
             // reset list and view
@@ -686,8 +688,8 @@ static void showHost (const SBox &box, uint16_t c)
  */
 static void sendDXClusterHeartbeat()
 {
-    const char *hbcmd = "ping\n";
-    dxcSendMsg (hbcmd);
+    const char *hbcmd = "ping";
+    dxcSendMsg ("%s\n", hbcmd);
 }
 
 /* send our lat/long and grid to dx_client, depending on cluster type.
@@ -805,10 +807,15 @@ static bool crackClusterSpot (char line[], DXSpot &news)
 
     // looks good so far, reach over and extract time augmented with current seconds
     tmElements_t tm;
-    breakTime (myNow(), tm);
+    time_t n0 = myNow();
+    breakTime (n0, tm);
     tm.Hour = 10*(line[70]-'0') + (line[71]-'0');
     tm.Minute = 10*(line[72]-'0') + (line[73]-'0');
     news.spotted = makeTime (tm);
+
+    // the spot does not indicate the date so assume future times are from yesterday
+    if (news.spotted > n0)
+        news.spotted -= SECSPERDAY;
 
     // find locations and grids
     bool ok = call2LL (news.rx_call, news.rx_ll) && call2LL (news.tx_call, news.tx_ll);
@@ -888,6 +895,35 @@ static void runDXClusterMenu (const SBox &box)
 
     // always free the working watch list text
     free (mtext.text);
+}
+
+/* get next line from dx_client, or inject from local debug file
+ */
+static bool getNextDXCLine (char line[], size_t ll)
+{
+    // inject local test file if tracing
+    if (gimbal_trace_level > 1) {
+        static const char inject_fn[] = "x.dxc-injection";
+        static FILE *fp;
+        if (!fp) {
+            fp = fopen (inject_fn, "r");
+            if (!fp) {
+                fatalError ("%s: %s", inject_fn, strerror (errno));
+                return (false);     // lint
+            }
+        }
+        if (fgets (line, ll, fp)) {
+            line[strlen(line)-1] = '\0';                // rm nl like getTCPLine()
+            return (true);
+        } else {
+            return (false);
+        }
+
+    } else {
+
+        // normal
+        return (dx_client.available() && getTCPLine (dx_client, line, ll, NULL));
+    }
 }
 
 /* insure cluster connection is closed
@@ -970,7 +1006,8 @@ void checkDXCluster()
 
             // don't block if nothing waiting
             char line[120];
-            while (dx_client.available() && getTCPLine (dx_client, line, sizeof(line), NULL)) {
+            while (getNextDXCLine (line, sizeof(line))) {
+
                 dxcLog ("< %s\n", line);
                 detectMultiConnection (line);
 

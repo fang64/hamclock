@@ -245,6 +245,9 @@ char live_html[] =  R"_raw_html_(
         // connect keydown to send character to hamclock, beware ctrl keys and browser interactions
         window.addEventListener('keydown', function(event) {
 
+            if (event_verbose)
+                console.log('keydown: ', event);
+
             // now that user has done something check if they want to go full screen
             checkFullScreen();
 
@@ -256,7 +259,8 @@ char live_html[] =  R"_raw_html_(
                 key = 'Space';
 
             // accept only certain non-alphanumeric keys
-            if (key.length > 1 && !nonan_chars.find (e => { if (e == key) return true; })) {
+            if (event.metaKey
+                        || (key.length > 1 && !nonan_chars.find (e => { if (e == key) return true; }))) {
                 if (event_verbose)
                     console.log('ignoring ' + key);
                 return;
