@@ -1322,12 +1322,12 @@ void sendUserAgent (WiFiClient &client)
         // callsign colors
         uint16_t call_fg, call_bg;
         uint8_t call_rb;
-        NVReadUInt16 (NV_CALL_FG_COLOR, &call_fg);
-        NVReadUInt8 (NV_CALL_BG_RAINBOW, &call_rb);
+        NVReadUInt16 (NV_CALL_FG, &call_fg);
+        NVReadUInt8 (NV_CALL_RAINBOW, &call_rb);
         if (call_rb)
             call_bg = 1;                                // unlikely color to mean rainbow
         else
-            NVReadUInt16 (NV_CALL_BG_COLOR, &call_bg);
+            NVReadUInt16 (NV_CALL_BG, &call_bg);
 
         // ntp source
         int ntp = 0;
@@ -2034,7 +2034,7 @@ void updateWiFi(void)
         PlotChoice pc = plot_ch[pp];
 
         // rotate if this pane is rotating and it's time
-        if ((isPaneRotating(pp) || isSpecialPaneRotating(pp)) && t0 >= next_rotation[pp]) {
+        if (t0 >= next_rotation[pp] && (isPaneRotating(pp) || isSpecialPaneRotating(pp))) {
 
             pc = plot_ch[pp] = getNextRotationChoice(pp, plot_ch[pp]);
             next_rotation[pp] = nextRotation(pp);
@@ -2219,22 +2219,11 @@ void updateWiFi(void)
             }
             break;
 
-        case PLOT_CH_POTA:
+        case PLOT_CH_ONTA:
             if (t0 >= next_update[pp]) {
-                if (updateOnTheAir(box, ONTA_POTA, fresh_redraw[pc])) {
+                if (updateOnTheAir(box))
                     next_update[pp] = nextPaneUpdate (pc, ONTA_INTERVAL);
-                    fresh_redraw[pc] = false;
-                } else
-                    next_update[pp] = nextWiFiRetry(pc);
-            }
-            break;
-
-        case PLOT_CH_SOTA:
-            if (t0 >= next_update[pp]) {
-                if (updateOnTheAir(box, ONTA_SOTA, fresh_redraw[pc])) {
-                    next_update[pp] = nextPaneUpdate (pc, ONTA_INTERVAL);
-                    fresh_redraw[pc] = false;
-                } else
+                else
                     next_update[pp] = nextWiFiRetry(pc);
             }
             break;

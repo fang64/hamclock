@@ -363,9 +363,9 @@ static bool installFilePixels (const char *dfile, const char *nfile)
         return (ok);
 }
 
-/* clean up old files for the given style.
+/* clean up old bmp files
  */
-static void cleanupMaps (const char *style)
+static void cleanupMaps (void)
 {
         // open our working directory
         DIR *dirp = opendir (our_dir.c_str());
@@ -373,8 +373,6 @@ static void cleanupMaps (const char *style)
             Serial.printf ("RM: %s: %s\n", our_dir.c_str(), strerror(errno));
             return;
         }
-
-        Serial.printf ("RM: cleaning style %s\n", style);
 
         // malloced list of malloced names to be removed (so we don't modify dir while scanning)
         typedef struct {
@@ -384,12 +382,12 @@ static void cleanupMaps (const char *style)
         RMFile *rm_files = NULL;                        // malloced list
         int n_rm = 0;                                   // n in list
 
-        // scan for style files at least a day old
-        const int max_age = 3600*24;
+        // scan for bmp files at least a few days old
+        const int max_age = 2*3600*24;
         time_t now = myNow();
         struct dirent *dp;
         while ((dp = readdir(dirp)) != NULL) {
-            if (strstr (dp->d_name, style)) {
+            if (strstr (dp->d_name, ".bmp") != NULL) {
                 // file name matches now check age
                 char fpath[10000];
                 struct stat sbuf;
@@ -410,7 +408,7 @@ static void cleanupMaps (const char *style)
         }
         closedir (dirp);
 
-        // rm files and clean up rm_files along the way
+        // remove files and clean up rm_files along the way
         for (int i = 0; i < n_rm; i++) {
             char *fn = rm_files[i].fn;
             Serial.printf ("RM: %6.1f days old %s\n", rm_files[i].age/(3600.0F*24.0F), fn);
@@ -451,7 +449,7 @@ static bool installQueryMaps (const char *page, const char *msg, const char *sty
 
         // insure fresh start
         invalidatePixels();
-        cleanupMaps(style);
+        cleanupMaps();
 
         // by storing the entire query in the file name we easily know if a new download is needed.
         // N.B. this violates the maximum file name limit in the real LitteFS
@@ -615,6 +613,7 @@ static bool installFileMaps (CoreMaps cm)
 
         // insure fresh start
         invalidatePixels();
+        cleanupMaps();
         if (day_file)
             day_file.close();
         if (night_file)

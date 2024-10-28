@@ -115,11 +115,10 @@
 typedef struct {
     uint16_t x, y;
 } SCoord;
-#include "Adafruit_RA8875_R.h"
+#include "Adafruit_RA8875.h"
 #include "Adafruit_MCP23X17.h"
 
 // HamClock modules
-#include "version.h"
 #include "P13.h"
 
 
@@ -287,9 +286,9 @@ typedef enum {
     NV_DX_LNG,                  // DX longitude, degrees E
 
     NV_DX_GRID_OLD,             // deprecated
-    NV_CALL_FG_COLOR,           // Call foreground color as RGB 565
-    NV_CALL_BG_COLOR,           // Call background color as RGB 565 unless...
-    NV_CALL_BG_RAINBOW,         // set if Call background is to be rainbow
+    NV_CALL_FG,                 // Call foreground color as RGB 565
+    NV_CALL_BG,                 // Call background color as RGB 565 unless...
+    NV_CALL_RAINBOW,            // set if Call background is to be rainbow
     NV_PSK_SHOWDIST,            // Live spots shows max distance, else counts
 
     NV_UTC_OFFSET,              // offset from UTC, seconds
@@ -308,7 +307,7 @@ typedef enum {
     NV_METRIC_ON,               // whether to use metric or imperical values
     NV_LKSCRN_ON,               // whether screen lock is on
     NV_MAPPROJ,                 // 0: merc 1: azim 2: azim 1
-    NV_ROTATE_SCRN,             // deprecated after removing ESP
+    NV_ROTATE_SCRN_OLD,         // deprecated after removing ESP
 
     NV_WIFI_SSID,               // WIFI SSID
     NV_WIFI_PASSWD_OLD,         // deprecated
@@ -318,8 +317,8 @@ typedef enum {
 
     NV_DX_SRSS,                 // whether DX pane shows sun times 0=until or 1=at or 2=DX prefix
     NV_GRIDSTYLE,               // map grid style 0=off; 1=tropics; 2=lat-lng; 3=maindenhead, 4=radial
-    NV_DPYON,                   // deprecated since NV_DAILYONOFF
-    NV_DPYOFF,                  // deprecated since NV_DAILYONOFF
+    NV_DPYON_OLD,               // deprecated since NV_DAILYONOFF
+    NV_DPYOFF_OLD,              // deprecated since NV_DAILYONOFF
     NV_DXHOST,                  // DX cluster host name, unless using WSJT
 
     NV_DXPORT,                  // DX cluster port number
@@ -359,7 +358,7 @@ typedef enum {
     NV_SHORTPATHCOLOR,          // prop short path color as RGB 565
 
     NV_LONGPATHCOLOR,           // prop long path color as RGB 565
-    NV_PLOTOPS,                 // deprecated since NV_PANE_CH
+    NV_PLOTOPS_OLD,             // deprecated since NV_PANE_CH
     NV_NIGHT_ON,                // whether to show night on map
     NV_DE_GRID,                 // DE 6 char grid
     NV_DX_GRID,                 // DX 6 char grid
@@ -395,7 +394,7 @@ typedef enum {
     NV_DXCMD2_OLD,              // deprecated when lengthened in 4.08
 
     NV_DXCMD3_OLD,              // deprecated when lengthened in 4.08
-    NV_DXCMDUSED,               // deprecated as of V3.06
+    NV_DXCMDUSED_OLD,           // deprecated as of V3.06
     NV_PSK_MODEBITS,            // live spots mode: bit 0: on=psk off=wspr bit 1: on=bycall off=bygrid
     NV_PSK_BANDS,               // live spots bands: bit mask 0 .. 11 160 .. 2m
     NV_160M_COLOR,              // 160 m path color as RGB 565
@@ -415,7 +414,7 @@ typedef enum {
     NV_2M_COLOR,                // 2 m path color as RGB 565
     NV_DASHED,                  // ColorSelection bitmask set for dashed
     NV_BEAR_MAG,                // show magnetic bearings, else true
-    NV_WSJT_SETSDX,             // deprecated
+    NV_WSJT_SETSDX_OLD,         // deprecated
     NV_WSJT_DX,                 // whether dx cluster is WSJT-X
 
     NV_PSK_MAXAGE,              // live spots max age, minutes
@@ -424,8 +423,8 @@ typedef enum {
     NV_SDO,                     // sdo pane choice 0..6
     NV_SDOROT,                  // whether SDO pane is rotating
 
-    NV_ONTASPOTA,               // POTA sort 0-3: Band Call ID Age
-    NV_ONTASSOTA,               // SOTA sort 0-3: Band Call ID Age
+    NV_ONTASPOTA_OLD,           // POTA sort, deprecated in 4.09
+    NV_ONTASSOTA_OLD,           // SOTA sort, deprecated at 4.09
     NV_BRB_ROTSET,              // Beacon box mode bit mask
     NV_ROTCOLOR,                // rotator map color
     NV_CONTESTS,                // bit 1 to show date, bit use DE timezone
@@ -436,9 +435,9 @@ typedef enum {
     NV_I2CON,                   // whether to use I2C
     NV_DXMAX_T,                 // time when n lost dx connections exceeded max
 
-    NV_POTAWLIST_OLD,           // deprecated when lengthened in v4.06
+    NV_POTAWLIST1_OLD,          // deprecated when lengthened in v4.06
     NV_SCROLLDIR,               // 0=bottom 1=top
-    NV_SCROLLLEN,               // deprecated in V4.04
+    NV_SCROLLLEN_OLD,           // deprecated in V4.04
     NV_DXCMD4_OLD,              // deprecated when lengthened in 4.08
     NV_DXCMD5_OLD,              // deprecated when lengthened in 4.08
 
@@ -451,16 +450,16 @@ typedef enum {
     NV_DXCMD11_OLD,             // deprecated when lengthened in 4.08
     NV_DXCMDMASK,               // bitmask of dx cluster commands in use
     NV_DXWLISTMASK,             // 0: off, 1: not, 2: on, 3: only
-    NV_RANKSW,                  // deprecated as of 4.07
+    NV_RANKSW_OLD,              // deprecated as of 4.07
     NV_NEWDXDEWX,               // whether to show new DX or DE weather
 
     NV_WEBFS,                   // whether to enable full screen web interface
     NV_ZOOM,                    // integral zoom factor
     NV_PANX,                    // center x from 0 center, + right, @ zoom 1
     NV_PANY,                    // center y from 0 center, + up, @ zoom 1
-    NV_POTAWLISTMASK,           // 0: off, 1: not, 2: on, 3: only
+    NV_POTAWLISTMASK_OLD,       // deprecated 4.09
 
-    NV_SOTAWLIST_OLD,           // deprecated when lengthened in v4.06
+    NV_SOTAWLIST1_OLD,          // deprecated when lengthened in v4.06
     NV_ONCEALARM,               // one-time alarm time(). always in UTC
     NV_ONCEALARMMASK,           // bit 1 = armed, 2 = user wants UTC (else DE TZ)
     NV_PANEROTP,                // pane rotation period, seconds
@@ -469,16 +468,16 @@ typedef enum {
     NV_MAPROTP,                 // map rotation period, seconds
     NV_MAPROTSET,               // core_map rotation bit mask
     NV_GRAYDPY,                 // whether to use gray scale
-    NV_SOTAWLISTMASK,           // 0: off, 1: not, 2: on, 3: only
+    NV_SOTAWLISTMASK_OLD,       // deprecated 4.09
     NV_ADIFWLISTMASK,           // 0: off, 1: not, 2: on, 3: only
 
     NV_DXWLIST,                 // DX watch list
     NV_ADIFWLIST,               // ADIF watch list
     NV_ADIFSORT,                // 0 age 1 distance
-    NV_ADIFBANDS,               // deprecated in V4.04 -- replaced by watch list 
-    NV_POTAWLIST,               // POTA watch list
+    NV_ADIFBANDS_OLD,           // deprecated in V4.04 -- replaced by watch list 
+    NV_POTAWLIST_OLD,           // deprecated 4.09
 
-    NV_SOTAWLIST,               // SOTA watch list
+    NV_SOTAWLIST_OLD,           // deprecated V4.09
     NV_ADIFFN,                  // ADIF file name, if any
     NV_NTPHOST,                 // user defined NTP host name
     NV_GPSDHOST,                // gpsd daemon host name
@@ -491,9 +490,9 @@ typedef enum {
     NV_AUTOMAP,                 // whether to turn on maps automatically
 
     NV_DXCAGE,                  // oldest dx cluster entry, minutes
-    NV_OA_FG_COLOR,             // ON AIR foreground color as RGB 565
-    NV_OA_BG_COLOR,             // ON AIR background color as RGB 565 unless...
-    NV_OA_BG_RAINBOW,           // set if ON AIR background is to be rainbow
+    NV_ONAIR_FG,                // ON AIR text foreground color as RGB 565
+    NV_ONAIR_BG,                // ON AIR text background color as RGB 565 unless...
+    NV_ONAIR_RAINBOW,           // set if ON AIR background is to be rainbow
     NV_DXCMD0,                  // dx cluster command 0
 
     NV_DXCMD1,                  // dx cluster command 1
@@ -509,11 +508,27 @@ typedef enum {
     NV_DXCMD10,                 // dx cluster command 10
 
     NV_DXCMD11,                 // dx cluster command 11
+    NV_ONAIR_MSG,               // ON AIR text
+    NV_SETRADIO,                // whether to issue radio commands
+    NV_ONTAWLIST,               // ONTA watch list
+    NV_ONTAWLISTMASK,           // 0: off, 1: not, 2: on, 3: only
+
+    NV_ONTASORTBY,              // ONTA sort 0-3: Band Call Org Age
+    NV_ONTAORG,                 // ONTA organization filter
+    NV_TITLE,                   // alternate callsign title text
+    NV_TITLE_FG,                // alternate callsign fg as RGB 565
+    NV_TITLE_BG,                // alternate callsign bg as RGB 565
+
+    NV_TITLE_RAINBOW,           // alternate callsign is rainbow
+    NV_ONTA_MAXAGE,             // max ONTA spot age, mins
+    NV_QRZID,                   // which bio source
+    NV_PREFERTITLE,             // whether to show title else call sign when not PTT
 
     NV_N
 
 } NV_Name;
 
+#define NV_NONE NV_N            // handy alias
 
 // N.B. must match setup.cpp::csel_pr[] order 
 typedef enum {
@@ -568,10 +583,9 @@ typedef enum {
     X(PLOT_CH_CONTESTS,     "Contests")         \
     X(PLOT_CH_PSK,          "Live_Spots")       \
     X(PLOT_CH_BZBT,         "Bz_Bt")            \
-    X(PLOT_CH_POTA,         "POTA")             \
-    X(PLOT_CH_SOTA,         "SOTA")             \
+    X(PLOT_CH_ONTA,         "On_The_Air")       \
     X(PLOT_CH_ADIF,         "ADIF")             \
-    X(PLOT_CH_AURORA,       "Aurora")
+    X(PLOT_CH_AURORA,       "Aurora")           \
 
 #define X(a,b)  a,              // expands PLOTNAMES to each enum and comma
 typedef enum {
@@ -626,29 +640,39 @@ typedef struct {
 
 
 #define NV_CALLSIGN_LEN         12      // max call sign, including EOS
+#define NV_ONAIR_LEN            30      // max ONAIR text, including EOS
+#define NV_TITLE_LEN            70      // max alternate callsign, including EOS
 
-// callsign info
+
+// manage callsign display area and alternate uses
+typedef enum {
+    CT_CALL,                            // display real call
+    CT_TITLE,                           // display title text
+    CT_ONAIR,                           // display ON AIR message
+} Call_t;
 typedef struct {
-    char call[NV_CALLSIGN_LEN];         // callsign
-    char *oa_title;                     // malloced message else default
-    uint16_t oa_fg;                     // ON AIR fg color
-    uint16_t oa_bg;                     // ON AIR bg color unless ..
-    uint8_t oa_bg_rainbow;              // .. ON AIR bg is rainbow
-    uint16_t call_fg;                   // call sign fg color
-    uint16_t call_bg;                   // call sign bg color unless ..
-    uint8_t call_bg_rainbow;            // .. call sign bg is rainbow
-    bool showing_oa;                    // showing ON AIR, else call sign
-    SBox box;                           // size and location
+    uint16_t fg, bg;                    // fg/bg colors unless...
+    uint8_t rainbow;                    // bg is rainbow
+} CallColors_t;
+typedef struct {
+    char call[NV_CALLSIGN_LEN];         // real callsign for CT_CALL, used by setup.cpp
+    char onair[NV_ONAIR_LEN];           // real on-air message for CT_ONAIR, used by setup.cpp
+    char title[NV_TITLE_LEN];           // CT_TITLE text if used
+    Call_t prefer;                      // CT_CALL or CT_TITLE set via menu
+    Call_t type;                        // current display state selector
+    CallColors_t call_col;
+    CallColors_t title_col;
+    CallColors_t onair_col;
+    SBox box;                           // text box
 } CallsignInfo;
 extern CallsignInfo cs_info;
 
-#define LIFE_LED        0
 
 #define DE_INFO_ROWS    3               // n text rows in DE pane -- not counting top row
 #define DX_INFO_ROWS    5               // n text rows in DX pane
 
 
-extern Adafruit_RA8875_R tft;           // compat layer
+extern Adafruit_RA8875 tft;             // drawing layer
 extern Adafruit_MCP23X17 mcp;           // I2C digital IO device
 extern bool found_mcp;                  // whether found
 extern TZInfo de_tz, dx_tz;             // time zone info
@@ -831,7 +855,7 @@ typedef struct {
 
     // adif:           "my_*" fields are considered RX
     // dxcluster:      spotted is TX, spotter is RX
-    // ontheair:       spotted is TX, repurpose RX for id and program name
+    // ontheair:       spotted is TX, repurpose rx_call for id and rx_grid for program name
     // psk live spots: if PSKMB_OFDE then DE is TX, else DE is RX
 
     char tx_call[MAX_SPOTCALL_LEN];
@@ -885,14 +909,12 @@ extern void drawMapTag (const char *tag, const SBox &box, uint16_t txt_color = R
 extern void setDXPrefixOverride (char p[MAX_PREF_LEN]);
 extern bool getDXPrefix (char p[MAX_PREF_LEN+1]);
 extern void drawScreenLock(void);
-extern const char *hc_version;
 extern void fillSBox (const SBox &box, uint16_t color);
 extern void drawSBox (const SBox &box, uint16_t color);
 extern void shadowString (const char *str, bool shadow, uint16_t color, uint16_t x0, uint16_t y0);
 extern bool overMapScale (const SCoord &s);
 extern uint16_t getGoodTextColor (uint16_t bg_c);
 extern void drawDEFormatMenu(void);
-extern void openURL (const char *url);
 
 
 #if defined(__GNUC__)
@@ -1120,13 +1142,11 @@ extern FILE *openCachedFile (const char *fn, const char *url, long max_age);
  *
  */
 extern void initCallsignInfo(void);
-extern bool checkCallsignTouchFG (const SCoord &b);
-extern bool checkCallsignTouchBG (const SCoord &b);
+extern void doCallsignTouch (const SCoord &s);
 extern void drawCallsign (bool all);
 extern void setOnAirHW (bool on);
 extern void setOnAirSW (bool on);
-extern void setOnAirText (const char *s);
-extern void setCallsignInfo (const char *oa_msg, uint16_t *fg, uint16_t *bg, uint8_t *rainbow);
+extern void setCallsignInfo (Call_t t, const char *text, uint16_t *fg, uint16_t *bg, uint8_t *rainbow);
 
 
 
@@ -1182,8 +1202,6 @@ extern void showClocks(void);
 extern void drawDXSunRiseSetInfo(void);
 extern int DEWeekday(void);
 extern int utcOffset(void);
-extern void formatSexa (float dt_hrs, int &a, char &sep, int &b);
-extern char *formatAge (time_t age, char *line, int line_l, int cols);
 extern bool crackMonth (const char *name, int *monp);
 
 
@@ -1245,6 +1263,18 @@ extern const char* getAlarmedContestTitle (time_t t);
 
 extern bool getCPUTemp (float &t_C);
 
+
+
+
+
+/*********************************************************************************************
+ *
+ * drawextra.cpp
+ *
+ */
+
+extern void fillPolygon (const SCoord poly[], int n_poly, uint16_t color);
+extern void drawPolygon (const SCoord poly[], int n_poly, uint16_t color);
 
 
 
@@ -1559,6 +1589,7 @@ extern char live_html[];
 
 
 
+
 /*********************************************************************************************
  *
  * liveweb.cpp
@@ -1569,7 +1600,9 @@ extern char live_html[];
 extern void initLiveWeb(bool verbose);
 extern bool liveweb_fs_ready;
 extern int n_roweb, n_rwweb;
-extern char *liveweb_openurl;
+extern void openLiveWebURL (const char *url);
+extern bool isLiveWebTouch (void);
+
 
 
 
@@ -1894,11 +1927,13 @@ extern bool checkNMEAFilename (const char *fn, char *ynot, size_t n_ynot);
 #define NV_DXCLCMD_OLD_LEN      35
 #define NV_DXCLCMD_LEN          60
 #define NV_DXWLIST_LEN          50
-#define NV_POTAWLIST_OLD_LEN    26
-#define NV_SOTAWLIST_OLD_LEN    26
-#define NV_POTAWLIST_LEN        50
-#define NV_SOTAWLIST_LEN        50
+#define NV_POTAWLIST1_OLD_LEN   26
+#define NV_POTAWLIST_OLD_LEN    50
+#define NV_SOTAWLIST1_OLD_LEN   26
+#define NV_SOTAWLIST_OLD_LEN    50
 #define NV_ADIFWLIST_LEN        50
+#define NV_ONTAWLIST_LEN        50
+#define NV_ONTAORG_LEN          30
 
 
 
@@ -1936,26 +1971,19 @@ extern void reportEESize (uint16_t &ee_used, uint16_t &ee_size);
  *
  */
 
-#define ONTA_INTERVAL   (60)            // polling interval, secs; updates can be very rapid
+#define ONTA_INTERVAL   90                              // polling interval
 
-#define ONTAPrograms             \
-    X(ONTA_POTA, "POTA")         \
-    X(ONTA_SOTA, "SOTA")
-
-#define X(a,b) a,                       // expands ONTAPrograms to each enum and comma
-typedef enum {
-    ONTAPrograms
-    ONTA_N
-} ONTAProgram;
-#undef X
-
-extern const char *onta_names[ONTA_N];
-
-extern bool updateOnTheAir (const SBox &box, ONTAProgram onta, bool force);
-extern bool checkOnTheAirTouch (const SCoord &s, const SBox &box, ONTAProgram onta);
-extern bool getOnTheAirSpots (DXSpot **spp, uint8_t *nspotsp, ONTAProgram onta);
+extern bool updateOnTheAir (const SBox &box);
+extern bool checkOnTheAirTouch (const SCoord &s, const SBox &box);
+extern bool getOnTheAirSpots (DXSpot **spp, uint8_t *nspotsp);
 extern void drawOnTheAirSpotsOnMap (void);
 extern bool getClosestOnTheAirSpot (const LatLong &ll, DXSpot *sp, LatLong *llp);
+extern bool getOnTheAirPaneSpot (SCoord &ms, DXSpot *dxs, LatLong *ll);
+extern bool getDXCPaneSpot (SCoord &ms, DXSpot *dxs, LatLong *ll);
+extern bool getADIFPaneSpot (SCoord &ms, DXSpot *dxs, LatLong *ll);
+extern bool isONTARotating (void);
+
+
 
 
 
@@ -2017,6 +2045,16 @@ extern uint32_t plot_rotset[PANE_N];       // bitmask of all current PlotChoice 
 #define SHOWING_PANE_0()        (plot_ch[PANE_0] != PLOT_CH_NONE)
 #define BOX_IS_PANE_0(b)        ((b).w == PLOTBOX0_W && (b).h == PLOTBOX0_H)
 
+// bit mask of plot choices suitable for PANE_0
+#define PANE_0_CH_MASK          ((1<<PLOT_CH_DXCLUSTER) | (1<<PLOT_CH_CONTESTS) | (1<<PLOT_CH_ADIF) \
+                                 | (1<<PLOT_CH_ONTA))
+
+// compute number of bits set in PANE_0_CH_MASK at compile time :-)
+// https://stackoverflow.com/questions/109023/count-the-number-of-set-bits-in-a-32-bit-integer
+// https://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetParallel
+#define NBITS_SET(v) ((((((((v) - (((v) >> 1) & 0x55555555)) & 0x33333333) + ((((v) - (((v) >> 1) & 0x55555555)) >> 2) & 0x33333333)) + (((((v) - (((v) >> 1) & 0x55555555)) & 0x33333333) + ((((v) - (((v) >> 1) & 0x55555555)) >> 2) & 0x33333333)) >> 4)) & 0xF0F0F0F) * 0x1010101) >> 24)
+#define N_PANE_0_CH             ((int)(NBITS_SET((uint32_t)PANE_0_CH_MASK)))
+
 #define PLOT_ROT_WARNING        4          // show rotation about to occur, secs
 
 extern void insureCountdownPaneSensible(void);
@@ -2025,6 +2063,7 @@ extern PlotPane findPaneForChoice (PlotChoice pc);
 extern PlotPane findPaneChoiceNow (PlotChoice pc);
 extern PlotChoice getNextRotationChoice (PlotPane pp, PlotChoice pc);
 extern PlotChoice getAnyAvailableChoice (void);
+extern PlotChoice getAnyAvailablePane0Choice (void);
 extern bool plotChoiceIsAvailable (PlotChoice ch);
 extern void logPaneRotSet (PlotPane pp, PlotChoice ch);
 extern void logBRBRotSet(void);
@@ -2109,6 +2148,38 @@ extern bool getBandDashed (long Hz);
 extern void drawPSKPaths (void);
 extern bool getClosestPSK (const LatLong &ll, DXSpot *sp, bool &of_de);
 extern void getPSKSpots (const DXSpot* &rp, int &n_rep);
+
+
+
+/*********************************************************************************************
+ *
+ * qrz.cpp
+ *
+ */
+
+// N.B. WB0OEW will be replaced by desired call
+#define QRZTABLE                                                                \
+    X(QRZ_NONE,     "No",          NULL)                                        \
+    X(QRZ_QRZ,      "qrz.com",     "https://www.qrz.com/db/WB0OEW")             \
+    X(QRZ_HAMCALL,  "hamcall.net", "https://hamcall.net/call?callsign=WB0OEW")  \
+    X(QRZ_CQQRZ,    "cqqrz.com",   "https://www.qrzcq.com/call/WB0OEW")
+
+#define X(a,b,c)  a,                    // expands QRZTABLE to each enum and comma
+typedef enum {
+    QRZTABLE
+    QRZ_N
+} QRZURLId;
+#undef X
+
+typedef struct {
+    const char *label;                  // menu label
+    const char *url;                    // url with my call, or NULL
+} QRZURLTable;
+
+extern QRZURLTable qrz_urltable[QRZ_N];
+
+extern void openQRZBio (const DXSpot &s);
+extern void openURL (const char *url);
 
 
 
@@ -2369,9 +2440,7 @@ extern bool showPIP(void);
 extern bool autoMap(void);
 extern int getMapRotationPeriod(void);
 extern GrayDpy_t getGrayDisplay(void);
-extern int getDXCMaxAge(void);
-extern void getDXCMaxAges (int **all_ages, int *n_ages);
-extern void setDXCMaxAge (int new_age);
+extern bool setRadio (void);
 
 
 
@@ -2385,8 +2454,7 @@ typedef enum {
 // the individual watch list IDs
 typedef enum {
     WLID_DX,
-    WLID_POTA,
-    WLID_SOTA,
+    WLID_ONTA,
     WLID_ADIF,
     WLID_N,
 } WatchListId;
@@ -2416,6 +2484,7 @@ extern void rotateWatchListState (struct _menu_text *tfp);
 extern WatchListState getWatchListState (WatchListId wl, char name[WLA_MAXLEN]);
 extern WatchListState lookupWatchListState (const char *wl_state);
 extern const char *getWatchListName (WatchListId wl_id);
+extern QRZURLId getQRZId (void);
 
 
 
@@ -2655,12 +2724,14 @@ extern float simpleSphereDist (const LatLong &ll1, const LatLong &ll2);
  *
  */
 
+#define MAXDUP_DT       (5*60)                  // 2 spots are dups if this close in time, secs
+
 /* band edges, name and color setup reference
  */
 typedef struct {
-    int min_kHz, max_kHz;                        // band edges
-    const char *name;                            // common name
-    ColorSelection cid;                          // get color from setup
+    int min_kHz, max_kHz;                       // band edges
+    const char *name;                           // common name
+    ColorSelection cid;                         // get color from setup
 } BandEdge;
 
 #define _HAM_BANDS                                                \
@@ -2702,12 +2773,15 @@ extern void drawVisibleSpots (WatchListId wl_id, const DXSpot *spots, const Scro
 typedef int (*PQSF)(const void *, const void *);        // pointer to qsort-style compare function
 
 extern int qsDXCFreq (const void *v1, const void *v2);
-extern int qsDXCDECall (const void *v1, const void *v2);
-extern int qsDXCDXCall (const void *v1, const void *v2);
+extern int qsDXCRXCall (const void *v1, const void *v2);
+extern int qsDXCRXGrid (const void *v1, const void *v2);
+extern int qsDXCTXCall (const void *v1, const void *v2);
 extern int qsDXCSpotted (const void *v1, const void *v2);
 extern int qsDXCDist (const void *v1, const void *v2);
 
 extern bool getPSKBandStats (PSKBandStats stats[HAMBAND_N], const char *names[HAMBAND_N]);
+extern bool checkDXDup (const DXSpot &s1, const DXSpot &s2);
+
 
 
 
@@ -2800,7 +2874,16 @@ extern void getTextBounds (const char str[], uint16_t *wp, uint16_t *hp);
 extern uint16_t getTextWidth (const char str[]);
 extern char *expandENV (const char *fn);
 extern uint16_t maxStringW (char *str, uint16_t maxw);
-const char *strcistr (const char *haystack, const char *needle);
+extern const char *strcistr (const char *haystack, const char *needle);
+extern int strtokens (char *str, char *tokens[], int max_tokens);
+extern void quietStrncpy (char *to, const char *from, int len);
+extern void formatSexa (float dt_hrs, int &a, char &sep, int &b);
+extern char *formatAge (time_t age, char *line, int line_l, int cols);
+extern bool strHasAlpha (const char *s);
+extern bool strHasDigit (const char *s);
+extern bool strHasPunct (const char *s);
+extern bool strHasSpace (const char *s);
+
 
 
 

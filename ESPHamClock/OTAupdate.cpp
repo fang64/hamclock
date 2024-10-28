@@ -81,16 +81,31 @@ bool newVersionIsAvailable (char *new_ver, uint16_t new_verl)
             goto out;
         }
 
-        // non-rc accepts newer non-rc; rc accepts newer or any rc
+        // non-beta accepts only newer non-beta; beta accepts anything newer
         Serial.printf ("found version %s\n", line);
-        float this_v = atof(hc_version);
+        float our_v = atof(hc_version);
         float new_v = atof(line);
-        bool this_rc = strstr (hc_version, "rc");
-        bool new_rc = strstr (line, "rc");
-        // Serial.printf ("V %g >? %g\n", new_v, this_v);
-        if ((!this_rc && !new_rc && new_v > this_v) || (this_rc && (new_rc || new_v >= this_v))) {
-            found_newer = true;
-            strncpy (new_ver, line, new_verl);
+        bool we_are_beta = strchr (hc_version, 'b') != NULL;
+        bool new_is_beta = strchr (line, 'b') != NULL;
+        if (we_are_beta) {
+            if (new_is_beta) {
+                int our_beta_v = atoi (strchr(hc_version,'b') + 1);
+                int new_beta_v = atoi (strchr(line,'b') + 1);
+                if (new_beta_v > our_beta_v) {
+                    found_newer = true;
+                    strncpy (new_ver, line, new_verl);
+                }
+            } else {
+                if (new_v >= our_v) {
+                    found_newer = true;
+                    strncpy (new_ver, line, new_verl);
+                }
+            }
+        } else {
+            if (!new_is_beta && new_v > our_v) {
+                found_newer = true;
+                strncpy (new_ver, line, new_verl);
+            }
         }
 
         // just log next few lines for debug
@@ -396,7 +411,7 @@ void doOTAupdate(const char *newver)
     resetWatchdog();
     WiFiClient client;
     char url[200];
-    if (strstr(hc_version, "rc") && strstr (newver, "rc"))
+    if (strchr(newver, 'b'))
         snprintf (url, sizeof(url), "http://%s/ham/HamClock/ESPHamClock-V%s.zip", backend_host, newver);
     else
         snprintf (url, sizeof(url), "https://%s/ham/HamClock/ESPHamClock.zip", backend_host);

@@ -8,9 +8,9 @@
 #define CONTEST_COLOR   RGB565(205,91,69)       // X11 coral3
 #define TO_COLOR        RA8875_BLACK            // titles-only background
 #define TD_COLOR        CONTEST_COLOR           // titles-with-dates background
-#define CREDITS_Y0      31                      // dy of credits row
-#define START_DY        47                      // dy of first contest row
-#define CONTEST_DY      12                      // dy of each successive row
+#define CREDITS_Y0      SUBTITLE_Y0             // dy of credits row
+#define START_DY        LISTING_Y0              // dy of first contest row
+#define CONTEST_DY      12                      // dy of each successive row -- a bit tighter than LISTING_DY
 
 // NV_CONTESTS bits
 #define NVBIT_SHOWDATE  0x1                     // showing dates
@@ -224,13 +224,15 @@ static bool runContestMenu (const SCoord &s, const SBox &box)
 
     // decide which contest s is pointing at, if any
     ContestEntry *cep = NULL;
-    int display_i = (s.y - box.y - START_DY)/CONTEST_DY;
-    if (show_date)
-        display_i /= 2;
-    int data_i;
-    if (cts_ss.findDataIndex (display_i, data_i))
-        cep = &contests[data_i];
-    // printf ("****************** %s\n", cep ? cep->title : "NONE");
+    if (s.y >= box.y + START_DY) {
+        int display_i = (s.y - box.y - START_DY)/CONTEST_DY;
+        if (show_date)
+            display_i /= 2;
+        int data_i;
+        if (cts_ss.findDataIndex (display_i, data_i))
+            cep = &contests[data_i];
+        // printf ("****************** %d %d %d %d %s\n", s.y, box.y, display_i, data_i, cep ? cep->title : "NONE");
+    }
 
     // prepare menu
     const int indent = 2;
@@ -243,22 +245,24 @@ static bool runContestMenu (const SCoord &s, const SBox &box)
     getOneTimeAlarmState (a_s, a_t, a_utc, a_str, sizeof(a_str));
     bool starts_in_future = cep && cep->start_t > nowWO();
     bool alarm_is_set = cep && a_s == ALMS_ARMED && a_t == cep->start_t && starts_in_future;
-    MenuFieldType alarm_mft = starts_in_future ? MENU_TOGGLE : MENU_IGNORE;
-    MenuFieldType showdetz_mft = show_date ? MENU_TOGGLE : MENU_IGNORE;
 
-    // build a version of the title that fits well within box
+    // build a version of the contest name that fits well within box
     const uint16_t menu_gap = 20;
-    char title[50];
-    snprintf (title, sizeof(title), "%s", cep ? cep->title : "");
-    for (uint16_t t_l = getTextWidth(title); t_l > box.w-2*menu_gap; t_l = getTextWidth(title)) {
+    char cname[50];
+    quietStrncpy (cname, cep ? cep->title : "", sizeof(cname));
+    for (uint16_t t_l = getTextWidth(cname); t_l > box.w-2*menu_gap; t_l = getTextWidth(cname)) {
         // try to chop at blank, else just be ruthless
-        char *r_space = strrchr (title, ' ');
+        char *r_space = strrchr (cname, ' ');
         if (r_space)
             *r_space = '\0';
         else
-            title[strlen(title)-1] = '\0';
+            cname[strlen(cname)-1] = '\0';
     }
+
+    // decide which menu items to show
     MenuFieldType title_mft = cep ? MENU_LABEL : MENU_IGNORE;
+    MenuFieldType alarm_mft = cep && starts_in_future ? MENU_TOGGLE : MENU_IGNORE;
+    MenuFieldType showdtz_mft = cep ? MENU_IGNORE : MENU_TOGGLE;
 
 #if defined(_USE_FB0)
     MenuFieldType web_mft = MENU_IGNORE;
@@ -266,14 +270,17 @@ static bool runContestMenu (const SCoord &s, const SBox &box)
     MenuFieldType web_mft = cep ? MENU_TOGGLE : MENU_IGNORE;
 #endif
 
+
+    // build menu
     MenuItem mitems[] = {
-        {title_mft,    false,         0, indent, title},                        // 0
-        {MENU_TOGGLE,  show_date,     1, indent, "Show dates"},                 // 1
-        {showdetz_mft, show_detz,     2, indent, "Show in DE TZ"},              // 2
+        {title_mft,    false,         0, indent, cname},                        // 0
+        {showdtz_mft,  show_date,     1, indent, "Show dates"},                 // 1
+        {showdtz_mft,  show_detz,     2, indent, "Use DE TZ"},                  // 2
         {alarm_mft,    alarm_is_set,  3, indent, "Set alarm"},                  // 3
         {web_mft,      false,         4, indent, "Show web page"},              // 4
     };
     const int n_mi = NARRAY(mitems);
+
 
     // boxes
     const uint16_t menu_x = box.x + menu_gap;

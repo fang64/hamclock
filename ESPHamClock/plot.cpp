@@ -415,16 +415,16 @@ void plotBandConditions (const SBox &box, int busy, const BandCdtnMatrix *bmp, c
     #define PLOT_COLS BMTRX_ROWS                        // plot columns
     #define TOP_B PANETITLE_H                           // top border
     #define PBOT_B 20                                   // plot bottom border -- room for config and time
-    #define PLEFT_B 22                                  // left border -- room for band
-    #define PRIGHT_B 2                                  // right border
+    #define PLEFT_B 27                                  // left border -- room for band
+    #define PRIGHT_B 14                                 // right border
     #define PTOP_Y (box.y + SUBTITLE_Y0)                // plot top y
     #define PBOT_Y (box.y+box.h-PBOT_B)                 // plot bottom y
     #define PLEFT_X (box.x + PLEFT_B)                   // plot left x
-    #define PRIGHT_X (box.x+box.w-PRIGHT_B-1)           // plot right x
-    #define PLOT_W (PRIGHT_X - PLEFT_X)                 // plot width
+    #define PRIGHT_X (box.x+box.w-PRIGHT_B)             // plot right x
+    #define PLOT_W (PRIGHT_X - PLEFT_X + 1)             // plot width
     #define PLOT_H (PBOT_Y - PTOP_Y)                    // plot height
-    #define PCOL_W (PLOT_W/PLOT_COLS-1)                 // plot column width
-    #define PROW_H (PLOT_H/PLOT_ROWS-1)                 // plot row height
+    #define PCOL_W (PLOT_W/PLOT_COLS)                 // plot column width
+    #define PROW_H (PLOT_H/PLOT_ROWS)                 // plot row height
     #define RELTOA_COLOR RGB565(0x58,0xa0,0xc8)         // TOA/REL marker color
 
     // to help organize the matrix rotation, p_ variables refer to plot indices, m_ to matrix indices
@@ -450,15 +450,15 @@ void plotBandConditions (const SBox &box, int busy, const BandCdtnMatrix *bmp, c
                                 : RA8875_BLACK;
 
         // show band
-        tft.fillRect (box.x+1, y+1, 2*PFONT_W, PFONT_H+3, band_bg);
-        tft.setCursor (box.x+2, y + LISTING_OS);
+        tft.fillRect (box.x+1, y+1, 2*PFONT_W-1, PFONT_H+3, band_bg);
+        tft.setCursor (box.x+1, y + LISTING_OS);
         tft.print (propBand2Band((PropMapBand)p_row));
 
         // show whether REL
-        tft.fillRect (PLEFT_X-3, y+1, 2, PROW_H-1, rel_active ? RELTOA_COLOR : RA8875_BLACK);
+        tft.fillCircle (PLEFT_X - PRIGHT_B/2, y+PROW_H/2, 3, rel_active ? RELTOA_COLOR : RA8875_BLACK);
 
         // show whether TOA
-        tft.fillRect (PRIGHT_X-1, y+1, 2, PROW_H-1, toa_active ? RELTOA_COLOR : RA8875_BLACK);
+        tft.fillCircle (box.x + box.w - PRIGHT_B/2, y+PROW_H/2, 3, toa_active ? RELTOA_COLOR : RA8875_BLACK);
     }
 
     // find utc and DE hour now. these will be the matrix row in plot column 0.
@@ -544,13 +544,11 @@ void plotBandConditions (const SBox &box, int busy, const BandCdtnMatrix *bmp, c
     // grid lines
     for (int p_col = 0; p_col <= PLOT_COLS; p_col++) {
         uint16_t x = PLEFT_X + PLOT_W*p_col/PLOT_COLS;
-        if (p_col == PLOT_COLS)
-            x = PLEFT_X + PLOT_W*(p_col-1)/PLOT_COLS + PCOL_W;
         tft.drawLine (x, PBOT_Y, x, PTOP_Y, GRID_COLOR);
     }
     for (int p_row = 0; p_row <= PLOT_ROWS; p_row++) {
         uint16_t y = PTOP_Y + PLOT_H*p_row/PLOT_ROWS;
-        tft.drawLine (PLEFT_X, y, PRIGHT_X-2, y, GRID_COLOR);
+        tft.drawLine (PLEFT_X, y, PRIGHT_X+1, y, GRID_COLOR);   // same y as box so extend to box edge
     }
 
 }

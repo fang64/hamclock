@@ -206,9 +206,10 @@ bool Adafruit_MCP23X17::begin_I2C (uint8_t addr)
                     break;
             }
             gpiod_chip_iter_free_noclose (iter);        // leave most recent successful chip open, if any
-            if (gpiochip)
+            if (gpiochip) {
                 printf ("MCP: found %s\n", gpiod_chip_name(gpiochip));
-            else
+                any_ok = true;
+            } else
                 printf ("MCP: no suitable /dev/gpiochip found\n");
         }
 

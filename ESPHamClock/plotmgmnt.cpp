@@ -121,8 +121,7 @@ bool plotChoiceIsAvailable (PlotChoice pc)
     case PLOT_CH_CONTESTS:      // fallthru
     case PLOT_CH_PSK:           // fallthru
     case PLOT_CH_BZBT:          // fallthru
-    case PLOT_CH_POTA:          // fallthru
-    case PLOT_CH_SOTA:          // fallthru
+    case PLOT_CH_ONTA:          // fallthru
     case PLOT_CH_AURORA:        // fallthru
         return (true);
 
@@ -320,11 +319,32 @@ PlotChoice getAnyAvailableChoice()
                 return (pc);
         }
     }
-    fatalError ("no available pane choices");
+    fatalError ("getAnyAvailableChoice() no available pane choices");
 
     // never get here, just for lint
     return (PLOT_CH_FLUX);
 }
+
+/* return any available unassigned plot choice suitable on PANE_0, might be PLOT_CH_NONE
+ */
+PlotChoice getAnyAvailablePane0Choice()
+{
+    // build a collection of available choices
+    PlotChoice available[PLOT_CH_N];
+    int n_available = 0;
+    for (int pc = 0; pc < PLOT_CH_N; pc++) {
+        if (((1<<pc) & PANE_0_CH_MASK)
+                && plotChoiceIsAvailable((PlotChoice)pc) && findPaneForChoice((PlotChoice)pc) == PANE_NONE) {
+            available[n_available] = (PlotChoice)pc;
+            n_available++;
+        }
+    }
+    if (n_available == 0)
+        return (PLOT_CH_NONE);
+    else
+        return (available[random(n_available)]);
+}
+
 
 /* remove any PLOT_CH_COUNTDOWN from rotset if stopwatch engine not SWE_COUNTDOWN,
  * and if it is currently visible replace with an alternative.
@@ -422,13 +442,8 @@ bool checkPlotTouch (const SCoord &s, PlotPane pp, TouchType tt)
             return (true);
         in_top = true;
         break;
-    case PLOT_CH_POTA:
-        if (checkOnTheAirTouch (s, box, ONTA_POTA))
-            return (true);
-        in_top = true;
-        break;
-    case PLOT_CH_SOTA:
-        if (checkOnTheAirTouch (s, box, ONTA_SOTA))
+    case PLOT_CH_ONTA:
+        if (checkOnTheAirTouch (s, box))
             return (true);
         in_top = true;
         break;
@@ -523,8 +538,7 @@ void initPlotPanes()
     NVReadUInt32 (NV_PANE3ROTSET, &plot_rotset[PANE_3]);
 
     // NB. since NV_PANE0ROTSET repurposes a prior NV it might contain invalid bits, 0 all if find any
-    if (plot_rotset[PANE_0] & ~((1<<PLOT_CH_DXCLUSTER) | (1<<PLOT_CH_CONTESTS) | (1<<PLOT_CH_ADIF) |
-                               (1<<PLOT_CH_POTA) | (1<<PLOT_CH_SOTA))) {
+    if (plot_rotset[PANE_0] & ~PANE_0_CH_MASK) {
 
         Serial.printf ("PANE: Resetting bogus Pane 0 rot set: 0x%x\n", plot_rotset[PANE_0]);
         plot_rotset[PANE_0] = 0;
@@ -878,11 +892,13 @@ bool isPaneRotating (PlotPane pp)
     return ((plot_rotset[pp] & ~(1 << plot_ch[pp])) != 0);  // look for any bit on other than plot_ch
 }
 
-/* return whether this pane has its own special rotating ability (only one such for now)
+/* return whether this pane has its own special rotating ability engaged.
  */
 bool isSpecialPaneRotating (PlotPane pp)
 {
-    return (findPaneForChoice (PLOT_CH_SDO) == pp && isSDORotating());
+    bool sdo_rot = isSDORotating() && findPaneForChoice (PLOT_CH_SDO) == pp;
+    bool onta_rot = isONTARotating() && findPaneForChoice (PLOT_CH_ONTA) == pp;
+    return (sdo_rot || onta_rot);
 }
 
 /* restore normal PANE_0

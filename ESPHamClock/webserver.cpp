@@ -839,22 +839,16 @@ static bool getWiFiOnTheAir (WiFiClient &client, char line[], size_t line_len)
     // start reply
     startPlainText (client);
 
-    // retrieve and show each list, if any
+    // retrieve spots, if available
     DXSpot *spots;
     uint8_t nspots;
-    bool any = false;
-    for (int i = 0; i < ONTA_N; i++) {
-        if (getOnTheAirSpots (&spots, &nspots, (ONTAProgram)i)) {
-            snprintf (line, line_len, "# %s\n", onta_names[i]);         // title is program name
-            client.print(line);
-            spotsHelper (client, spots, nspots, line, line_len);
-            any = true;
-        }
+    if (!getOnTheAirSpots (&spots, &nspots)) {
+        strcpy (line, "No ONTA spots");
+        return (false);
     }
 
-    // at show the heading even if nothing
-    if (!any)
-        spotsHelper (client, NULL, 0, line, line_len);
+    // list
+    spotsHelper (client, NULL, 0, line, line_len);
 
     return (true);
 }
@@ -1220,26 +1214,40 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
         FWIFIPRLN (client, not_sup);
     #endif // _SUPPORT_KX3
 
-    // report call sign or on-air info
-    if (cs_info.showing_oa) {
-        size_t bl = snprintf (buf, sizeof(buf), "ONAIR     fg %d,%d,%d", RGB565_R(cs_info.oa_fg),
-                    RGB565_G(cs_info.oa_fg), RGB565_B(cs_info.oa_fg)); 
-        if (cs_info.oa_bg_rainbow)
-            snprintf (buf+bl, sizeof(buf)-bl, " bg rainbow");
-        else
-            snprintf (buf+bl, sizeof(buf)-bl, " bg %d,%d,%d", RGB565_R(cs_info.oa_bg),
-                    RGB565_G(cs_info.oa_bg), RGB565_B(cs_info.oa_bg)); 
-        client.println(buf);
-    } else {
-        size_t bl = snprintf (buf, sizeof(buf), "CALL      fg %d,%d,%d", RGB565_R(cs_info.call_fg),
-                    RGB565_G(cs_info.call_fg), RGB565_B(cs_info.call_fg)); 
-        if (cs_info.oa_bg_rainbow)
-            snprintf (buf+bl, sizeof(buf)-bl, " bg rainbow");
-        else
-            snprintf (buf+bl, sizeof(buf)-bl, " bg %d,%d,%d", RGB565_R(cs_info.call_bg),
-                    RGB565_G(cs_info.call_bg), RGB565_B(cs_info.call_bg)); 
-        client.println(buf);
-    }
+
+    // report call sign and color info
+    nbuf = snprintf (buf, sizeof(buf), "CALL      fg %d,%d,%d", RGB565_R(cs_info.call_col.fg),
+                RGB565_G(cs_info.call_col.fg), RGB565_B(cs_info.call_col.fg)); 
+    if (cs_info.call_col.rainbow)
+        snprintf (buf+nbuf, sizeof(buf)-nbuf, " bg rainbow: ");
+    else
+        snprintf (buf+nbuf, sizeof(buf)-nbuf, " bg %d,%d,%d: ", RGB565_R(cs_info.call_col.bg),
+                RGB565_G(cs_info.call_col.bg), RGB565_B(cs_info.call_col.bg)); 
+    client.print(buf);
+    client.println(cs_info.call);
+
+    // report alternate title and color info
+    nbuf = snprintf (buf, sizeof(buf), "TITLE     fg %d,%d,%d", RGB565_R(cs_info.title_col.fg),
+                RGB565_G(cs_info.title_col.fg), RGB565_B(cs_info.title_col.fg)); 
+    if (cs_info.title_col.rainbow)
+        snprintf (buf+nbuf, sizeof(buf)-nbuf, " bg rainbow: ");
+    else
+        snprintf (buf+nbuf, sizeof(buf)-nbuf, " bg %d,%d,%d: ", RGB565_R(cs_info.title_col.bg),
+                RGB565_G(cs_info.title_col.bg), RGB565_B(cs_info.title_col.bg)); 
+    client.print(buf);
+    client.println(cs_info.title);
+
+    // report onair message and color info
+    nbuf = snprintf (buf, sizeof(buf), "ONAIR     fg %d,%d,%d", RGB565_R(cs_info.onair_col.fg),
+                RGB565_G(cs_info.onair_col.fg), RGB565_B(cs_info.onair_col.fg)); 
+    if (cs_info.onair_col.rainbow)
+        snprintf (buf+nbuf, sizeof(buf)-nbuf, " bg rainbow: ");
+    else
+        snprintf (buf+nbuf, sizeof(buf)-nbuf, " bg %d,%d,%d: ", RGB565_R(cs_info.onair_col.bg),
+                RGB565_G(cs_info.onair_col.bg), RGB565_B(cs_info.onair_col.bg)); 
+    client.print(buf);
+    client.println(cs_info.onair);
+
 
     // report GPIO
     FWIFIPR (client, "GPIO      ");
@@ -1729,7 +1737,9 @@ static bool setWiFiTitle (WiFiClient &client, char line[], size_t line_len)
     // define all possible args
     WebArgs wa;
     wa.nargs = 0;
-    wa.name[wa.nargs++] = "msg";
+    wa.name[wa.nargs++] = "call";
+    wa.name[wa.nargs++] = "title";
+    wa.name[wa.nargs++] = "onair";
     wa.name[wa.nargs++] = "fg";
     wa.name[wa.nargs++] = "bg";
 
@@ -1738,9 +1748,23 @@ static bool setWiFiTitle (WiFiClient &client, char line[], size_t line_len)
         return (false);
 
     // handy
-    const char *msg = wa.value[0];
-    const char *fg = wa.value[1];
-    const char *bg = wa.value[2];
+    const char *call  = wa.found[0] ? wa.value[0] : NULL;
+    const char *title = wa.found[1] ? wa.value[1] : NULL;
+    const char *onair = wa.found[2] ? wa.value[2] : NULL;
+    const char *fg    = wa.found[3] ? wa.value[3] : NULL;
+    const char *bg    = wa.found[4] ? wa.value[4] : NULL;
+
+    // can not set call this way
+    if (call && strlen(call) > 0) {
+        strcpy (line, "use set_newde to change call");
+        return (false);
+    }
+
+    // require exactly one type
+    if (!!call + !!title + !!onair != 1) {
+        strcpy (line, "must set one of call title or onair");
+        return (false);
+    }
 
     // crack fg if found
     uint16_t fg_c = 0;
@@ -1785,9 +1809,29 @@ static bool setWiFiTitle (WiFiClient &client, char line[], size_t line_len)
         }
     }
 
-    // update definitions
-    const char *msg_payload = msg && strlen(msg) > 0 ? msg : NULL;
-    setCallsignInfo (msg_payload, fg ? &fg_c : NULL, bg ? &bg_c : NULL, rainbow_set ? &rainbow : NULL);
+    // update
+    if (onair) {
+        if (strlen (onair) >= NV_ONAIR_LEN) {
+            snprintf (line, line_len, "too long - max is %d\n", NV_ONAIR_LEN-1);
+            return (false);
+        }
+        setCallsignInfo (CT_ONAIR, onair, fg ? &fg_c : NULL, bg ? &bg_c : NULL, rainbow_set ? &rainbow:NULL);
+    } else if (title) {
+        if (strlen (title) >= NV_TITLE_LEN) {
+            snprintf (line, line_len, "too long - max is %d\n", NV_TITLE_LEN-1);
+            return (false);
+        }
+        setCallsignInfo (CT_TITLE, title, fg ? &fg_c : NULL, bg ? &bg_c : NULL, rainbow_set ? &rainbow:NULL);
+    } else if (call) {
+        if (strlen (call) >= NV_CALLSIGN_LEN) {
+            snprintf (line, line_len, "too long - max is %d\n", NV_CALLSIGN_LEN-1);
+            return (false);
+        }
+        setCallsignInfo (CT_CALL, NULL, fg ? &fg_c : NULL, bg ? &bg_c : NULL, rainbow_set ? &rainbow:NULL);
+    } else {
+        strcpy (line, garbcmd);
+        return (false);
+    }
 
     // engage
     drawCallsign (true);
@@ -2120,7 +2164,7 @@ static bool setWiFiOnceAlarm (WiFiClient &client, char line[], size_t line_len)
             strcpy (line, "may set time only if armed");
             return(false);
         }
-        snprintf (str, sizeof(str), "%s", timespec);
+        quietStrncpy (str, timespec, sizeof(str));
     }
 
     // engage
@@ -2531,8 +2575,7 @@ static bool setWiFiMapColor (WiFiClient &client, char line[], size_t line_len)
     // update panes that use band colors -- they know whether they are really in use
     scheduleNewPlot(PLOT_CH_PSK);
     scheduleNewPlot(PLOT_CH_DXCLUSTER);
-    scheduleNewPlot(PLOT_CH_POTA);
-    scheduleNewPlot(PLOT_CH_SOTA);
+    scheduleNewPlot(PLOT_CH_ONTA);
     if (brb_mode == BRB_SHOW_BEACONS)
         (void) drawNCDXFBox();
 
@@ -3207,8 +3250,7 @@ static bool setWiFiPane (WiFiClient &client, char line[], size_t line_len)
             }
 
             // ok on PANE_0?
-            if (pp == PANE_0 && tok_pc != PLOT_CH_ADIF && tok_pc != PLOT_CH_CONTESTS
-                        && tok_pc != PLOT_CH_DXCLUSTER && tok_pc != PLOT_CH_POTA && tok_pc != PLOT_CH_SOTA) {
+            if (pp == PANE_0 && ((1<<tok_pc) & ~PANE_0_CH_MASK) != 0) {
                 strcpy (line, "not supported on Pane 0");
                 return (false);
             }
@@ -3467,12 +3509,14 @@ static bool setWiFiTouch (WiFiClient &client, char line[], size_t line_len)
         return (false);
     }
 
+#ifdef _NO_IN_MAP_TOUCH         // why did we ever prevent this?
     // require x and y outside map_b
     SCoord s = {(uint16_t)x, (uint16_t)y};
     if (inBox (s, map_b)) {
         snprintf (line, line_len, "touch coords must be outside the map");
         return (false);
     }
+#endif
 
     // inform checkTouch() to use wifi_tt_s; it will reset
     wifi_tt_s.x = x;
@@ -4006,7 +4050,7 @@ static const CmdTble command_table[] = {
     { "set_time?",          setWiFiTime,           "ISO=YYYY-MM-DDTHH:MM:SS" },
     { "set_time?",          setWiFiTime,           "Now" },
     { "set_time?",          setWiFiTime,           "unix=secs_since_1970" },
-    { "set_title?",         setWiFiTitle,          "msg=hello&fg=R,G,B&bg=R,G,B|rainbow" },
+    { "set_title?",         setWiFiTitle,          "call|title|onair=[text]&fg=R,G,B&bg=R,G,B|rainbow" },
     { "set_touch?",         setWiFiTouch,          "x=X&y=Y" },
     { "set_voacap?",        setWiFiVOACAP,         "band=X&power=W&tz=DE|UTC&mode=X&map=X&TOA=X" },
     { "exit ",              doWiFiExit,            "exit HamClock" },
@@ -4364,24 +4408,12 @@ static bool runDemoChoice (DemoChoice choice, bool &slow, char msg[], size_t msg
                 demoMsg (ok, choice, msg, msg_len, "Pane 0 restored");
             } else {
                 // select an appropriate choice for PANE_0
-                PlotChoice pc = PLOT_CH_NONE;
-                for (int i = 0; i < 5 && pc == PLOT_CH_NONE; i++) {
-                    PlotChoice pc_new;
-                    switch (i) {
-                    case 0: pc_new = PLOT_CH_ADIF; break;
-                    case 1: pc_new = PLOT_CH_CONTESTS; break;
-                    case 2: pc_new = PLOT_CH_POTA; break;
-                    case 3: pc_new = PLOT_CH_SOTA; break;
-                    case 4: pc_new = PLOT_CH_DXCLUSTER; break;
-                    }
-                    if (plotChoiceIsAvailable(pc_new) && findPaneForChoice(pc_new) == PANE_NONE)
-                        pc = pc_new;
-                }
-                ok = pc != PLOT_CH_NONE && setPlotChoice (PANE_0, pc);
+                PlotChoice pc0 = getAnyAvailablePane0Choice();
+                ok = pc0 != PLOT_CH_NONE && setPlotChoice (PANE_0, pc0);
                 if (ok) {
-                    plot_rotset[PANE_0] = (1 << pc);   // no auto rotation
-                    logPaneRotSet (PANE_0, pc);
-                    demoMsg (ok, choice, msg, msg_len, "Pane 0 now %s", plot_names[pc]);
+                    plot_rotset[PANE_0] = (1 << pc0);   // no auto rotation
+                    logPaneRotSet (PANE_0, pc0);
+                    demoMsg (ok, choice, msg, msg_len, "Pane 0 now %s", plot_names[pc0]);
                 } else
                     demoMsg (ok, choice, msg, msg_len, "Pane 0 no choices");
             }
@@ -4522,8 +4554,7 @@ static bool runDemoChoice (DemoChoice choice, bool &slow, char msg[], size_t msg
             SCoord s;
             s.x = cs_info.box.x + cs_info.box.w/4;
             s.y = cs_info.box.y + cs_info.box.h/2;
-            (void) checkCallsignTouchFG (s);
-            drawCallsign (false);   // just foreground
+            (void) doCallsignTouch (s);
             ok = true;
             demoMsg (ok, choice, msg, msg_len, "call FG");
         }
@@ -4535,8 +4566,7 @@ static bool runDemoChoice (DemoChoice choice, bool &slow, char msg[], size_t msg
             SCoord s;
             s.x = cs_info.box.x + 3*cs_info.box.w/4;
             s.y = cs_info.box.y + cs_info.box.h/2;
-            (void) checkCallsignTouchBG (s);
-            drawCallsign (true);    // fg and bg
+            (void) doCallsignTouch (s);
             ok = true;
             demoMsg (ok, choice, msg, msg_len, "call BG");
         }

@@ -5,9 +5,6 @@
 // glue
 #include "HamClock.h"
 
-// current version
-const char *hc_version = HC_VERSION;
-
 // clock, aux time and stopwatch boxes
 SBox clock_b = { 0, 65, 230, 49};
 SBox auxtime_b = { 0, 113, 205, 32};
@@ -99,7 +96,7 @@ SCoord wifi_tt_s;
 // set up TFT display controller RA8875 instance on hardware SPI plus reset and chip select
 #define RA8875_RESET    16
 #define RA8875_CS       2
-Adafruit_RA8875_R tft(RA8875_CS, RA8875_RESET);
+Adafruit_RA8875 tft(RA8875_CS, RA8875_RESET);
 
 // MCP23017 driver
 Adafruit_MCP23X17 mcp;
@@ -251,16 +248,6 @@ void setup()
     }
     Serial.println("RA8875 found");
 
-    // must set rotation now from nvram setting .. too early to query setup options
-    // N.B. don't save in EEPROM yet.
-    uint8_t rot;
-    if (!NVReadUInt8 (NV_ROTATE_SCRN, &rot))
-        rot = 0;
-    tft.setRotation(rot ? 2 : 0);
-
-    // Adafruit's GFX defaults to wrap which breaks getTextBounds if string longer than tft.width()
-    tft.setTextWrap(false);
-
     // Adafruit assumed ESP8266 would run at 80 MHz, but we run it at 160
     extern uint32_t spi_speed;
     spi_speed *= 2;
@@ -270,11 +257,6 @@ void setup()
     tft.GPIOX(true); 
     tft.PWM1config(true, RA8875_PWM_CLK_DIV1024); // PWM output for backlight
     initBrightness();
-
-
-    // now can save rot so if commit fails screen is up for fatalError()
-    NVWriteUInt8 (NV_ROTATE_SCRN, rot);
-
 
 // #define _GFX_COORD_TEST                              // RBF
 #if defined(_GFX_COORD_TEST)
@@ -883,10 +865,8 @@ static void checkTouch()
         if (TZMenu (dx_tz, dx_ll))
             NVWriteTZ (NV_DX_TZ, dx_tz);
         drawDXInfo();   // restore regardless
-    } else if (checkCallsignTouchFG(s)) {
-        drawCallsign (false);   // just foreground
-    } else if (checkCallsignTouchBG(s)) {
-        drawCallsign (true);    // fg and bg
+    } else if (inBox (s, cs_info.box)) {
+        doCallsignTouch (s);
     } else if (!SHOWING_PANE_0() && !dx_info_for_sat && checkPathDirTouch(s)) {
         show_lp = !show_lp;
         NVWriteUInt8 (NV_LP, show_lp);
@@ -1291,12 +1271,12 @@ void shadowString (const char *str, bool shadow, uint16_t color, uint16_t x0, ui
  */
 static void drawVersion(bool force)
 {
-    // how often to check for new version
-    #define VER_CHECK_DT    (6*3600*1000UL)         // millis
+    // how often to check for new version -- check much more often when we are beta
+    const uint32_t check_dt = strchr (hc_version, 'b') ? 5*60*1000UL : 6*3600*1000UL;   // millis
 
     // get out fast if nothing to do yet
     static uint32_t check_t;
-    if (!timesUp (&check_t, VER_CHECK_DT) && !force)
+    if (!timesUp (&check_t, check_dt) && !force)
         return;
 
     // check for new version and reset timeout
@@ -1805,7 +1785,10 @@ void drawDEFormatMenu()
     const int mi = 2;
     const int Mi = 8;
 
-    MenuItem mitems[13] = {
+    // number of core menu items
+    #define N_DEFMT_CORE        8
+
+    MenuItem mitems[N_DEFMT_CORE+N_PANE_0_CH] = {
 
         // outer menu is whether to display the DE pane or use both DE+DX for a pane choice
         {MENU_1OFN, !SHOWING_PANE_0(), 1, mi, "DE format:"},
@@ -1825,35 +1808,24 @@ void drawDEFormatMenu()
 
     };
 
-    PlotPane pp = findPaneForChoice (PLOT_CH_ADIF);
-    bool available =  plotChoiceIsAvailable(PLOT_CH_ADIF) && (pp == PANE_NONE || pp == PANE_0);
-    MenuFieldType type = available ? MENU_AL1OFN : MENU_IGNORE;
-    mitems[8] = {type, !!(plot_rotset[PANE_0] & (1<<PLOT_CH_ADIF)), 3, Mi, plot_names[PLOT_CH_ADIF]};
-
-
-    pp = findPaneForChoice (PLOT_CH_CONTESTS);
-    available = plotChoiceIsAvailable(PLOT_CH_CONTESTS) && (pp == PANE_NONE || pp == PANE_0);
-    type = available ? MENU_AL1OFN : MENU_IGNORE;
-    mitems[9] = {type, !!(plot_rotset[PANE_0] & (1<<PLOT_CH_CONTESTS)), 3, Mi, plot_names[PLOT_CH_CONTESTS]};
-
-
-    pp = findPaneForChoice (PLOT_CH_DXCLUSTER);
-    available = plotChoiceIsAvailable(PLOT_CH_DXCLUSTER) && (pp == PANE_NONE || pp == PANE_0);
-    type = available ? MENU_AL1OFN : MENU_IGNORE;
-    mitems[10] = {type, !!(plot_rotset[PANE_0] & (1<<PLOT_CH_DXCLUSTER)), 3,Mi,plot_names[PLOT_CH_DXCLUSTER]};
-
-
-    pp = findPaneForChoice (PLOT_CH_POTA);
-    available = plotChoiceIsAvailable(PLOT_CH_POTA) && (pp == PANE_NONE || pp == PANE_0);
-    type = available ? MENU_AL1OFN : MENU_IGNORE;
-    mitems[11] = {type, !!(plot_rotset[PANE_0] & (1<<PLOT_CH_POTA)), 3, Mi, plot_names[PLOT_CH_POTA]};
-
-
-    pp = findPaneForChoice (PLOT_CH_SOTA);
-    available = plotChoiceIsAvailable(PLOT_CH_SOTA) && (pp == PANE_NONE || pp == PANE_0);
-    type = available ? MENU_AL1OFN : MENU_IGNORE;
-    mitems[12] = {type, !!(plot_rotset[PANE_0] & (1<<PLOT_CH_SOTA)), 3, Mi, plot_names[PLOT_CH_SOTA]};
-
+    // set and record PANE_0 choices from successive bits in PANE_0_CH_MASK
+    uint32_t pane_0_bits = PANE_0_CH_MASK;
+    PlotChoice menu_ch[N_PANE_0_CH];
+    for (int i = 0; i < N_PANE_0_CH; i++) {
+        // find and zero out the next bit in mask of possible PANE_0 panes
+        int plot_n = 0;
+        for (uint32_t bits = pane_0_bits; bits >>= 1; plot_n++)
+            continue;
+        pane_0_bits &= ~(1<<plot_n);
+        menu_ch[i] = (PlotChoice)plot_n;
+        // prepare menu item
+        PlotPane pp = findPaneForChoice ((PlotChoice)plot_n);
+        bool available =  plotChoiceIsAvailable((PlotChoice)plot_n) && (pp == PANE_NONE || pp == PANE_0);
+        MenuFieldType type = available ? MENU_AL1OFN : MENU_IGNORE;
+        mitems[N_DEFMT_CORE+i] = {type, !!(plot_rotset[PANE_0] & (1<<plot_n)), 3, Mi, plot_names[plot_n]};
+    }
+    if (pane_0_bits != 0)
+        fatalError ("drawDEFormatMenu() %d %d 0x%x\n", pane_0_bits, N_PANE_0_CH, PANE_0_CH_MASK);
 
     // create a box for the menu
     SBox menu_b;
@@ -1894,16 +1866,10 @@ void drawDEFormatMenu()
 
             // get new collection of plot choices
             uint32_t new_rotset = 0;
-            if (mitems[8].set)
-                new_rotset |= (1 << PLOT_CH_ADIF);
-            if (mitems[9].set)
-                new_rotset |= (1 << PLOT_CH_CONTESTS);
-            if (mitems[10].set)
-                new_rotset |= (1 << PLOT_CH_DXCLUSTER);
-            if (mitems[11].set)
-                new_rotset |= (1 << PLOT_CH_POTA);
-            if (mitems[12].set)
-                new_rotset |= (1 << PLOT_CH_SOTA);
+            for (int i = 0; i < N_PANE_0_CH; i++) { 
+                if (mitems[N_DEFMT_CORE+i].set)
+                    new_rotset |= (1<<menu_ch[i]);
+            }
 
             // might not be any if user clicked this section but made no choice
             if (new_rotset != 0) {
@@ -2269,32 +2235,6 @@ static bool postDiags (void)
     return (ok);
 }
 
-/* attempt to open the given web page in a new browser tab.
- *   on macos: run open
- *   on ubuntu or RPi: sudo apt install xdg-utils
- *   on redhat: sudo yum install xdg-utils
- */
-void openURL (const char *url)
-{
-#if !defined(_WEB_ONLY)
-    StackMalloc cmd_mem(strlen(url) + 50);
-    char *cmd = (char *) cmd_mem.getMem();
-    #if defined (_IS_APPLE)
-        snprintf (cmd, cmd_mem.getSize(), "open %s", url);
-    #else
-        snprintf (cmd, cmd_mem.getSize(), "xdg-open %s", url);
-    #endif
-    if ((system (cmd) >> 8) != 0)
-        Serial.printf ("URL: fail: %s\n", cmd);
-    else
-        Serial.printf ("URL: ok: %s\n", cmd);
-#endif // !_WEB_ONLY
-
-    // try telling our own page -- liveweb will free() once it has been sent
-    if (!liveweb_openurl)
-        liveweb_openurl = strdup (url);
-}
-
 
 /* fork then run execv(3) command without a shell to retain our rootiness.
  * return exit status from waitpid().
@@ -2543,8 +2483,9 @@ void fatalError (const char *fmt, ...)
             break;
     }
 
-    // log for sure
+    // log and post diags for sure
     Serial.printf ("Fatal: %s\n", msg);
+    postDiags();
 
     // it may still be very early so wait a short while for display
     for (int i = 0; i < 20; i++) {

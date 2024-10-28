@@ -699,10 +699,10 @@ static void drawML_LMT (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 static void drawML_Freq (long hz, uint16_t tx, int dy, uint16_t &ty)
 {
     tft.setCursor (tx, ty += dy);
-    if (hz < 30000000L)
-        tft.printf ("kHz %5ld", hz/1000);
+    if (hz < 99999000)
+        tft.printf ("F %7.1f", hz * 1e-3);
     else
-        tft.printf ("MHz %5ld", hz/1000000L);
+        tft.printf ("F %7.0f", hz * 1e-3);
 }
 
 /* drawMouseLoc() helper for looking up city.
@@ -747,15 +747,50 @@ static bool drawML_City (LatLong &ll, SCoord &ms, const SBox &info_b, uint16_t &
     return (city != NULL);
 }
 
-/* draw local information about the current cursor position over the world map.
+/* drawMouseLoc() helper to show map at the given ll, taking care to stay within map and out us
+ */
+static void drawML_MapMarker (const LatLong &ll, const SBox &minfo_b)
+{
+    // define mark geometry
+    #define MAPMARK_R 11                            // canonical outer radius, circles grow inward
+    static uint16_t marker_colors[] = {             // outer to inner radii
+        RA8875_RED, RA8875_RED, RA8875_BLACK, RA8875_BLACK, RA8875_RED, RA8875_RED
+    };
+    #define N_MAPMARK NARRAY(marker_colors)
+
+    // get canonical screen loc to check whether to draw at all
+    SCoord mark_s;
+    ll2s (ll, mark_s, MAPMARK_R);
+
+    // show iff over map and does not overlap with info box
+    if (overMap (mark_s) && (mark_s.x > minfo_b.x + minfo_b.w + MAPMARK_R
+                          || mark_s.y > minfo_b.y + minfo_b.h + MAPMARK_R)) {
+
+        if (tft.SCALESZ == 1) {
+            for (int i = 0; i < N_MAPMARK; i++)
+                tft.drawCircle (mark_s.x, mark_s.y, MAPMARK_R-i, marker_colors[i]);
+        } else {
+            // use full res to exactly match how spots are drawn
+            SCoord mark_s_raw;
+            ll2sRaw (ll, mark_s_raw, MAPMARK_R*tft.SCALESZ);
+            for (int i = 0; i < N_MAPMARK; i++) {
+                uint16_t raw_r = (MAPMARK_R - i)*tft.SCALESZ;
+                tft.drawCircleRaw (mark_s_raw.x, mark_s_raw.y, raw_r, tft.SCALESZ, marker_colors[i]);
+            }
+        }
+    }
+}
+
+/* draw local information about the current cursor position over the world map or pane spot.
  * called after every map draw so we only have to erase parts of azm outside the hemispheres.
  */
 static void drawMouseLoc()
 {
     // position box just below map View button which itself moves depending whenther showing maindenhead grid
     uint16_t tx = view_btn_b.x;                         // current text x coord
-    uint16_t ty = view_btn_b.y + view_btn_b.h;          // current text y coord
-    SBox mouseinfo_b = {tx, ty, (uint16_t)(view_btn_b.w-1), ML_LINEDY*ML_NLINES+1};
+    uint16_t ty = view_btn_b.y + view_btn_b.h;          // initial then walking text y coord
+    SBox minfo_b = {tx, ty, (uint16_t)(view_btn_b.w-1), ML_LINEDY*ML_NLINES+3};
+    ty += 3;                                            // top border
 
     // then set size and location of the city names bar at same y
     const uint16_t names_y = view_btn_b.y;
@@ -766,13 +801,22 @@ static void drawMouseLoc()
     // persistent flag whether city was draw last time
     static bool was_city;
 
-    // get current mouse location and corresponding map location, if over map
+    // find what needs to be shown, if any
     SCoord ms;                                          // mouse loc but may change to city loc
-    LatLong ll;                                         // "
-    bool overmap = tft.getMouse(&ms.x, &ms.y) && s2ll (ms, ll);
+    LatLong ll;                                         // ll at ms
+    DXSpot dx_s;                                        // spot to show
+    LatLong dxc_ll;                                     // ll to show
+    bool of_de;                                         // which psk end
+    bool over_map = tft.getMouse (&ms.x, &ms.y) && s2ll (ms, ll);
+    bool over_psk = over_map && getClosestPSK (ll, &dx_s, of_de);
+    bool over_spot = over_map && (getClosestDXCluster (ll, &dx_s, &dxc_ll)
+                || getClosestOnTheAirSpot (ll, &dx_s, &dxc_ll) || getClosestADIFSpot (ll, &dx_s, &dxc_ll));
+    bool over_pane = !over_map && (getDXCPaneSpot (ms, &dx_s, &dxc_ll)
+                    || getOnTheAirPaneSpot (ms, &dx_s, &dxc_ll) || getADIFPaneSpot (ms, &dx_s, &dxc_ll));
+    bool draw_mouse_loc = over_map || over_psk || over_spot || over_pane;
 
     // must draw the zones lines before erasing menu in case they fall underneath the menu
-    if (overmap) {
+    if (draw_mouse_loc) {
         int cqzone_n = 0, ituzone_n = 0;
         if (mapgrid_choice == MAPGRID_CQZONES && findZoneNumber (ZONE_CQ, ms, &cqzone_n))
             drawZone (ZONE_CQ, GRIDC00, cqzone_n);
@@ -787,15 +831,18 @@ static void drawMouseLoc()
     }
 
     // erase menu area if going to show new data or clean up for azm not over hemispheres
-    static bool was_overmap;
-    if (overmap || (map_proj != MAPP_MERCATOR && was_overmap))
-        fillSBox (mouseinfo_b, RA8875_BLACK);
-    was_overmap = overmap;
+    static bool drew_mouse_loc;
+    if (draw_mouse_loc || (map_proj != MAPP_MERCATOR && drew_mouse_loc))
+        fillSBox (minfo_b, RA8875_BLACK);
+    drew_mouse_loc = draw_mouse_loc;
 
-    // that's it if mouse is not over map
-    if (!overmap)
+    // that's it if not drawing the info box
+    if (!draw_mouse_loc)
         return;
 
+    // mark spot if any
+    if (over_psk || over_spot || over_pane)
+        drawML_MapMarker (over_spot || over_pane ? dxc_ll : (of_de ? dx_s.rx_ll : dx_s.tx_ll), minfo_b);
 
 
     // draw spot info in menu table.
@@ -806,17 +853,13 @@ static void drawMouseLoc()
     selectFontStyle (LIGHT_FONT, FAST_FONT);
     tft.setTextColor (RA8875_WHITE);
 
-    DXSpot dx_s;
-    LatLong dxc_ll;
-    bool of_de;
-    if (getClosestPSK (ll, &dx_s, of_de)) {
+    if (over_psk) {
 
         // PSK, WSPR or RBN spot
 
         // adjust for text 
         char buf[ML_MAXCHARS+1];
         uint16_t tw;
-        ty += 1;
 
         // show tx info
         snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, dx_s.tx_call);
@@ -861,18 +904,17 @@ static void drawMouseLoc()
         drawML_WX (of_de ? dx_s.rx_ll : dx_s.tx_ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // border in band color
-        tft.drawRect (view_btn_b.x, view_btn_b.y + view_btn_b.h, view_btn_b.w-1, ML_LINEDY*ML_NLINES+1,
-                        getBandColor(1000*dx_s.kHz));
+        drawSBox (minfo_b, getBandColor(1000*dx_s.kHz));
+        // tft.drawRect (view_btn_b.x, view_btn_b.y + view_btn_b.h, view_btn_b.w-1, ML_LINEDY*ML_NLINES+1,
+                        // getBandColor(1000*dx_s.kHz));
 
-    } else if (getClosestDXCluster (ll, &dx_s, &dxc_ll) || getClosestOnTheAirSpot (ll, &dx_s, &dxc_ll)
-                        || getClosestADIFSpot (ll, &dx_s, &dxc_ll)) {
+    } else if (over_spot || over_pane) {
 
         // DX Cluster or POTA/SOTA or ADIF spot
 
         // adjust for text 
         char buf[ML_MAXCHARS+1];
         uint16_t tw;
-        ty += 1;
 
         // show tx info
         snprintf (buf, sizeof(buf), "%.*s", ML_MAXCHARS, dx_s.tx_call);
@@ -919,18 +961,16 @@ static void drawMouseLoc()
         drawML_WX (dxc_ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // border in band color
-        tft.drawRect (view_btn_b.x, view_btn_b.y + view_btn_b.h, view_btn_b.w-1, ML_LINEDY*ML_NLINES+1,
-                        getBandColor(1000*dx_s.kHz));
+        drawSBox (minfo_b, getBandColor(1000*dx_s.kHz));
+        // tft.drawRect (view_btn_b.x, view_btn_b.y + view_btn_b.h, view_btn_b.w-1, ML_LINEDY*ML_NLINES+1,
+                        // getBandColor(1000*dx_s.kHz));
 
-    } else {
+    } else if (over_map) {
 
         // arbitrary cursor location, not a spot
 
         // move ll to city and draw if interested
-        was_city = drawML_City (ll, ms, mouseinfo_b, names_w, names_y);
-
-        // adjust for text 
-        ty += 1;
+        was_city = drawML_City (ll, ms, minfo_b, names_w, names_y);
 
         // show lat/long
         tft.setCursor (tx+ML_INDENT, ty);
@@ -946,29 +986,31 @@ static void drawMouseLoc()
 
         // cq zone
         int cqzone_n = 0;
-        if (mapgrid_choice == MAPGRID_CQZONES && findZoneNumber (ZONE_CQ, ms, &cqzone_n)) {
+        if (findZoneNumber (ZONE_CQ, ms, &cqzone_n)) {
             tft.setCursor (tx+ML_INDENT, ty += ML_LINEDY);
             tft.printf (_FX("CQ  %5d"), cqzone_n);
         }
 
         // itu zone
         int ituzone_n = 0;
-        if (mapgrid_choice == MAPGRID_ITUZONES && findZoneNumber (ZONE_ITU, ms, &ituzone_n)) {
+        if (findZoneNumber (ZONE_ITU, ms, &ituzone_n)) {
             tft.setCursor (tx+ML_INDENT, ty += ML_LINEDY);
             tft.printf (_FX("ITU %5d"), ituzone_n);
         }
 
-        // prefix, else blank
-        tft.setCursor (tx+ML_INDENT, ty += ML_LINEDY);
-        char prefix[MAX_PREF_LEN+1];
-        if (ll2Prefix (ll, prefix))
-            tft.printf ("Pfx %5s", prefix);
-
-        // blank so wx is on same rows on all formats
-        ty += ML_LINEDY;
-
         // show local time
         drawML_LMT (ll, tx+ML_INDENT, ML_LINEDY, ty);
+
+        // prefix
+        char prefix[MAX_PREF_LEN+1];
+        ty += ML_LINEDY;
+        if (ll2Prefix (ll, prefix)) {
+            tft.setCursor (tx+ML_INDENT, ty);
+            tft.printf ("Pfx %5s", prefix);
+        }
+
+        // gap
+        ty += ML_LINEDY;
 
         // show distance and bearing
         drawML_DB (ll, tx+ML_INDENT, ML_LINEDY, ty);
@@ -977,8 +1019,9 @@ static void drawMouseLoc()
         drawML_WX (ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // border
-        tft.drawRect (view_btn_b.x, view_btn_b.y + view_btn_b.h, view_btn_b.w-1, ML_LINEDY*ML_NLINES+1,
-                        RA8875_WHITE);
+        drawSBox (minfo_b, RA8875_WHITE);
+        // tft.drawRect (view_btn_b.x, view_btn_b.y + view_btn_b.h, view_btn_b.w-1, ML_LINEDY*ML_NLINES+1,
+                        // RA8875_WHITE);
     }
 }
 
@@ -1458,7 +1501,7 @@ void drawMoreEarth()
 }
 
 /* convert lat and long in radians to scaled screen coords.
- * keep result no closer than the given edge distance.
+ * keep result no closer than the given raw edge distance.
  * probably should return false bool for zoomed mercator but we just set s.x = 0 for segmentSpanOk()
  */
 static void ll2sScaled (const LatLong &ll, SCoord &s, uint8_t edge, int scale)

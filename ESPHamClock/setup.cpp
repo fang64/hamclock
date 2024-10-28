@@ -61,10 +61,9 @@ static int16_t alt_center_lng;
 static bool alt_center_lng_set;
 static char dxcl_cmds[N_DXCLCMDS][NV_DXCLCMD_LEN];
 static char dx_wlist[NV_DXWLIST_LEN];
-static char pota_wlist[NV_POTAWLIST_LEN];
-static char sota_wlist[NV_SOTAWLIST_LEN];
 static char adif_wlist[NV_ADIFWLIST_LEN];
 static char adif_fn[NV_ADIFFN_LEN];
+static char onta_wlist[NV_ONTAWLIST_LEN];
 static char i2c_fn[NV_I2CFN_LEN];
 
 
@@ -199,6 +198,9 @@ static char i2c_fn[NV_I2CFN_LEN];
 
 
 
+// default ONAIR message
+static const char def_onair[] = "ON THE AIR";
+
 
 // entangled NTPA_BPR/NTPB_BPR state codes and names
 #define NTP_STATES                      \
@@ -275,16 +277,15 @@ typedef enum {
     DXCLCMD11_SPR,
 
     // page "3"
-    RIGPORT_SPR,
-    RIGHOST_SPR,
     ROTPORT_SPR,
     ROTHOST_SPR,
+    RIGPORT_SPR,
+    RIGHOST_SPR,
     FLRIGPORT_SPR,
     FLRIGHOST_SPR,
     ADIFFN_SPR,
     ADIFWL_SPR,
-    POTAWL_SPR,
-    SOTAWL_SPR,
+    ONTAWL_SPR,
 
     // page "4"
     CENTERLNG_SPR,
@@ -352,32 +353,31 @@ static StringPrompt string_pr[N_SPR] = {
     // "page 3" -- index 2
 
     {2, {160, R2Y(0), 60, PR_H}, {220, R2Y(0),  90, PR_H}, "port:", NULL, 0, 0},               // shadowed
-    {2, {310, R2Y(0), 60, PR_H}, {360, R2Y(0), 300, PR_H}, "host:", rig_host, NV_RIGHOST_LEN, 0},
+    {2, {310, R2Y(0), 60, PR_H}, {360, R2Y(0), 300, PR_H}, "host:", rot_host, NV_ROTHOST_LEN, 0},
     {2, {160, R2Y(1), 60, PR_H}, {220, R2Y(1),  90, PR_H}, "port:", NULL, 0, 0},               // shadowed
-    {2, {310, R2Y(1), 60, PR_H}, {360, R2Y(1), 300, PR_H}, "host:", rot_host, NV_ROTHOST_LEN, 0},
+    {2, {310, R2Y(1), 60, PR_H}, {360, R2Y(1), 300, PR_H}, "host:", rig_host, NV_RIGHOST_LEN, 0},
     {2, {160, R2Y(2), 60, PR_H}, {220, R2Y(2),  90, PR_H}, "port:", NULL, 0, 0},               // shadowed
     {2, {310, R2Y(2), 60, PR_H}, {360, R2Y(2), 300, PR_H}, "host:", flrig_host, NV_FLRIGHOST_LEN, 0},
 
-    {2, {100, R2Y(3), 60, PR_H}, {160, R2Y(3), 580, PR_H}, "file:", adif_fn, NV_ADIFFN_LEN, 0},
+    {2, {100, R2Y(4), 60, PR_H}, {160, R2Y(4), 580, PR_H}, "file:", adif_fn, NV_ADIFFN_LEN, 0},
 
-    {2, {215, R2Y(4),  0, PR_H}, {215, R2Y(4), 580, PR_H}, NULL, adif_wlist, NV_ADIFWLIST_LEN, 0},
-    {2, {215, R2Y(5),  0, PR_H}, {215, R2Y(5), 580, PR_H}, NULL, pota_wlist, NV_POTAWLIST_LEN, 0},
-    {2, {215, R2Y(6),  0, PR_H}, {215, R2Y(6), 580, PR_H}, NULL, sota_wlist, NV_SOTAWLIST_LEN, 0},
+    {2, {215, R2Y(5),  0, PR_H}, {215, R2Y(5), 580, PR_H}, NULL, adif_wlist, NV_ADIFWLIST_LEN, 0},
+    {2, {215, R2Y(6),  0, PR_H}, {215, R2Y(6), 580, PR_H}, NULL, onta_wlist, NV_ONTAWLIST_LEN, 0},
 
 
     // "page 4" -- index 3
 
-    {3, {10,  R2Y(0), 200, PR_H}, {250, R2Y(0),  100,PR_H}, "Map center lng:", NULL, 0, 0},     // shadowed
+    {3, {10,  R2Y(0), 200, PR_H}, {210, R2Y(0), 100, PR_H}, "Map center lng:", NULL, 0, 0},     // shadowed
 
-    {3, {350, R2Y(1),  70, PR_H}, {440, R2Y(1),  360,PR_H}, "name:", i2c_fn, NV_I2CFN_LEN, 0},
+    {3, {350, R2Y(2),  70, PR_H}, {440, R2Y(2), 360,PR_H},  "name:", i2c_fn, NV_I2CFN_LEN, 0},
 
-    {3, {100, R2Y(2), 240, PR_H}, {350, R2Y(2),  80, PR_H}, "BME280@76    dTemp:", NULL, 0, 0}, // shadowed
-    {3, {440, R2Y(2), 80,  PR_H}, {530, R2Y(2),  80, PR_H}, "dPres:", NULL, 0, 0},              // shadowed
-    {3, {100, R2Y(3), 240, PR_H}, {350, R2Y(3),  80, PR_H}, "BME280@77    dTemp:", NULL, 0, 0}, // shadowed
+    {3, {100, R2Y(3), 240, PR_H}, {350, R2Y(3),  80, PR_H}, "BME280@76    dTemp:", NULL, 0, 0}, // shadowed
     {3, {440, R2Y(3), 80,  PR_H}, {530, R2Y(3),  80, PR_H}, "dPres:", NULL, 0, 0},              // shadowed
+    {3, {100, R2Y(4), 240, PR_H}, {350, R2Y(4),  80, PR_H}, "BME280@77    dTemp:", NULL, 0, 0}, // shadowed
+    {3, {440, R2Y(4), 80,  PR_H}, {530, R2Y(4),  80, PR_H}, "dPres:", NULL, 0, 0},              // shadowed
 
-    {3, {10,  R2Y(5), 200, PR_H}, {250, R2Y(5),  80, PR_H}, "Brightness Min%:", NULL, 0, 0},    // shadowed
-    {3, {350, R2Y(5),  90, PR_H}, {450, R2Y(5),  80, PR_H}, "Max%:", NULL, 0, 0},               // shadowed
+    {3, {10,  R2Y(6), 200, PR_H}, {250, R2Y(6),  80, PR_H}, "Brightness Min%:", NULL, 0, 0},    // shadowed
+    {3, {350, R2Y(6),  90, PR_H}, {450, R2Y(6),  80, PR_H}, "Max%:", NULL, 0, 0},               // shadowed
 
 
 
@@ -433,16 +433,15 @@ typedef enum {
     DXCLCMD11_BPR,
 
     // page "3"
-    RIGUSE_BPR,
     ROTUSE_BPR,
+    RIGUSE_BPR,
     FLRIGUSE_BPR,
+    SETRADIO_BPR,
     ADIFSET_BPR,
     ADIFWLISTA_BPR,
     ADIFWLISTB_BPR,
-    POTAWLISTA_BPR,
-    POTAWLISTB_BPR,
-    SOTAWLISTA_BPR,
-    SOTAWLISTB_BPR,
+    ONTAWLISTA_BPR,
+    ONTAWLISTB_BPR,
 
     // page "4"
     GPIOOK_BPR,
@@ -472,10 +471,10 @@ typedef enum {
     MAP_ROTPA_BPR,
     MAP_ROTPB_BPR,
     AUTOMAP_BPR,
-    DXCAGEA_BPR,
-    DXCAGEB_BPR,
-    WEB_FULLSCRN_BPR,
+    QRZBIOA_BPR,
+    QRZBIOB_BPR,
     X11_FULLSCRN_BPR,
+    WEB_FULLSCRN_BPR,
 
     N_BPR,                                      // number of fields
 
@@ -491,11 +490,6 @@ static char panerotp_strs[NARRAY(panerotp_vals)][20];
 // values for MAP_ROTPA_BPR and MAP_ROTPB_BPR -- N.B. init maprotp_strs to match
 static int maprotp_vals[] = {20, 60, 90, 120};  // seconds
 static char maprotp_strs[NARRAY(maprotp_vals)][20];
-
-// values for DXCAGEA_BPR and DXCAGEB_BPR -- N.B. init dxcage_strs to match
-static int dxcage_vals[] = {10, 20, 40, 60};    // minutes
-static char dxcage_strs[NARRAY(dxcage_vals)][20];
-
 
 // srting values for each possible watch list states
 #define X(a,b) b,                               // expands _WATCH_DEFN to name then comma
@@ -585,41 +579,37 @@ static BoolPrompt bool_pr[N_BPR] = {
 
     // "page 3" -- index 2
 
-    {2, {10,  R2Y(0),  90, PR_H},  {100, R2Y(0),  60, PR_H}, false, "rigctld?", "No", "Yes", NOMATE},
-    {2, {10,  R2Y(1),  90, PR_H},  {100, R2Y(1),  60, PR_H}, false, "rotctld?", "No", "Yes", NOMATE},
+    {2, {10,  R2Y(0),  90, PR_H},  {100, R2Y(0),  60, PR_H}, false, "rotctld?", "No", "Yes", NOMATE},
+    {2, {10,  R2Y(1),  90, PR_H},  {100, R2Y(1),  60, PR_H}, false, "rigctld?", "No", "Yes", NOMATE},
     {2, {10,  R2Y(2),  90, PR_H},  {100, R2Y(2),  60, PR_H}, false, "flrig?",   "No", "Yes", NOMATE},
 
-
-    {2, {10,  R2Y(3),  90, PR_H},  {100, R2Y(3), 300, PR_H}, false, "ADIF?", "No", NULL, NOMATE},
-
+    {2, {10,  R2Y(3),  90, PR_H},  {100, R2Y(3), 120, PR_H}, false, "Radio:", "Monitor", "Control", NOMATE},
 
 
-    {2, {10,  R2Y(4), 150, PR_H},  {160, R2Y(4),  55, PR_H}, false, "ADIF watch:",
+    {2, {10,  R2Y(4),  90, PR_H},  {100, R2Y(4), 300, PR_H}, false, "ADIF?", "No", NULL, NOMATE},
+
+
+
+    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  55, PR_H}, false, "ADIF watch:",
                                                     wla_name[WLA_OFF], wla_name[WLA_NOT], ADIFWLISTB_BPR},
-    {2, {10,  R2Y(4), 150, PR_H},  {160, R2Y(4),  55, PR_H}, false, NULL,
+    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  55, PR_H}, false, NULL,
                                                     wla_name[WLA_FLAG], wla_name[WLA_ONLY], ADIFWLISTA_BPR},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
 
-    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  55, PR_H}, false, "POTA watch:",
-                                                    wla_name[WLA_OFF], wla_name[WLA_NOT], POTAWLISTB_BPR},
-    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  55, PR_H}, false, NULL,
-                                                    wla_name[WLA_FLAG], wla_name[WLA_ONLY], POTAWLISTA_BPR},
-                                                // 4x entangled: FF -> TF -> FT -> TT -> ...
-
-    {2, {10,  R2Y(6), 150, PR_H},  {160, R2Y(6),  55, PR_H}, false, "SOTA watch:",
-                                                    wla_name[WLA_OFF], wla_name[WLA_NOT], SOTAWLISTB_BPR},
+    {2, {10,  R2Y(6), 150, PR_H},  {160, R2Y(6),  55, PR_H}, false, "ONTA watch:",
+                                                    wla_name[WLA_OFF], wla_name[WLA_NOT], ONTAWLISTB_BPR},
     {2, {10,  R2Y(6), 150, PR_H},  {160, R2Y(6),  55, PR_H}, false, NULL,
-                                                    wla_name[WLA_FLAG], wla_name[WLA_ONLY], SOTAWLISTA_BPR},
+                                                    wla_name[WLA_FLAG], wla_name[WLA_ONLY], ONTAWLISTA_BPR},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
 
 
     // "page 4" -- index 3
 
-    {3, {10,  R2Y(1),  80, PR_H},  {100, R2Y(1), 110, PR_H}, false, "GPIO?", "Off", "Active", NOMATE},
-    {3, {250, R2Y(1),  80, PR_H},  {350, R2Y(1), 70,  PR_H}, false, "I2C file?", "No", NULL, NOMATE},
+    {3, {10,  R2Y(2),  80, PR_H},  {100, R2Y(2), 110, PR_H}, false, "GPIO?", "Off", "Active", NOMATE},
+    {3, {250, R2Y(2),  80, PR_H},  {350, R2Y(2), 70,  PR_H}, false, "I2C file?", "No", NULL, NOMATE},
 
-    {3, {100, R2Y(4), 120, PR_H},  {250, R2Y(4),  120, PR_H}, false, "KX3?", "No", NULL, KX3BAUD_BPR},
-    {3, {250, R2Y(4),   0, PR_H},  {250, R2Y(4),  120, PR_H}, false, NULL, "4800 bps", "38400 bps",KX3ON_BPR},
+    {3, {100, R2Y(5), 120, PR_H},  {250, R2Y(5),  120, PR_H}, false, "KX3?", "No", NULL, KX3BAUD_BPR},
+    {3, {250, R2Y(5),   0, PR_H},  {250, R2Y(5),  120, PR_H}, false, NULL, "4800 bps", "38400 bps",KX3ON_BPR},
                                              // 3x entangled: FX -> TF -> TT ...
 
 
@@ -684,7 +674,6 @@ static BoolPrompt bool_pr[N_BPR] = {
     {4, {10,  R2Y(7), 190, PR_H},  {200, R2Y(7), 170, PR_H}, false, NULL,
                                                 panerotp_strs[2], panerotp_strs[3], PANE_ROTPA_BPR},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
-                                                // N.B. insure strings match PANEROTP_X
 
 
 
@@ -693,29 +682,26 @@ static BoolPrompt bool_pr[N_BPR] = {
     {4, {400, R2Y(7), 190, PR_H},  {590, R2Y(7), 170, PR_H}, false, NULL,
                                                 maprotp_strs[2], maprotp_strs[3], MAP_ROTPA_BPR},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
-                                                // N.B. insure strings match MAPROTP_X
-
 
 
 
     {4, { 10, R2Y(8), 190, PR_H},  {200, R2Y(8), 170, PR_H}, false, "Auto SpcWx map?", "No", "Yes", NOMATE},
 
 
-    {4, {400, R2Y(8), 190, PR_H},  {590, R2Y(8), 170, PR_H}, false, "Max DXCl age?",
-                                                dxcage_strs[0], dxcage_strs[1], DXCAGEB_BPR},
+    {4, {400, R2Y(8), 190, PR_H},  {590, R2Y(8), 170, PR_H}, false, "Look up bio?",
+                                qrz_urltable[QRZ_NONE].label, qrz_urltable[QRZ_QRZ].label, QRZBIOB_BPR},
     {4, {400, R2Y(8), 190, PR_H},  {590, R2Y(8), 170, PR_H}, false, NULL,
-                                                dxcage_strs[2], dxcage_strs[3], DXCAGEA_BPR},
+                                qrz_urltable[QRZ_HAMCALL].label, qrz_urltable[QRZ_CQQRZ].label, QRZBIOA_BPR},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
-                                                // N.B. insure strings match DXCAGE_X
 
 
 
-
-
-    {4, { 10, R2Y(9), 190, PR_H},  {200, R2Y(9), 170, PR_H}, false, "Full scrn web?", "No", "Yes", NOMATE},
 
     {4, {400, R2Y(9), 190, PR_H},  {590, R2Y(9), 170, PR_H}, false, "Full scrn direct?", "No", "Yes", NOMATE},
                                                 // N.B. state box must be wide enough for "Won't fit"
+
+    {4, { 10, R2Y(9), 190, PR_H},  {200, R2Y(9), 170, PR_H}, false, "Full scrn web?", "No", "Yes", NOMATE},
+
 
 
 
@@ -744,10 +730,9 @@ typedef struct {
     NV_Name nv_wl;                              // NV name for list itself
     NV_Name nv_wlmask;                          // NV name for mask
 } WLInfo;
-static WLInfo wl_info[WLID_N] = {
+static WLInfo wl_info[WLID_N] = {               // N.B. must be in same order as WatchListId
     {dx_wlist,   NV_DXWLIST_LEN,   "DX",   DXWLISTA_BPR,   DXWLISTB_BPR,   NV_DXWLIST,   NV_DXWLISTMASK},
-    {pota_wlist, NV_POTAWLIST_LEN, "POTA", POTAWLISTA_BPR, POTAWLISTB_BPR, NV_POTAWLIST, NV_POTAWLISTMASK},
-    {sota_wlist, NV_SOTAWLIST_LEN, "SOTA", SOTAWLISTA_BPR, SOTAWLISTB_BPR, NV_SOTAWLIST, NV_SOTAWLISTMASK},
+    {onta_wlist, NV_ONTAWLIST_LEN, "ONTA", ONTAWLISTA_BPR, ONTAWLISTB_BPR, NV_ONTAWLIST, NV_ONTAWLISTMASK},
     {adif_wlist, NV_ADIFWLIST_LEN, "ADIF", ADIFWLISTA_BPR, ADIFWLISTB_BPR, NV_ADIFWLIST, NV_ADIFWLISTMASK},
 };
 
@@ -1021,7 +1006,7 @@ static const char *getEntangledValue (BPIds a_bpr, BPIds b_bpr)
     const BoolPrompt &B = bool_pr[b_bpr];
 
     if (a_bpr != B.ent_mate || b_bpr != A.ent_mate)
-        fatalError ("getEntangledValue %s %s", A.p_str, B.p_str);
+        fatalError ("getEntangledValue: %s vs %s", A.p_str, B.p_str);
 
     const char *s; 
 
@@ -1163,8 +1148,7 @@ static void logAllPrompts(void)
 
     // watch lists
     Serial.printf ("Setup:   dx_wlist: %s\n", dx_wlist);
-    Serial.printf ("Setup: pota_wlist: %s\n", pota_wlist);
-    Serial.printf ("Setup: sota_wlist: %s\n", sota_wlist);
+    Serial.printf ("Setup: onta_wlist: %s\n", onta_wlist);
     Serial.printf ("Setup: adif_wlist: %s\n", adif_wlist);
 
     // brightness controls
@@ -1257,7 +1241,7 @@ void formatLng (float lng_d, char s[], int s_len)
 }
 
 
-/* remove blanks from s IN PLACE.
+/* remove all blanks throughout s IN PLACE.
  */
 static void noBlanks (char *s)
 {
@@ -1308,6 +1292,8 @@ static bool boolIsRelevant (BoolPrompt *bp)
 {
     if (bp->page != cur_page)
         return (false);
+
+#if !defined (_SHOW_ALL)
 
 #if !defined(_USE_X11)
     if (bp == &bool_pr[X11_FULLSCRN_BPR])
@@ -1389,6 +1375,13 @@ static bool boolIsRelevant (BoolPrompt *bp)
             return (false);
     }
 
+    if (bp == &bool_pr[SETRADIO_BPR]) {
+        if (!bool_pr[FLRIGUSE_BPR].state && !bool_pr[RIGUSE_BPR].state)
+            return (false);
+    }
+
+#endif // !_SHOW_ALL
+
     // use by default
     return (true);
 }
@@ -1399,6 +1392,8 @@ static bool stringIsRelevant (StringPrompt *sp)
 {
     if (sp->page != cur_page)
         return (false);
+
+#if !defined (_SHOW_ALL)
 
     if (sp == &string_pr[WIFISSID_SPR] || sp == &string_pr[WIFIPASS_SPR]) {
         #if defined(_WIFI_NEVER)
@@ -1489,6 +1484,8 @@ static bool stringIsRelevant (StringPrompt *sp)
             return (false);
     }
 
+#endif // !_SHOW_ALL
+
     // no objections
     return (true);
 }
@@ -1556,23 +1553,22 @@ static void nextTabFocus (bool backwards)
 
         // page 3
 
-        { NULL, &bool_pr[RIGUSE_BPR] },
-        {       &string_pr[RIGPORT_SPR], NULL},
-        {       &string_pr[RIGHOST_SPR], NULL},
         { NULL, &bool_pr[ROTUSE_BPR] },
         {       &string_pr[ROTPORT_SPR], NULL},
         {       &string_pr[ROTHOST_SPR], NULL},
+        { NULL, &bool_pr[RIGUSE_BPR] },
+        {       &string_pr[RIGPORT_SPR], NULL},
+        {       &string_pr[RIGHOST_SPR], NULL},
         { NULL, &bool_pr[FLRIGUSE_BPR] },
         {       &string_pr[FLRIGPORT_SPR], NULL},
         {       &string_pr[FLRIGHOST_SPR], NULL},
+        { NULL, &bool_pr[SETRADIO_BPR] },
         { NULL, &bool_pr[ADIFSET_BPR] },
         {       &string_pr[ADIFFN_SPR], NULL},
         { NULL, &bool_pr[ADIFWLISTA_BPR] },
         {       &string_pr[ADIFWL_SPR], NULL},
-        { NULL, &bool_pr[POTAWLISTA_BPR] },
-        {       &string_pr[POTAWL_SPR], NULL},
-        { NULL, &bool_pr[SOTAWLISTA_BPR] },
-        {       &string_pr[SOTAWL_SPR], NULL},
+        { NULL, &bool_pr[ONTAWLISTA_BPR] },
+        {       &string_pr[ONTAWL_SPR], NULL},
 
         // page 4
 
@@ -1605,9 +1601,9 @@ static void nextTabFocus (bool backwards)
         { NULL, &bool_pr[PANE_ROTPA_BPR] },
         { NULL, &bool_pr[MAP_ROTPA_BPR] },
         { NULL, &bool_pr[AUTOMAP_BPR] },
-        { NULL, &bool_pr[DXCAGEA_BPR] },
-        { NULL, &bool_pr[WEB_FULLSCRN_BPR] },
+        { NULL, &bool_pr[QRZBIOA_BPR] },
         { NULL, &bool_pr[X11_FULLSCRN_BPR] },
+        { NULL, &bool_pr[WEB_FULLSCRN_BPR] },
 
         // page 6
 
@@ -3024,16 +3020,36 @@ static bool clusterLoginOk()
 {
     // must be blank or contain DE call
     noBlanks(dx_login);
-    return (dx_login[0] == '\0' || strstr (dx_login, cs_info.call) != NULL);
+    return (dx_login[0] == '\0' || strcistr (dx_login, cs_info.call) != NULL);
 }
 
-/* return whether the candidate string looks like a valid call sign
+/* return whether the candidate string looks anything like a valid call sign
  */
 static bool callsignOk (const char *s)
 {
-    // call must fit within NV_CALLSIGN_LEN and contain at least one digit
-    size_t sl = strlen (s);
-    return (sl < NV_CALLSIGN_LEN && strcspn (s, "0123456789") < sl);
+    // only punct allowed is one slash
+    const char *slash = NULL;
+    for (const char *p = s; *p != '\0'; p++) {
+        if (*p == '/') {
+            if (slash)
+                return (false);         // > 1 slash
+            slash = p;
+        } else if (ispunct(*p)) {
+            return (false);             // no other punct allowed
+        }
+    }
+
+    // slash must be followed by something else
+    size_t s_len = strlen(s);
+    if (slash == s+s_len-1)
+        return (false);                 // slash is at the end
+
+    return (s_len < NV_CALLSIGN_LEN
+                && s_len >= 3
+                && !strHasSpace(s)
+                && strHasDigit(s)
+                && strHasAlpha(s) 
+           );
 }
 
 /* return whether string fields are all valid.
@@ -3050,8 +3066,8 @@ static bool validateStringPrompts (bool show_errors)
     char err_buf[100];
     SPIds err_sid = N_SPR;
 
-    // call must contain at least one digit
-    noBlanks(cs_info.call);
+    // check call
+    strtrim(cs_info.call);
     if (!callsignOk (cs_info.call))
         badsids[n_badsids++] = CALL_SPR;
 
@@ -3095,21 +3111,12 @@ static bool validateStringPrompts (bool show_errors)
         }
     }
 
-    // POTA watch list must compile successfully if being used
-    if (getWatchListState (WLID_POTA, NULL) != WLA_OFF) {
-        strtrim (pota_wlist);
-        if (!compileWatchList (WLID_POTA, pota_wlist, err_buf, sizeof(err_buf))) {
+    // ONTA watch list must compile successfully if being used
+    if (getWatchListState (WLID_ONTA, NULL) != WLA_OFF) {
+        strtrim (onta_wlist);
+        if (!compileWatchList (WLID_ONTA, onta_wlist, err_buf, sizeof(err_buf))) {
             err_msg = err_buf;
-            badsids[n_badsids++] = err_sid = POTAWL_SPR;
-        }
-    }
-
-    // SOTA watch list must compile successfully if being used
-    if (getWatchListState (WLID_SOTA, NULL) != WLA_OFF) {
-        strtrim (sota_wlist);
-        if (!compileWatchList (WLID_SOTA, sota_wlist, err_buf, sizeof(err_buf))) {
-            err_msg = err_buf;
-            badsids[n_badsids++] = err_sid = SOTAWL_SPR;
+            badsids[n_badsids++] = err_sid = ONTAWL_SPR;
         }
     }
 
@@ -3565,6 +3572,7 @@ static void initSetup()
         bool_pr[ROTUSE_BPR].state = (nv_rot != 0);
 
 
+
     // init flrig host, port and option
 
     if (!NVReadString (NV_FLRIGHOST, flrig_host)) {
@@ -3581,6 +3589,16 @@ static void initSetup()
         NVWriteUInt8 (NV_FLRIGUSE, 0);
     } else
         bool_pr[FLRIGUSE_BPR].state = (nv_flrig != 0);
+
+
+
+    // init whether to command radio
+    uint8_t set_radio;
+    if (!NVReadUInt8 (NV_SETRADIO, &set_radio)) {
+        set_radio = 0;
+        NVWriteUInt8 (NV_SETRADIO, set_radio);
+    }
+    bool_pr[SETRADIO_BPR].state = (set_radio != 0);
 
 
 
@@ -3651,46 +3669,6 @@ static void initSetup()
 
     // init watch lists
 
-    // try old version first then replace to avoid in future
-    char pota_oldwl[NV_POTAWLIST_OLD_LEN];
-    if (NVReadString(NV_POTAWLIST_OLD, pota_oldwl) && pota_oldwl[0] != '\0') {
-        memset (pota_wlist, 0, sizeof(pota_wlist));
-        memcpy (pota_wlist, pota_oldwl, sizeof(pota_oldwl));
-        memset (pota_oldwl, 0, sizeof(pota_oldwl));
-        NVWriteString(NV_POTAWLIST_OLD, pota_oldwl);
-    } else if (!NVReadString(NV_POTAWLIST, pota_wlist)) {
-        memset (pota_wlist, 0, sizeof(pota_wlist));
-        NVWriteString(NV_POTAWLIST, pota_wlist);
-    }
-
-    uint8_t potawlist_mask;
-    if (!NVReadUInt8(NV_POTAWLISTMASK, &potawlist_mask)) {
-        potawlist_mask = 0;
-        NVWriteUInt8(NV_POTAWLISTMASK, potawlist_mask);
-    }
-    bool_pr[POTAWLISTA_BPR].state = (potawlist_mask & 1) == 1;
-    bool_pr[POTAWLISTB_BPR].state = (potawlist_mask & 2) == 2;
-
-    // try old version then replace to avoid in future
-    char sota_oldwl[NV_SOTAWLIST_OLD_LEN];
-    if (NVReadString(NV_SOTAWLIST_OLD, sota_oldwl) && sota_oldwl[0] != '\0') {
-        memset (sota_wlist, 0, sizeof(sota_wlist));
-        memcpy (sota_wlist, sota_oldwl, sizeof(sota_oldwl));
-        memset (sota_oldwl, 0, sizeof(sota_oldwl));
-        NVWriteString(NV_SOTAWLIST_OLD, sota_oldwl);
-    } else if (!NVReadString(NV_SOTAWLIST, sota_wlist)) {
-        memset (sota_wlist, 0, sizeof(sota_wlist));
-        NVWriteString(NV_SOTAWLIST, sota_wlist);
-    }
-
-    uint8_t sotawlist_mask;
-    if (!NVReadUInt8(NV_SOTAWLISTMASK, &sotawlist_mask)) {
-        sotawlist_mask = 0;
-        NVWriteUInt8(NV_SOTAWLISTMASK, sotawlist_mask);
-    }
-    bool_pr[SOTAWLISTA_BPR].state = (sotawlist_mask & 1) == 1;
-    bool_pr[SOTAWLISTB_BPR].state = (sotawlist_mask & 2) == 2;
-
 
     if (!NVReadString(NV_ADIFWLIST, adif_wlist)) {
         memset (adif_wlist, 0, sizeof(adif_wlist));
@@ -3703,6 +3681,20 @@ static void initSetup()
     }
     bool_pr[ADIFWLISTA_BPR].state = (adifwlist_mask & 1) == 1;
     bool_pr[ADIFWLISTB_BPR].state = (adifwlist_mask & 2) == 2;
+
+
+
+    if (!NVReadString(NV_ONTAWLIST, onta_wlist)) {
+        memset (onta_wlist, 0, sizeof(onta_wlist));
+        NVWriteString(NV_ONTAWLIST, onta_wlist);
+    }
+    uint8_t ontawlist_mask;
+    if (!NVReadUInt8(NV_ONTAWLISTMASK, &ontawlist_mask)) {
+        ontawlist_mask = 0;
+        NVWriteUInt8(NV_ONTAWLISTMASK, ontawlist_mask);
+    }
+    bool_pr[ONTAWLISTA_BPR].state = (ontawlist_mask & 1) == 1;
+    bool_pr[ONTAWLISTB_BPR].state = (ontawlist_mask & 2) == 2;
 
 
 
@@ -3831,9 +3823,9 @@ static void initSetup()
     if (!NVReadString (NV_DAILYONOFF, (char*)onoff)) {
         // try to init from deprecated values
         uint16_t on, off;
-        if (!NVReadUInt16 (NV_DPYON, &on))
+        if (!NVReadUInt16 (NV_DPYON_OLD, &on))
             on = 0;
-        if (!NVReadUInt16 (NV_DPYOFF, &off))
+        if (!NVReadUInt16 (NV_DPYOFF_OLD, &off))
             off = 0;   
         for (int i = 0; i < DAYSPERWEEK; i++) {
             onoff[i] = on;
@@ -4003,19 +3995,6 @@ static void initSetup()
 
 
 
-    // DX Cluster age value and strings
-
-    for (int i = 0; i < NARRAY(dxcage_strs); i++)
-        snprintf (dxcage_strs[i], sizeof(dxcage_strs[i]), "%d minutes", dxcage_vals[i]);
-
-    uint8_t dxc_age;
-    if (!NVReadUInt8 (NV_DXCAGE, &dxc_age)) {
-        dxc_age = dxcage_vals[3];
-        NVWriteUInt8 (NV_DXCAGE, dxc_age);
-    }
-    setEntangledValue (DXCAGEA_BPR, DXCAGEB_BPR, dxcage_vals, dxc_age);
-
-
 
     uint8_t gray_dpy;
     if (!NVReadUInt8 (NV_GRAYDPY, &gray_dpy))
@@ -4026,6 +4005,14 @@ static void initSetup()
     // N.B. see wifi.cpp::initSys()
     if (!useGPSDTime() && !useNMEATime() && !useOSTime() && !useLocalNTPHost())
         setEntangledValue (NTPA_BPR, NTPB_BPR, ntp_sn[NTPSC_DEF]);
+
+
+    uint8_t qrz_id;
+    if (!NVReadUInt8 (NV_QRZID, &qrz_id) || qrz_id >= QRZ_N) {
+        qrz_id = QRZ_NONE;
+        NVWriteUInt8 (NV_QRZID, qrz_id);
+    }
+    setEntangledValue (QRZBIOA_BPR, QRZBIOB_BPR, qrz_urltable[qrz_id].label);
 }
 
 
@@ -4034,6 +4021,9 @@ static void initSetup()
 static bool askRun()
 {
     eraseScreen();
+
+    if (skip_skip)
+        return (false);
 
     drawStringInBox ("Skip", skip_b, false, TX_C);
 
@@ -4046,7 +4036,7 @@ static bool askRun()
     int16_t x = tft.getCursorX();
     int16_t y = tft.getCursorY();
     uint16_t to;
-    for (to = ASK_TO*10; !skip_skip && to > 0; --to) {
+    for (to = ASK_TO*10; to > 0; --to) {
         if ((to+9)/10 != (to+10)/10) {
             tft.fillRect (x, y-PR_A, 2*PR_W, PR_A+PR_D, BG_C);
             tft.setCursor (x, y);
@@ -4057,9 +4047,9 @@ static bool askRun()
         SCoord s;
         TouchType tt = readCalTouchWS (s);
         char c = tft.getChar (NULL, NULL);
-        if (tt != TT_NONE || c) {
+        if (tt != TT_NONE || c != CHAR_NONE) {
             drainTouch();
-            if (c == 27 || (tt != TT_NONE && inBox (s, skip_b))) {
+            if (c == CHAR_ESC || (tt != TT_NONE && inBox (s, skip_b))) {
                 drawStringInBox ("Skip", skip_b, true, TX_C);
                 return (false);
             }
@@ -4069,7 +4059,7 @@ static bool askRun()
         wdDelay(100);
     }
 
-    return (!skip_skip && to > 0);
+    return (to > 0);
 }
 
 
@@ -4385,17 +4375,26 @@ static void runSetup()
             }
 
             else if (bp == &bool_pr[RIGUSE_BPR]) {
+
                 // show/hide rigctld host and port
                 if (bp->state) {
                     // show host and port prompts and say yes
                     drawBPState (&bool_pr[RIGUSE_BPR]);
                     drawSPPromptValue (&string_pr[RIGHOST_SPR]);
                     drawSPPromptValue (&string_pr[RIGPORT_SPR]);
+                    // show control
+                    drawBPPrompt (&bool_pr[SETRADIO_BPR]);
+                    drawBPState (&bool_pr[SETRADIO_BPR]);
                 } else {
                     // hide and say no
                     drawBPState (&bool_pr[RIGUSE_BPR]);
                     eraseSPPromptValue (&string_pr[RIGHOST_SPR]);
                     eraseSPPromptValue (&string_pr[RIGPORT_SPR]);
+                    // no control if FLRIG also not on
+                    if (!bool_pr[FLRIGUSE_BPR].state) {
+                        eraseBPPrompt (&bool_pr[SETRADIO_BPR]);
+                        eraseBPState (&bool_pr[SETRADIO_BPR]);
+                    }
                 }
             }
 
@@ -4415,32 +4414,26 @@ static void runSetup()
             }
 
             else if (bp == &bool_pr[FLRIGUSE_BPR]) {
+
                 // show/hide flrig host and port
                 if (bp->state) {
                     // show host and port prompts and say yes
                     drawBPState (&bool_pr[FLRIGUSE_BPR]);
                     drawSPPromptValue (&string_pr[FLRIGHOST_SPR]);
                     drawSPPromptValue (&string_pr[FLRIGPORT_SPR]);
+                    // show control
+                    drawBPPrompt (&bool_pr[SETRADIO_BPR]);
+                    drawBPState (&bool_pr[SETRADIO_BPR]);
                 } else {
                     // hide and say no
                     drawBPState (&bool_pr[FLRIGUSE_BPR]);
                     eraseSPPromptValue (&string_pr[FLRIGHOST_SPR]);
                     eraseSPPromptValue (&string_pr[FLRIGPORT_SPR]);
-                }
-            }
-
-            else if (bp == &bool_pr[ROTUSE_BPR]) {
-                // show/hide rotctld host and port
-                if (bp->state) {
-                    // show host and port prompts and say yes
-                    drawBPState (&bool_pr[ROTUSE_BPR]);
-                    drawSPPromptValue (&string_pr[ROTHOST_SPR]);
-                    drawSPPromptValue (&string_pr[ROTPORT_SPR]);
-                } else {
-                    // hide and say no
-                    drawBPState (&bool_pr[ROTUSE_BPR]);
-                    eraseSPPromptValue (&string_pr[ROTHOST_SPR]);
-                    eraseSPPromptValue (&string_pr[ROTPORT_SPR]);
+                    // no control if RIG also not on
+                    if (!bool_pr[RIGUSE_BPR].state) {
+                        eraseBPPrompt (&bool_pr[SETRADIO_BPR]);
+                        eraseBPState (&bool_pr[SETRADIO_BPR]);
+                    }
                 }
             }
 
@@ -4532,6 +4525,13 @@ static void runSetup()
                 drawBMEPrompts (bool_pr[GPIOOK_BPR].state || bool_pr[I2CON_BPR].state);
             }
 
+            else if (bp == &bool_pr[DXCLCMDPGA_BPR] || bp == &bool_pr[DXCLCMDPGB_BPR]) {
+
+                // redraw showing next page of commands.
+                // TODO: just draw the commands to avoid moving focus back to the beginning
+                changePage (cur_page);
+            }
+
           #if defined(_WIFI_ASK)
             else if (bp == &bool_pr[WIFI_BPR]) {
                 // show/hide wifi prompts
@@ -4559,13 +4559,6 @@ static void runSetup()
                 }
             }
           #endif // _SUPPORT_KX3
-
-            else if (bp == &bool_pr[DXCLCMDPGA_BPR] || bp == &bool_pr[DXCLCMDPGB_BPR]) {
-
-                // redraw showing next page of commands.
-                // TODO: just draw the commands to avoid moving focus back to the beginning
-                changePage (cur_page);
-            }
 
         } else if (tappedStringPrompt (s, &sp) && stringIsRelevant (sp)) {
 
@@ -4634,12 +4627,10 @@ static void saveParams2NV()
 
     NVWriteString (NV_DXWLIST, dx_wlist);
     NVWriteUInt8 (NV_DXWLISTMASK, bool_pr[DXWLISTA_BPR].state | (bool_pr[DXWLISTB_BPR].state << 1));
-    NVWriteString (NV_POTAWLIST, pota_wlist);
-    NVWriteUInt8 (NV_POTAWLISTMASK, bool_pr[POTAWLISTA_BPR].state | (bool_pr[POTAWLISTB_BPR].state << 1));
-    NVWriteString (NV_SOTAWLIST, sota_wlist);
-    NVWriteUInt8 (NV_SOTAWLISTMASK, bool_pr[SOTAWLISTA_BPR].state | (bool_pr[SOTAWLISTB_BPR].state << 1));
     NVWriteString (NV_ADIFWLIST, adif_wlist);
     NVWriteUInt8 (NV_ADIFWLISTMASK, bool_pr[ADIFWLISTA_BPR].state | (bool_pr[ADIFWLISTB_BPR].state << 1));
+    NVWriteString (NV_ONTAWLIST, onta_wlist);
+    NVWriteUInt8 (NV_ONTAWLISTMASK, bool_pr[ONTAWLISTA_BPR].state | (bool_pr[ONTAWLISTB_BPR].state << 1));
 
     // N.B. these are NOT contiguous so can not loop through N_DXCLCMDS
     NVWriteString (NV_DXCMD0, dxcl_cmds[0]);
@@ -4686,6 +4677,7 @@ static void saveParams2NV()
     NVWriteUInt8 (NV_FLRIGUSE, bool_pr[FLRIGUSE_BPR].state);
     NVWriteString (NV_FLRIGHOST, flrig_host);
     NVWriteUInt16 (NV_FLRIGPORT, flrig_port);
+    NVWriteUInt8 (NV_SETRADIO, bool_pr[SETRADIO_BPR].state);
     NVWriteUInt8 (NV_SCROLLDIR, bool_pr[SCROLLDIR_BPR].state);
     NVWriteUInt8 (NV_NEWDXDEWX, bool_pr[NEWDXDEWX_BPR].state);
     NVWriteUInt8 (NV_WEBFS, bool_pr[WEB_FULLSCRN_BPR].state);
@@ -4694,7 +4686,7 @@ static void saveParams2NV()
     NVWriteUInt8 (NV_SHOWPIP, showPIP());
     NVWriteUInt8 (NV_AUTOMAP, autoMap());
     NVWriteUInt8 (NV_GRAYDPY, (uint8_t)getGrayDisplay());
-    NVWriteUInt8 (NV_DXCAGE, getDXCMaxAge());
+    NVWriteUInt8 (NV_QRZID, getQRZId());
 
     // save and engage user's X11 settings
     uint16_t x11flags = 0;
@@ -5247,6 +5239,13 @@ bool getFlrig (char host[NV_FLRIGHOST_LEN], int *portp)
     return (false);
 }
 
+/* return whether to issue radio commands, even if looking for PTT
+ */
+bool setRadio (void)
+{
+    return (bool_pr[SETRADIO_BPR].state);
+}
+
 /* get name to use for cluster login
  */
 const char *getDXClusterLogin()
@@ -5521,32 +5520,14 @@ GrayDpy_t getGrayDisplay(void)
     return (GRAY_OFF);  // default?
 }
 
-/* return oldest dx cluster spot to display, minutes
+/* return the user's chosen qrz_urltable index.
  */
-int getDXCMaxAge (void)
+QRZURLId getQRZId(void)
 {
-    return (atoi (getEntangledValue (DXCAGEA_BPR, DXCAGEB_BPR)));
-}
-
-/* return all and number of possible DX Cluster ages
- */
-void getDXCMaxAges (int **all_ages, int *n_ages)
-{
-    *all_ages = dxcage_vals;
-    *n_ages = (int) NARRAY(dxcage_vals);
-}
-
-/* set and persist a new current max dx cluster age, minutes
- * N.B. must be one of dxcage_vals[]
- */
-void setDXCMaxAge (int new_age)
-{
-    for (int i = 0; i < NARRAY(dxcage_vals); i++) {
-        if (new_age == dxcage_vals[i]) {
-            setEntangledValue (DXCAGEA_BPR, DXCAGEB_BPR, new_age);
-            NVWriteUInt8 (NV_DXCAGE, getDXCMaxAge());
-            return;
-        }
-    }
-    fatalError ("setDXCAge bogus age %d", new_age);
+    const char *label = getEntangledValue (QRZBIOA_BPR, QRZBIOB_BPR);
+    for (int i = 0; i < QRZ_N; i++)
+        if (strcmp (label, qrz_urltable[i].label) == 0)
+            return ((QRZURLId)i);
+    fatalError ("unknown call bio label: %s", label);
+    return (QRZ_NONE);  // lint
 }

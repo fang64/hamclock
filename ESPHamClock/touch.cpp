@@ -78,17 +78,17 @@ TouchType checkKBWarp (SCoord &s)
  */
 TouchType readCalTouch (SCoord &s)
 {
-    // fast return if none
-    if (!tft.touched())
-        return (TT_NONE);
+    TouchType tt = TT_NONE;
 
-    int mb;
-    while (tft.touched())
+    // drain to latest, if any
+    while (tft.touched()) {
+        int mb;
         tft.touchRead (&s.x, &s.y, &mb);
+        tt = mb == 1 ? TT_TAP : TT_TAP_BX;
+    }
 
-    TouchType tt = mb == 1 ? TT_TAP : TT_TAP_BX;
-
-    Serial.printf("Touch: \t%4d %4d\ttype %d\n", s.x, s.y, (int)tt);
+    if (tt != TT_NONE)
+        Serial.printf("Touch: \t%4d %4d\ttype %d\n", s.x, s.y, (int)tt);
 
     // return tap type
     return (tt);

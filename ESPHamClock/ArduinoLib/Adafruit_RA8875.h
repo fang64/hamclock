@@ -128,6 +128,7 @@ class Adafruit_RA8875 {
 	void print (float f, int p = 2);
 	void print (long l);
 	void print (long long ll);
+        void printf (const char *fmt, ...);
 	void println (void);
 	void println (char *s);
 	void println (const char *s);
@@ -145,8 +146,8 @@ class Adafruit_RA8875 {
 	void drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, int16_t thickness, uint16_t color16);
 	void drawRect(int16_t x0, int16_t y0, int16_t w, int16_t h, uint16_t color16);
 	void fillRect(int16_t x0, int16_t y0, int16_t w, int16_t h, uint16_t color16);
-	void drawCircle(int16_t x0, int16_t y0, int16_t r, uint16_t color16);
-	void fillCircle(int16_t x0, int16_t y0, int16_t r, uint16_t color16);
+	void drawCircle(int16_t x0, int16_t y0, uint16_t r, uint16_t color16);
+	void fillCircle(int16_t x0, int16_t y0, uint16_t r, uint16_t color16);
 	void drawTriangle(int16_t x0, int16_t y0, int16_t x1, int16_t y1, int16_t x2, int16_t y2,
 	    uint16_t color16);
 	void fillTriangle(int16_t x0, int16_t y0, int16_t x1, int16_t y1, int16_t x2, int16_t y2,
@@ -157,8 +158,9 @@ class Adafruit_RA8875 {
 	void drawLineRaw(int16_t x0, int16_t y0, int16_t x1, int16_t y1, int16_t thickness, uint16_t color16);
 	void fillRectRaw(int16_t x0, int16_t y0, int16_t w, int16_t h, uint16_t color16);
 	void drawRectRaw(int16_t x0, int16_t y0, int16_t w, int16_t h, uint16_t color16);
-	void fillCircleRaw(int16_t x0, int16_t y0, int16_t r, uint16_t color16);
-	void drawCircleRaw(int16_t x0, int16_t y0, int16_t r, uint16_t color16);
+	void fillCircleRaw(int16_t x0, int16_t y0, uint16_t r, uint16_t color16);
+	void drawCircleRaw(int16_t x0, int16_t y0, uint16_t r, uint16_t color16);
+	void drawCircleRaw(int16_t x0, int16_t y0, uint16_t r, int thickness, uint16_t color16);
 
 	// special method to draw hi res earth pixel
 	void plotEarth (uint16_t x0, uint16_t y0, float lat0, float lng0,
@@ -328,8 +330,8 @@ class Adafruit_RA8875 {
 	void plotfb (int16_t x, int16_t y, fbpix_t color);
         void plotDrawRect (int16_t x0, int16_t y0, int16_t w, int16_t h, fbpix_t fbpix);
         void plotFillRect (int16_t x0, int16_t y0, int16_t w, int16_t h, fbpix_t fbpix);
-        void plotDrawCircle (int16_t x0, int16_t y0, int16_t r0, fbpix_t fbpix);
-        void plotFillCircle(int16_t x0, int16_t y0, int16_t r0, fbpix_t fbpix);
+        void plotDrawCircle (int16_t x0, int16_t y0, uint16_t r0, fbpix_t fbpix);
+        void plotFillCircle(int16_t x0, int16_t y0, uint16_t r0, fbpix_t fbpix);
 
         // brezenham implementation
         void plotLineRaw (int16_t x0, int16_t y0, int16_t x1, int16_t y1, int16_t thick, fbpix_t color);

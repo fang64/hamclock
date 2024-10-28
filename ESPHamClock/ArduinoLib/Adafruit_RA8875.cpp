@@ -61,19 +61,19 @@ static void ourSystem (const char *fmt, ...)
         vsnprintf (cmd, sizeof(cmd), fmt, ap);
         va_end (ap);
 
-        printf ("Running: %s\n", cmd);
+        ::printf ("Running: %s\n", cmd);
 
         // create pipe for parent to read from child
         int pipe_fd[2];
         if (pipe (pipe_fd) < 0) {
-	    printf ("pipe(2) failed: %s", strerror(errno));
+	    ::printf ("pipe(2) failed: %s", strerror(errno));
             return;
         }
 
         // start new process as clone of us
         int child_pid = fork();
         if (child_pid < 0) {
-	    printf ("fork(2) failed: %s", strerror(errno));
+	    ::printf ("fork(2) failed: %s", strerror(errno));
             return;
         }
 
@@ -84,7 +84,7 @@ static void ourSystem (const char *fmt, ...)
 
             // engage full perm
             if (setuid (geteuid()) < 0)
-                printf ("setuid(%d): %s\n", geteuid(), strerror(errno));
+                ::printf ("setuid(%d): %s\n", geteuid(), strerror(errno));
 
             // arrange stdout/err to write into pipe_fd[1] to parent
             dup2 (pipe_fd[1], 1);
@@ -96,7 +96,7 @@ static void ourSystem (const char *fmt, ...)
             // overlay with new image
             execl ("/bin/sh", "sh", "-c", cmd, NULL);
 
-            printf ("Can not exec %s: %s\n", cmd, strerror(errno));
+            ::printf ("Can not exec %s: %s\n", cmd, strerror(errno));
             _exit(1);
         }
 
@@ -106,7 +106,7 @@ static void ourSystem (const char *fmt, ...)
 	char rsp[1000];
         rsp[0] = 0;
         while (fgets (rsp, sizeof(rsp), rsp_fp))
-	    printf ("%s", rsp);
+	    ::printf ("%s", rsp);
 
         // finished with pipe
         fclose (rsp_fp);        // also closes(pipe_fd[0])
@@ -114,17 +114,17 @@ static void ourSystem (const char *fmt, ...)
         // parent waits for child
         int wstatus;
         if (waitpid (child_pid, &wstatus, 0) < 0) {
-	    printf ("waitpid(2) failed: %s", strerror(errno));
+	    ::printf ("waitpid(2) failed: %s", strerror(errno));
             return;
         }
 
         // finished, report any error status
 	if (!WIFEXITED(wstatus) || WEXITSTATUS(wstatus) != 0) {
-	    printf ("FAIL: %s", rsp);
+	    ::printf ("FAIL: %s", rsp);
 	    return;
 	}
 
-        printf ("cmd ok\n");
+        ::printf ("cmd ok\n");
 }
 
 #endif // _USE_FB0
@@ -201,7 +201,7 @@ bool Adafruit_RA8875::begin (int not_used)
         // get memory for canvas where the drawing methods update their pixels
         fb_canvas = (fbpix_t *) malloc (fb_nbytes);
         if (!fb_canvas) {
-            printf ("Can not malloc(%d) for canvas\n", fb_nbytes);
+            ::printf ("Can not malloc(%d) for canvas\n", fb_nbytes);
             exit(1);
         }
         memset (fb_canvas, 0, fb_nbytes);       // black
@@ -209,19 +209,19 @@ bool Adafruit_RA8875::begin (int not_used)
         // get memory for the staging area used to find dirty pixels
         fb_stage = (fbpix_t *) malloc (fb_nbytes);
         if (!fb_stage) {
-            printf ("Can not malloc(%d) for stage\n", fb_nbytes);
+            ::printf ("Can not malloc(%d) for stage\n", fb_nbytes);
             exit(1);
         }
         memset (fb_stage, 1, fb_nbytes);        // unlikely color
 
         // prep for mouse and keyboard info
         if (pthread_mutex_init (&mouse_lock, NULL)) {
-            printf ("mouse_lock: %s\n", strerror(errno));
+            ::printf ("mouse_lock: %s\n", strerror(errno));
             exit(1);
         }
         mouse_downs = mouse_ups = 0;
         if (pthread_mutex_init (&kb_lock, NULL)) {
-            printf ("kb_lock: %s\n", strerror(errno));
+            ::printf ("kb_lock: %s\n", strerror(errno));
             exit(1);
         }
         kb_qhead = kb_qtail = 0;
@@ -231,7 +231,7 @@ bool Adafruit_RA8875::begin (int not_used)
         pthread_mutexattr_init (&fb_attr);
         pthread_mutexattr_settype (&fb_attr, PTHREAD_MUTEX_RECURSIVE);
         if (pthread_mutex_init (&fb_lock, &fb_attr)) {
-            printf ("fb_lock: %s\n", strerror(errno));
+            ::printf ("fb_lock: %s\n", strerror(errno));
             exit(1);
         }
 
@@ -242,7 +242,7 @@ bool Adafruit_RA8875::begin (int not_used)
         pthread_t tid;
         int e = pthread_create (&tid, NULL, fbThreadHelper, this);
         if (e) {
-            printf ("fbThreadhelper: %s\n", strerror(e));
+            ::printf ("fbThreadhelper: %s\n", strerror(e));
             exit(1);
         }
 
@@ -254,12 +254,10 @@ bool Adafruit_RA8875::begin (int not_used)
         // mostly in 2nd thread but a few queries from this one
         XInitThreads();
 
-	// connect to X server
-        char *dpyenv = getenv ("DISPLAY");
-        printf ("DISPLAY=%s\n", dpyenv ? dpyenv : "<none>");
+	// connect to default X server
         display = XOpenDisplay(NULL);
 	if (!display) {
-	    printf ("Can not open X Windows display\n");
+	    ::printf ("Can not open X Windows display\n");
 	    exit(1);
 	}
 	Screen *screen = XDefaultScreenOfDisplay (display);
@@ -275,20 +273,20 @@ bool Adafruit_RA8875::begin (int not_used)
 #if defined(_16BIT_FB)
         // only 16 will work
         if (!XMatchVisualInfo(display, screen_num, 16, TrueColor, &vinfo)) {
-            printf ("16 bit TrueColor visual not found\n");
+            ::printf ("16 bit TrueColor visual not found\n");
             exit(1);
         }
         visdepth = 16;
 #else
         // try both 24 and 32
         if (XMatchVisualInfo(display, screen_num, 24, TrueColor, &vinfo)) {
-            printf ("Found 24 bit TrueColor visual\n");
+            ::printf ("Found 24 bit TrueColor visual\n");
             visdepth = 24;
         } else if (XMatchVisualInfo(display, screen_num, 32, TrueColor, &vinfo)) {
-            printf ("Found 32 bit TrueColor visual\n");
+            ::printf ("Found 32 bit TrueColor visual\n");
             visdepth = 32;
         } else {
-            printf ("Neither 24 nor 32 bit TrueColor visual found\n");
+            ::printf ("Neither 24 nor 32 bit TrueColor visual found\n");
             exit(1);
         }
 #endif // !_16BIT_FB
@@ -307,7 +305,7 @@ bool Adafruit_RA8875::begin (int not_used)
 	// get memory for canvas where the drawing methods update their pixels
 	fb_canvas = (fbpix_t *) malloc (fb_nbytes);
 	if (!fb_canvas) {
-	    printf ("Can not malloc(%d) for canvas\n", fb_nbytes);
+	    ::printf ("Can not malloc(%d) for canvas\n", fb_nbytes);
 	    exit(1);
 	}
 	memset (fb_canvas, 0, fb_nbytes);       // black
@@ -315,7 +313,7 @@ bool Adafruit_RA8875::begin (int not_used)
 	// get memory for the staging area used to find dirty pixels
 	fb_stage = (fbpix_t *) malloc (fb_nbytes);
 	if (!fb_stage) {
-	    printf ("Can not malloc(%d) for stage\n", fb_nbytes);
+	    ::printf ("Can not malloc(%d) for stage\n", fb_nbytes);
 	    exit(1);
 	}
 	memset (fb_stage, 1, fb_nbytes);        // unlikely color
@@ -372,12 +370,12 @@ bool Adafruit_RA8875::begin (int not_used)
 
 	// prep for mouse and keyboard info
 	if (pthread_mutex_init (&mouse_lock, NULL)) {
-	    printf ("mouse_lock: %s\n", strerror(errno));
+	    ::printf ("mouse_lock: %s\n", strerror(errno));
 	    exit(1);
 	}
 	mouse_downs = mouse_ups = 0;
 	if (pthread_mutex_init (&kb_lock, NULL)) {
-	    printf ("kb_lock: %s\n", strerror(errno));
+	    ::printf ("kb_lock: %s\n", strerror(errno));
 	    exit(1);
 	}
 	kb_qhead = kb_qtail = 0;
@@ -387,7 +385,7 @@ bool Adafruit_RA8875::begin (int not_used)
 	pthread_mutexattr_init (&fb_attr);
 	pthread_mutexattr_settype (&fb_attr, PTHREAD_MUTEX_RECURSIVE);
 	if (pthread_mutex_init (&fb_lock, &fb_attr)) {
-	    printf ("fb_lock: %s\n", strerror(errno));
+	    ::printf ("fb_lock: %s\n", strerror(errno));
 	    exit(1);
 	}
 
@@ -398,7 +396,7 @@ bool Adafruit_RA8875::begin (int not_used)
 	pthread_t tid;
 	int e = pthread_create (&tid, NULL, fbThreadHelper, this);
 	if (e) {
-	    printf ("fbThreadhelper: %s\n", strerror(e));
+	    ::printf ("fbThreadhelper: %s\n", strerror(e));
 	    exit(1);
 	}
 
@@ -415,7 +413,7 @@ bool Adafruit_RA8875::begin (int not_used)
 
 	// init mouse lock
 	if (pthread_mutex_init (&mouse_lock, NULL)) {
-	    printf ("mouse_lock: %s\n", strerror(errno));
+	    ::printf ("mouse_lock: %s\n", strerror(errno));
 	    exit(1);
 	}
 	mouse_downs = mouse_ups = 0;
@@ -424,13 +422,13 @@ bool Adafruit_RA8875::begin (int not_used)
 	pthread_t tid;
 	int e = pthread_create (&tid, NULL, mouseThreadHelper, this);
 	if (e) {
-	    printf ("mouseThreadhelper: %s\n", strerror(e));
+	    ::printf ("mouseThreadhelper: %s\n", strerror(e));
 	    exit(1);
 	}
 
 	// init kb lock
 	if (pthread_mutex_init (&kb_lock, NULL)) {
-	    printf ("kb_lock: %s\n", strerror(errno));
+	    ::printf ("kb_lock: %s\n", strerror(errno));
 	    exit(1);
 	}
         kb_qhead = kb_qtail = 0;
@@ -441,7 +439,7 @@ bool Adafruit_RA8875::begin (int not_used)
         // start kb thread
         e = pthread_create (&tid, NULL, kbThreadHelper, this);
         if (e) {
-            printf ("kbThreadhelper: %s\n", strerror(e));
+            ::printf ("kbThreadhelper: %s\n", strerror(e));
             exit(1);
         }
 
@@ -450,18 +448,18 @@ bool Adafruit_RA8875::begin (int not_used)
         const char fb_path[] = "/dev/fb0";
         fb_fd = open(fb_path, O_RDWR);
 	if (fb_fd < 0) {
-	    printf ("%s: %s\n", fb_path, strerror(errno));
+	    ::printf ("%s: %s\n", fb_path, strerror(errno));
 	    close(fb_fd);
 	    exit(1);
 	}
         if (ioctl(fb_fd, FBIOGET_VSCREENINFO, &fb_si) < 0) {
-	    printf ("FBIOGET_VSCREENINFO: %s\n", strerror(errno));
+	    ::printf ("FBIOGET_VSCREENINFO: %s\n", strerror(errno));
 	    close(fb_fd);
 	    exit(1);
 	}
 	printf ("fb0 is %d x %d x %d\n", fb_si.xres, fb_si.yres, fb_si.bits_per_pixel);
 	if (fb_si.xres < FB_XRES || fb_si.yres < FB_YRES || fb_si.bits_per_pixel != BITSPFBPIX) {
-	    printf ("Sorry, frame buffer must be at least %u x %u with %u bits per pixel\n",
+	    ::printf ("Sorry, frame buffer must be at least %u x %u with %u bits per pixel\n",
 				FB_XRES, FB_YRES, BITSPFBPIX);
 	    exit(1);
 	}
@@ -478,7 +476,7 @@ bool Adafruit_RA8875::begin (int not_used)
         size_t si_bytes = BYTESPFBPIX * fb_si.xres * fb_si.yres;
         fb_fb = (fbpix_t*) mmap (NULL, si_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
 	if (!fb_fb) {
-	    printf ("mmap(%u): %s\n", (unsigned) si_bytes, strerror(errno));
+	    ::printf ("mmap(%u): %s\n", (unsigned) si_bytes, strerror(errno));
 	    close (fb_fd);
 	    exit(1);
 	}
@@ -490,7 +488,7 @@ bool Adafruit_RA8875::begin (int not_used)
         fb_nbytes = FB_XRES * FB_YRES * sizeof(*fb_canvas);
 	fb_canvas = (fbpix_t *) malloc (fb_nbytes);
 	if (!fb_canvas) {
-	    printf ("Can not malloc(%d) for canvas\n", fb_nbytes);
+	    ::printf ("Can not malloc(%d) for canvas\n", fb_nbytes);
 	    close(fb_fd);
 	    exit(1);
 	}
@@ -498,7 +496,7 @@ bool Adafruit_RA8875::begin (int not_used)
 	fb_stage = (fbpix_t *) malloc (fb_nbytes);
 	fb_cursor = (fbpix_t *) malloc (fb_nbytes);
 	if (!fb_stage || !fb_cursor) {
-	    printf ("Can not malloc(%d) for stage or cursor\n", fb_nbytes);
+	    ::printf ("Can not malloc(%d) for stage or cursor\n", fb_nbytes);
 	    close(fb_fd);
 	    exit(1);
 	}
@@ -509,7 +507,7 @@ bool Adafruit_RA8875::begin (int not_used)
 	pthread_mutexattr_init (&fb_attr);
 	pthread_mutexattr_settype (&fb_attr, PTHREAD_MUTEX_RECURSIVE);
 	if (pthread_mutex_init (&fb_lock, &fb_attr)) {
-	    printf ("fb_lock: %s\n", strerror(errno));
+	    ::printf ("fb_lock: %s\n", strerror(errno));
 	    close(fb_fd);
 	    exit(1);
 	}
@@ -520,7 +518,7 @@ bool Adafruit_RA8875::begin (int not_used)
 	// start fb thread
 	e = pthread_create (&tid, NULL, fbThreadHelper, this);
 	if (e) {
-	    printf ("fbThreadhelper: %s\n", strerror(e));
+	    ::printf ("fbThreadhelper: %s\n", strerror(e));
 	    close(fb_fd);
 	    exit(1);
 	}
@@ -648,6 +646,17 @@ void Adafruit_RA8875::print (long long ll)
 	    plotChar (buf[i]);
 }
 
+void Adafruit_RA8875::printf (const char *fmt, ...)
+{
+        char line[1024];
+        va_list ap;
+        va_start (ap, fmt);
+        vsnprintf (line, sizeof(line), fmt, ap);
+        va_end (ap);
+        print(line);
+}
+
+
 void Adafruit_RA8875::println (void)
 {
 	cursor_x = 0;
@@ -711,7 +720,7 @@ uint16_t Adafruit_RA8875::readData(void)
 bool Adafruit_RA8875::getRawPix(uint8_t *rgb24, int npix)
 {
         if (npix != FB_XRES * FB_YRES) {
-            printf ("getRawPix: %d != %d\n", npix, FB_XRES * FB_YRES);
+            ::printf ("getRawPix: %d != %d\n", npix, FB_XRES * FB_YRES);
             return (false);
         }
         for (int i = 0; i < npix; i++) {
@@ -845,7 +854,7 @@ bool Adafruit_RA8875::touched(void)
             }
 
             // if (report_down)
-                // printf ("report %d  D %d U %d\n", report_down, mouse_downs, mouse_ups);
+                // ::printf ("report %d  D %d U %d\n", report_down, mouse_downs, mouse_ups);
 
 	pthread_mutex_unlock(&mouse_lock);
 
@@ -871,7 +880,7 @@ void Adafruit_RA8875::touchRead (uint16_t *x, uint16_t *y, int *button)
                 mouse_y = *y * SCALESZ + FB_Y0;
             }
 
-            // printf ("touchRead D %d U %d -> ", mouse_downs, mouse_ups);
+            // ::printf ("touchRead D %d U %d -> ", mouse_downs, mouse_ups);
 
             if (mouse_ups > mouse_downs) {
                 // absorbed one up event in touched()
@@ -886,7 +895,7 @@ void Adafruit_RA8875::touchRead (uint16_t *x, uint16_t *y, int *button)
                 // retain hw state
             }
 
-            // printf ("D %d U %d\n", mouse_downs, mouse_ups);
+            // ::printf ("D %d U %d\n", mouse_downs, mouse_ups);
 
 	pthread_mutex_unlock(&mouse_lock);
 }
@@ -999,8 +1008,10 @@ uint16_t color16)
 	fbpix_t fbpix = RGB16TOFBPIX(color16);
 	pthread_mutex_lock(&fb_lock);
 	    plotLineRaw (x0, y0, x1, y1, thickness, fbpix);
-            // round cap style??
-            plotFillCircle (x1, y1, thickness/2-1, fbpix);
+            if (thickness >= 3) {
+                // round cap style??
+                plotFillCircle (x1, y1, thickness/2, fbpix);
+            }
 	    fb_dirty = true;
 	pthread_mutex_unlock (&fb_lock);
 }
@@ -1057,7 +1068,7 @@ void Adafruit_RA8875::fillRectRaw(int16_t x0, int16_t y0, int16_t w, int16_t h, 
 
 /* Adafruit's circle radius is counts beyond center, eg, radius 3 is 7 pixels wide
  */
-void Adafruit_RA8875::drawCircle(int16_t x0, int16_t y0, int16_t r0, uint16_t color16)
+void Adafruit_RA8875::drawCircle(int16_t x0, int16_t y0, uint16_t r0, uint16_t color16)
 {
 	fbpix_t fbpix = RGB16TOFBPIX(color16);
 	x0 *= SCALESZ;
@@ -1068,15 +1079,26 @@ void Adafruit_RA8875::drawCircle(int16_t x0, int16_t y0, int16_t r0, uint16_t co
 
 /* non-standard -- draw circle to underlying raw coord system
  */
-void Adafruit_RA8875::drawCircleRaw (int16_t x0, int16_t y0, int16_t r0, uint16_t color16)
+void Adafruit_RA8875::drawCircleRaw (int16_t x0, int16_t y0, uint16_t r0, uint16_t color16)
 {
 	fbpix_t fbpix = RGB16TOFBPIX(color16);
         plotDrawCircle (x0, y0, r0, fbpix);
 }
 
+/* non-standard -- draw circle to underlying raw coord system
+ */
+void Adafruit_RA8875::drawCircleRaw (int16_t x0, int16_t y0, uint16_t r0, int thickness, uint16_t color16)
+{
+	fbpix_t fbpix = RGB16TOFBPIX(color16);
+        for (int i = 0; i < thickness; i++)
+            if (i < r0)
+                plotDrawCircle (x0, y0, r0-i, fbpix);
+}
+
+
 /* Adafruit's circle radius is counts beyond center, eg, radius 3 is 7 pixels wide
  */
-void Adafruit_RA8875::fillCircle(int16_t x0, int16_t y0, int16_t r0, uint16_t color16)
+void Adafruit_RA8875::fillCircle(int16_t x0, int16_t y0, uint16_t r0, uint16_t color16)
 {
 	fbpix_t fbpix = RGB16TOFBPIX(color16);
 	x0 *= SCALESZ;
@@ -1087,7 +1109,7 @@ void Adafruit_RA8875::fillCircle(int16_t x0, int16_t y0, int16_t r0, uint16_t co
 
 /* non-standard -- fill circle to underlying raw coord system
  */
-void Adafruit_RA8875::fillCircleRaw(int16_t x0, int16_t y0, int16_t r0, uint16_t color16)
+void Adafruit_RA8875::fillCircleRaw(int16_t x0, int16_t y0, uint16_t r0, uint16_t color16)
 {
 	fbpix_t fbpix = RGB16TOFBPIX(color16);
         plotFillCircle (x0, y0, r0, fbpix);
@@ -1188,7 +1210,7 @@ void Adafruit_RA8875::plotFillRect (int16_t x0, int16_t y0, int16_t w, int16_t h
 
 /* plot circle to underlying raw coord system
  */
-void Adafruit_RA8875::plotDrawCircle (int16_t x0, int16_t y0, int16_t r0, fbpix_t fbpix)
+void Adafruit_RA8875::plotDrawCircle (int16_t x0, int16_t y0, uint16_t r0, fbpix_t fbpix)
 {
         // scan a circle from radius r0-1/2 to r0+1/2 to include a whole pixel.
         // radius (r0+1/2)^2 = r0^2 + r0 + 1/4 so we use 2x everywhere to avoid floats
@@ -1209,7 +1231,7 @@ void Adafruit_RA8875::plotDrawCircle (int16_t x0, int16_t y0, int16_t r0, fbpix_
 
 /* plot a filled circle at native resolution
  */
-void Adafruit_RA8875::plotFillCircle(int16_t x0, int16_t y0, int16_t r0, fbpix_t fbpix)
+void Adafruit_RA8875::plotFillCircle(int16_t x0, int16_t y0, uint16_t r0, fbpix_t fbpix)
 {
         // scan a circle of radius r0+1/2 to include whole pixel.
         // radius (r0+1/2)^2 = r0^2 + r0 + 1/4 so we use 2x everywhere to avoid floats
@@ -1548,7 +1570,7 @@ void Adafruit_RA8875::plotfb (int16_t x, int16_t y, fbpix_t color)
 
         int index = y*FB_XRES + x;
         if (index < 0 || index >= FB_XRES*FB_YRES)
-            printf ("no! %d %d\n", x, y);
+            ::printf ("no! %d %d\n", x, y);
         else
             fb_canvas[index] = color;
 }
@@ -1782,7 +1804,7 @@ void Adafruit_RA8875::drawCanvas()
 
             // struct timeval tv;
             // gettimeofday(&tv, NULL);
-            // printf ("XCopyArea %ld.%06ld [%6d, %6d] %6d x %6d = %6d\n", tv.tv_sec, tv.tv_usec, bb_x0, bb_y0, nx, ny, nx*ny);
+            // ::printf ("XCopyArea %ld.%06ld [%6d, %6d] %6d x %6d = %6d\n", tv.tv_sec, tv.tv_usec, bb_x0, bb_y0, nx, ny, nx*ny);
 
             // let server catch up before next loop
             XSync (display, false);
@@ -1818,7 +1840,7 @@ bool Adafruit_RA8875::requestSelection (KeySym ks, unsigned kb_state)
                 Atom bufid   = XInternAtom(display, "CLIPBOARD", False),
                      fmtid   = XInternAtom(display, "STRING", False),
                      propid  = XInternAtom(display, "XSEL_DATA", False);
-                // printf ("ask for CLIPBOARD\n");
+                // ::printf ("ask for CLIPBOARD\n");
                 (void) XConvertSelection (display, bufid, fmtid, propid, win, CurrentTime);
                 return (true);
             }
@@ -1831,7 +1853,7 @@ bool Adafruit_RA8875::requestSelection (KeySym ks, unsigned kb_state)
                 Atom bufid   = XInternAtom(display, "PRIMARY", False),
                      fmtid   = XInternAtom(display, "STRING", False),
                      propid  = XInternAtom(display, "XSEL_DATA", False);
-                // printf ("ask for PRIMARY\n");
+                // ::printf ("ask for PRIMARY\n");
                 (void) XConvertSelection (display, bufid, fmtid, propid, win, CurrentTime);
                 return (true);
             }
@@ -1969,8 +1991,8 @@ void Adafruit_RA8875::fbThread ()
         #ifdef _DUMP_CURSOR_MASK
         for (uint16_t r = 0; r < FB_CURSOR_SZ; r++) {
             for (uint16_t c = 0; c < FB_CURSOR_SZ; c++)
-                printf (" %d", (mask_data[(r*FB_CURSOR_SZ+c)/8] >> (r*FB_CURSOR_SZ+c)%8) & 1);
-            printf ("\n");
+                ::printf (" %d", (mask_data[(r*FB_CURSOR_SZ+c)/8] >> (r*FB_CURSOR_SZ+c)%8) & 1);
+            ::printf ("\n");
         }
         #endif // _DUMP_CURSOR_MASK
 
@@ -1990,7 +2012,7 @@ void Adafruit_RA8875::fbThread ()
         XFreePixmap(display, mask_pm);
 
 	// first display!
-        XMapWindow(display,win);
+        XMapRaised(display,win);
         XDefineCursor (display, win, app_cursor);
 
         for(;;)
@@ -2024,7 +2046,7 @@ void Adafruit_RA8875::fbThread ()
             // X11 options are deferred until explicitly enabled; reset options_engage after each use.
             if (options_engage) {
 
-                // printf ("options_engage: %d\n", options_fullscreen);
+                // ::printf ("options_engage: %d\n", options_fullscreen);
 
                 // add or remove _NET_WM_STATE_FULLSCREEN from _NET_WM_STATE
                 // see https://specifications.freedesktop.org/wm-spec
@@ -2054,34 +2076,34 @@ void Adafruit_RA8875::fbThread ()
 		switch (event.type) {
 
 		case Expose:
-		    // printf ("Expose: [%d, %d]  %d x %d \n", event.xexpose.x, event.xexpose.y, event.xexpose.width, event.xexpose.height);
+		    // ::printf ("Expose: [%d, %d]  %d x %d \n", event.xexpose.x, event.xexpose.y, event.xexpose.width, event.xexpose.height);
 		    XCopyArea(display, pixmap, win, black_gc,
 		    		event.xexpose.x-FB_X0, event.xexpose.y-FB_Y0,
 				event.xexpose.width, event.xexpose.height, event.xexpose.x, event.xexpose.y);
 		    break;
 
                 case SelectionNotify:
-                    // printf ("SelectionNotify\n");
+                    // ::printf ("SelectionNotify\n");
 
                     if (event.xselection.property)
                         captureSelection();
                     break;
 
                 case KeyPress:
-                    // printf ("KeyPress\n");
+                    // ::printf ("KeyPress\n");
 
                     // just record time to start repeating, get actual key when released
                     gettimeofday (&kp0, NULL);
                     break;
 
                 case KeyRelease:
-                    // printf ("KeyRelease\n");
+                    // ::printf ("KeyRelease\n");
 
                     encodeKeyEvent ((XKeyEvent*)&event);
 		    break;
 
 		case ButtonPress:
-                    // printf ("ButtonPress   %ld.%06ld\n", mouse_tv.tv_sec, mouse_tv.tv_usec);
+                    // ::printf ("ButtonPress   %ld.%06ld\n", mouse_tv.tv_sec, mouse_tv.tv_usec);
 
 		    pthread_mutex_lock (&mouse_lock);
 			mouse_x = event.xbutton.x;
@@ -2097,7 +2119,7 @@ void Adafruit_RA8875::fbThread ()
 		    break;
 
 		case ButtonRelease:
-                    // printf ("ButtonRelease  %ld.%06ld\n", mouse_tv.tv_sec, mouse_tv.tv_usec);
+                    // ::printf ("ButtonRelease  %ld.%06ld\n", mouse_tv.tv_sec, mouse_tv.tv_usec);
 
 		    pthread_mutex_lock (&mouse_lock);
 			mouse_x = event.xbutton.x;
@@ -2113,7 +2135,7 @@ void Adafruit_RA8875::fbThread ()
 		    break;
 
                 case LeaveNotify:
-                    // printf ("LeaveNotify\n");
+                    // ::printf ("LeaveNotify\n");
 
                     // indicate mouse not valid
 		    pthread_mutex_lock (&mouse_lock);
@@ -2124,7 +2146,7 @@ void Adafruit_RA8875::fbThread ()
 
 
                 case MotionNotify:
-                    // printf ("MotionNotify %d %d\n", event.xmotion.x, event.xmotion.y);
+                    // ::printf ("MotionNotify %d %d\n", event.xmotion.x, event.xmotion.y);
 
 		    pthread_mutex_lock (&mouse_lock);
 			mouse_x = event.xmotion.x;
@@ -2138,7 +2160,7 @@ void Adafruit_RA8875::fbThread ()
 		    break;
 
 		case ConfigureNotify:
-		    // printf ("ConfigureNotify: %dx%d+%d+%d\n", event.xconfigure.width, event.xconfigure.height, event.xconfigure.x, event.xconfigure.y);
+		    // ::printf ("ConfigureNotify: %dx%d+%d+%d\n", event.xconfigure.width, event.xconfigure.height, event.xconfigure.x, event.xconfigure.y);
 		    fb_si.xres = event.xconfigure.width;
 		    fb_si.yres = event.xconfigure.height;
 		    FB_X0 = (fb_si.xres - FB_XRES)/2;
@@ -2211,7 +2233,7 @@ bool Adafruit_RA8875::warpCursor (char dir, unsigned n, int *xp, int *yp)
 
         // get current position at full resolution
         if (!XQueryPointer (display, win, &root_w, &child_w, &root_x, &root_y, &win_x, &win_y, &mask)) {
-            printf ("XQueryPointer failed\n");
+            ::printf ("XQueryPointer failed\n");
             return (false);
         }
 
@@ -2230,7 +2252,7 @@ bool Adafruit_RA8875::warpCursor (char dir, unsigned n, int *xp, int *yp)
         new_x = FB_X0 + ((new_x-FB_X0 + FB_XRES)%FB_XRES);
         new_y = FB_Y0 + ((new_y-FB_Y0 + FB_YRES)%FB_YRES);
 
-        // printf ("warp from %d %d  to  %d %d\n", win_x, win_y, new_x, new_y);
+        // ::printf ("warp from %d %d  to  %d %d\n", win_x, win_y, new_x, new_y);
 
         // move cursor using deltas, we've already insured the move will be in bounds
         XWarpPointer (display, None, None, 0, 0, 0, 0, new_x-win_x, new_y-win_y);
@@ -2351,7 +2373,7 @@ void Adafruit_RA8875::findKeyboard()
 	const char kb_dev[] = "/dev/tty1";
 	kb_fd = open (kb_dev, O_RDWR);
 	if (kb_fd < 0) {
-	    printf ("KB: %s: %s\n", kb_dev, strerror(errno));
+	    ::printf ("KB: %s: %s\n", kb_dev, strerror(errno));
             // continue since kb not essential
 	} else {
             // turn off cursor blinking and login on tty1
@@ -2360,14 +2382,14 @@ void Adafruit_RA8875::findKeyboard()
 
             // turn off VT drawing
             // https://unix.stackexchange.com/questions/173712/best-practice-for-hiding-virtual-console-while-rendering-video-to-framebuffer
-            printf ("turning off VT\n");
+            ::printf ("turning off VT\n");
             if (ioctl (kb_fd, KDSETMODE, KD_GRAPHICS) < 0)
-                printf ("KDSETMODE KD_GRAPHICS: %s\n", strerror(errno));
+                ::printf ("KDSETMODE KD_GRAPHICS: %s\n", strerror(errno));
 
             // change tty to raw after open so it sticks
             ourSystem ("stty -F /dev/tty1 min 1 -icanon");
 
-            printf ("KB: found kb at %s\n", kb_dev);
+            ::printf ("KB: found kb at %s\n", kb_dev);
         }
 }
 
@@ -2383,7 +2405,7 @@ void Adafruit_RA8875::findMouse()
         char dirname[] = "/dev/input";
         DIR *dp = opendir (dirname);
         if (!dp) {
-            printf ("%s: %s\n", dirname, strerror(errno));
+            ::printf ("%s: %s\n", dirname, strerror(errno));
             exit(1);
         }
 
@@ -2398,10 +2420,10 @@ void Adafruit_RA8875::findMouse()
             // open events file
             char fullevpath[512];
             snprintf (fullevpath, sizeof(fullevpath), "%s/%s", dirname, de->d_name);
-            // printf ("POINTER: checking %s\n", fullevpath);
+            // ::printf ("POINTER: checking %s\n", fullevpath);
             int evfd = open (fullevpath, O_RDONLY);
             if (evfd < 0) {
-                printf ("%s: %s\n", fullevpath, strerror(errno));
+                ::printf ("%s: %s\n", fullevpath, strerror(errno));
                 continue;
             }
 
@@ -2416,7 +2438,7 @@ void Adafruit_RA8875::findMouse()
             memset(bit, 0, sizeof(bit));
             if (ioctl (evfd, EVIOCGBIT(0, EV_MAX), bit[0]) < 0) {
                 // if can't get this the whole strategy is busted
-                printf ("%s: EVIOCGBIT(%d) failed: %s\n", fullevpath, 0, strerror(errno));
+                ::printf ("%s: EVIOCGBIT(%d) failed: %s\n", fullevpath, 0, strerror(errno));
                 exit(1);
             }
 
@@ -2431,7 +2453,7 @@ void Adafruit_RA8875::findMouse()
                              && test_bit (ABS_Y, bit[EV_ABS])
                              && ioctl (evfd, EVIOCGBIT(EV_KEY, KEY_MAX), bit[EV_KEY]) >= 0
                              && test_bit (BTN_TOUCH, bit[EV_KEY])) {
-                printf ("POINTER: found touch screen at %s\n", fullevpath);
+                ::printf ("POINTER: found touch screen at %s\n", fullevpath);
                 touch_fd = evfd;
                 evfd_used = true;
             }
@@ -2442,7 +2464,7 @@ void Adafruit_RA8875::findMouse()
                              && test_bit (REL_Y, bit[EV_REL])
                              && ioctl (evfd, EVIOCGBIT(EV_KEY, KEY_MAX), bit[EV_KEY]) >= 0
                              && test_bit (BTN_LEFT, bit[EV_KEY])) {
-                printf ("POINTER: found mouse at %s\n", fullevpath);
+                ::printf ("POINTER: found mouse at %s\n", fullevpath);
                 mouse_fd = evfd;
                 evfd_used = true;
             }
@@ -2482,7 +2504,7 @@ void Adafruit_RA8875::mouseThread (void)
             if (mouse_fd < 0) {
                 time_t t = time(NULL);
                 if (t - mouse_poll > 1) {
-                    // printf ("POINTER: check for mouse\n");
+                    // ::printf ("POINTER: check for mouse\n");
                     mouse_poll = t;
                     findMouse();
                 }
@@ -2503,7 +2525,7 @@ void Adafruit_RA8875::mouseThread (void)
                     max_fd = touch_fd;
             }
             if (max_fd == 0) {
-                // printf ("POINTER: no mouse or touch screen\n");
+                // ::printf ("POINTER: no mouse or touch screen\n");
                 usleep (1000000);       // try again leisurely
                 continue;
             }
@@ -2516,7 +2538,7 @@ void Adafruit_RA8875::mouseThread (void)
             if (ns == 0)
                 continue;               // timed out
             if (ns < 0) {
-                printf ("select(2) error: %s\n", strerror(errno));
+                ::printf ("select(2) error: %s\n", strerror(errno));
                 exit(1);
             }
 
@@ -2527,7 +2549,7 @@ void Adafruit_RA8875::mouseThread (void)
             else if (FD_ISSET (touch_fd, &rfd))
                 ready_fd = touch_fd;
             else {
-                printf ("bug! select(2) returned %d but nothing ready\n", ns);
+                ::printf ("bug! select(2) returned %d but nothing ready\n", ns);
                 exit(1);
             }
 
@@ -2578,11 +2600,11 @@ void Adafruit_RA8875::mouseThread (void)
 
                 // close and rety later if disappeared
                 if (ready_fd == touch_fd) {
-                    printf ("POINTER: touch screen disappeared\n");
+                    ::printf ("POINTER: touch screen disappeared\n");
                     close (touch_fd);
                     touch_fd = -1;
                 } else if (ready_fd == mouse_fd) {
-                    printf ("POINTER: mouse disappeared\n");
+                    ::printf ("POINTER: mouse disappeared\n");
                     close (mouse_fd);
                     mouse_fd = -1;
                 }
@@ -2612,7 +2634,7 @@ bool Adafruit_RA8875::warpCursor (char dir, unsigned n, int *xp, int *yp)
         new_x = FB_X0 + ((new_x-FB_X0 + FB_XRES)%FB_XRES);
         new_y = FB_Y0 + ((new_y-FB_Y0 + FB_YRES)%FB_YRES);
 
-        // printf ("warp from %d %d  to  %d %d\n", mouse_x, mouse_y, new_x, new_y);
+        // ::printf ("warp from %d %d  to  %d %d\n", mouse_x, mouse_y, new_x, new_y);
 
         // convert to app coords
         int new_x_app = (new_x-FB_X0)/SCALESZ;
@@ -2651,7 +2673,7 @@ void Adafruit_RA8875::kbThread ()
 
             // look for kb occasionaly if none
             if (kb_fd < 0) {
-                // printf ("KB: check for kb\n");
+                // ::printf ("KB: check for kb\n");
                 usleep (1000000);       // try again leisurely
                 findKeyboard();
                 continue;
@@ -2661,7 +2683,7 @@ void Adafruit_RA8875::kbThread ()
 	    int nr = read (kb_fd, buf, 1);
 	    if (nr == 1) {
                 // arrow keys need a state machine to parse ESC [ A/B/C/D, plus non-block for normal ESC
-                printf ("KB: %d %c\n", buf[0], buf[0]);
+                ::printf ("KB: %d %c\n", buf[0], buf[0]);
                 if (isprint(buf[0])) {
                     pthread_mutex_lock (&kb_lock);
                         KBState &ks = kb_q[kb_qtail];
@@ -2675,9 +2697,9 @@ void Adafruit_RA8875::kbThread ()
                 }
 	    } else {
                 if (nr < 0)
-                    printf ("KB: %s\n", strerror(errno));
+                    ::printf ("KB: %s\n", strerror(errno));
                 else
-                    printf ("KB: EOF\n");
+                    ::printf ("KB: EOF\n");
                 close(kb_fd);
                 kb_fd = -1;
             }
@@ -2798,7 +2820,7 @@ void Adafruit_RA8875::fbThread ()
                 // wait for vertical sync TODO
                 // int zero = 0;
                 // if (ioctl(fb_fd, FBIO_WAITFORVSYNC, &zero) < 0)
-                    // printf ("FBIO_WAITFORVSYNC: %s\n", strerror(errno));
+                    // ::printf ("FBIO_WAITFORVSYNC: %s\n", strerror(errno));
 
                 // black top border
                 const uint32_t fb_rowbytes = fb_si.xres*BYTESPFBPIX;

@@ -4,17 +4,19 @@
 
 #include "HamClock.h"
 
-CallsignInfo cs_info;                                   // state
-static const char on_air_msg[] = "ON THE AIR";          // default ota message
+CallsignInfo cs_info;                                   // state, global for setup.cpp::call[] and webserver
 
 
 #define DEFCALL_FG      RA8875_WHITE                    // default callsign fg color
 #define DEFCALL_BG      RA8875_BLACK                    // default callsign bg color
-#define DEFONAIR_FG     RA8875_WHITE                    // default OTA fg color
-#define DEFONAIR_BG     RA8875_RED                      // default OTA bg color
+#define DEFTITLE_FG     RA8875_WHITE                    // default title fg color
+#define DEFTITLE_BG     RA8875_BLUE                     // default title bg color
+#define DEFONAIR_FG     RA8875_WHITE                    // default ON AIR fg color
+#define DEFONAIR_BG     RA8875_RED                      // default ON AIR bg color
 
-static const char def_oatitle[] = "ON THE AIR";         // default oa string
-static bool onair_sw, onair_hw;                         // sw and hw ON AIR states
+
+// persistent sw and hw ON AIR states for setOnAir*
+static bool onair_sw, onair_hw;
 
 
 /* draw full spectrum in the given box.
@@ -30,25 +32,25 @@ static void drawRainbow (SBox &box)
 }
 
 /* draw the given string centered in the given box using the current font and given color.
- * if it fits in one line, set y to box.y + l1dy.
- * if fits as two lines draw set their y to box.y + l12dy and l22dy.
+ * if it fits in one line, set y to box.y + l1_dy.
+ * if fits as two lines draw set their y to box.y + l12_dy and l22_dy.
  * if latter two are 0 then don't even try 2 lines.
  * if it won't fit in 2 lines and anyway is set, draw as much as possible.
  * if shadow then draw a black background shadow.
  * return whether it all fit some way.
  */
 static bool drawBoxText (bool anyway, const SBox &box, const char *str, uint16_t color,
-uint16_t l1dy, uint16_t l12dy, uint16_t l22dy, bool shadow)
+uint16_t l1_dy, uint16_t l12_dy, uint16_t l22_dy, bool shadow)
 {
     // try as one line
     uint16_t w = getTextWidth (str);
     if (w < box.w) {
-        shadowString (str, shadow, color, box.x + (box.w-w)/2, box.y + l1dy);
+        shadowString (str, shadow, color, box.x + (box.w-w)/2, box.y + l1_dy);
         return (true);
     }
 
     // bale if don't even want to try 2 lines
-    if (l12dy == 0 || l22dy == 0)
+    if (l12_dy == 0 || l22_dy == 0)
         return (false);
 
     // try splitting into 2 lines
@@ -63,14 +65,14 @@ uint16_t l1dy, uint16_t l12dy, uint16_t l22dy, bool shadow)
             uint16_t w1 = getTextWidth (s1);
             if (w1 < box.w) {
                 // 2 lines fit
-                shadowString (s0, shadow, color, box.x + (box.w - w0)/2, box.y + l12dy);
-                shadowString (s1, shadow, color, box.x + (box.w - w1)/2, box.y + l22dy);
+                shadowString (s0, shadow, color, box.x + (box.w - w0)/2, box.y + l12_dy);
+                shadowString (s1, shadow, color, box.x + (box.w - w1)/2, box.y + l22_dy);
                 return (true);
             } else if (anyway) {
                 // print 1st line and as AMAP of 2nd
-                shadowString (s0, shadow, color, box.x + (box.w - w0)/2, box.y + l12dy);
+                shadowString (s0, shadow, color, box.x + (box.w - w0)/2, box.y + l12_dy);
                 w1 = maxStringW (s1, box.w);
-                shadowString (s1, shadow, color, box.x + (box.w - w1)/2, box.y + l22dy);
+                shadowString (s1, shadow, color, box.x + (box.w - w1)/2, box.y + l22_dy);
                 return (false);
             }
         }
@@ -150,39 +152,189 @@ static uint16_t getNextColor (uint16_t current, uint16_t contrast)
     return (colors[0]);
 }
 
+/* set colors for the given system, if set.
+ */
+static void setCallColors (CallColors_t &cu, uint16_t *fg, uint16_t *bg, uint8_t *rainbow)
+{
+    if (fg)
+        cu.fg = *fg;
+    if (rainbow)
+        cu.rainbow = *rainbow;
+    else if (bg) {
+        cu.bg = *bg;
+        cu.rainbow = 0;
+    }
+}
+
+/* common test for setOnAirHW() and setOnAirSW().
+ * N.B. only draw when aggregate state changes to avoid flashing.
+ */
+static void setOnAir(void)
+{
+    if (onair_hw || onair_sw) {
+        if (cs_info.type != CT_ONAIR) {
+            cs_info.type = CT_ONAIR;
+            drawCallsign (true);
+            Serial.printf ("CALL: on\n");
+        }
+    } else if (cs_info.type == CT_ONAIR) {
+        cs_info.type = cs_info.prefer;
+        drawCallsign (true);
+        Serial.printf ("CALL: back to %s\n", cs_info.type == CT_CALL ? "call" : "title");
+    }
+}
+
+/* run a menu over the callsign area to allow editing title and ON AIR message.
+ */
+static void runCallsignMenu (void)
+{
+    // check whether PTT is a potentional option
+    bool ptt = getFlrig(NULL,NULL) || getRigctld(NULL,NULL);
+
+    // set up the ONAIR field
+    MenuText onair_mt;
+    memset (&onair_mt, 0, sizeof(onair_mt));
+    char new_onair[NV_ONAIR_LEN];
+    char ptt_label[] = "PTT:  ";
+    memcpy (new_onair, cs_info.onair, sizeof(new_onair));
+    onair_mt.text = new_onair;
+    onair_mt.t_mem = sizeof(new_onair);
+    onair_mt.label = ptt_label;
+    onair_mt.l_mem = sizeof(ptt_label);
+    onair_mt.w_len = cs_info.box.w/6 - 16;              // window width, chars
+    onair_mt.to_upper = false;
+    onair_mt.c_pos = 0;
+    onair_mt.w_pos = 0;
+    onair_mt.text_fp = NULL;                            // accept any message
+    onair_mt.label_fp = NULL;
+
+    // set up the title field
+    MenuText title_mt;
+    memset (&title_mt, 0, sizeof(title_mt));
+    char title_label[] = "Title:";
+    char new_title[NV_TITLE_LEN];
+    memcpy (new_title, cs_info.title, sizeof(new_title));
+    title_mt.text = new_title;
+    title_mt.t_mem = sizeof(new_title);
+    title_mt.label = title_label;
+    title_mt.l_mem = sizeof(title_label);
+    title_mt.w_len = onair_mt.w_len;                    // same
+    title_mt.to_upper = false;
+    title_mt.c_pos = 0;
+    title_mt.w_pos = 0;
+    title_mt.text_fp = NULL;                            // accept any message
+    title_mt.label_fp = NULL;
+
+    MenuItem mitems[] = {
+        {MENU_LABEL,                     false, 0, 2, "Show: "},                  // 0
+        {MENU_1OFN, cs_info.prefer == CT_CALL,  1, 2, "call"},                    // 1
+        {MENU_1OFN, cs_info.prefer == CT_TITLE, 1, 2, "title"},                   // 2
+        {MENU_TEXT,                      false, 2, 2, title_mt.label, &title_mt}, // 3
+        {ptt ? MENU_TEXT : MENU_IGNORE,  false, 3, 2, onair_mt.label, &onair_mt}, // 4
+    };
+
+    SBox menu_b = cs_info.box;                          // copy, not ref!
+    menu_b.x += 20;
+    menu_b.y += 2;
+    menu_b.w = 0;
+    menu_b.h = 0;
+
+    SBox ok_b;
+    MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 3, NARRAY(mitems), mitems};
+    if (runMenu (menu)) {
+
+        // save new messages
+        if (ptt && strcmp (new_onair, cs_info.onair)) {
+            (void) strtrim (new_onair);
+            Serial.printf ("CALL: new onair: %s\n", new_onair);
+            memcpy (cs_info.onair, new_onair, NV_ONAIR_LEN);
+            NVWriteString (NV_ONAIR_MSG, cs_info.onair);
+        }
+        if (strcmp (new_title, cs_info.title)) {
+            (void) strtrim (new_title);
+            Serial.printf ("CALL: new title: %s\n", new_title);
+            memcpy (cs_info.title, new_title, NV_TITLE_LEN);
+            NVWriteString (NV_TITLE, cs_info.title);
+        }
+
+        // always set preferred type but only set current type if not showing PTT
+        if (mitems[1].set)
+            cs_info.prefer = CT_CALL;
+        else if (mitems[2].set)
+            cs_info.prefer = CT_TITLE;
+        NVWriteUInt8 (NV_PREFERTITLE, cs_info.prefer == CT_TITLE);
+        if (cs_info.type != CT_ONAIR)
+            cs_info.type = cs_info.prefer;
+    }
+
+    // redraw either way to remove menu
+    drawCallsign (true);    // fg and bg
+}
+
 /* load cs_info color settings from NV and set default ON AIR text
  */
 void initCallsignInfo()
 {
-    if (!NVReadUInt16 (NV_CALL_FG_COLOR, &cs_info.call_fg)) {
-        cs_info.call_fg = DEFCALL_FG;
-        NVWriteUInt16 (NV_CALL_FG_COLOR, cs_info.call_fg);
+    // init call colors -- call itself is handled in setup.cpp
+    if (!NVReadUInt16 (NV_CALL_FG, &cs_info.call_col.fg)) {
+        cs_info.call_col.fg = DEFCALL_FG;
+        NVWriteUInt16 (NV_CALL_FG, cs_info.call_col.fg);
     }
-    if (!NVReadUInt16 (NV_CALL_BG_COLOR, &cs_info.call_bg)) {
-        cs_info.call_bg = DEFCALL_BG;
-        NVWriteUInt16 (NV_CALL_BG_COLOR, cs_info.call_bg);
+    if (!NVReadUInt16 (NV_CALL_BG, &cs_info.call_col.bg)) {
+        cs_info.call_col.bg = DEFCALL_BG;
+        NVWriteUInt16 (NV_CALL_BG, cs_info.call_col.bg);
     }
-    if (!NVReadUInt8 (NV_CALL_BG_RAINBOW, &cs_info.call_bg_rainbow)) {
-        cs_info.call_bg_rainbow = 0;
-        NVWriteUInt8 (NV_CALL_BG_RAINBOW, cs_info.call_bg_rainbow);
-    }
-
-    if (!NVReadUInt16 (NV_OA_FG_COLOR, &cs_info.oa_fg)) {
-        cs_info.oa_fg = DEFONAIR_FG;
-        NVWriteUInt16 (NV_OA_FG_COLOR, cs_info.oa_fg);
-    }
-    if (!NVReadUInt16 (NV_OA_BG_COLOR, &cs_info.oa_bg)) {
-        cs_info.oa_bg = DEFONAIR_BG;
-        NVWriteUInt16 (NV_OA_BG_COLOR, cs_info.oa_bg);
-    }
-    if (!NVReadUInt8 (NV_OA_BG_RAINBOW, &cs_info.oa_bg_rainbow)) {
-        cs_info.oa_bg_rainbow = 0;
-        NVWriteUInt8 (NV_OA_BG_RAINBOW, cs_info.oa_bg_rainbow);
+    if (!NVReadUInt8 (NV_CALL_RAINBOW, &cs_info.call_col.rainbow)) {
+        cs_info.call_col.rainbow = 0;
+        NVWriteUInt8 (NV_CALL_RAINBOW, cs_info.call_col.rainbow);
     }
 
-    // always start showing call sign but prep oa_title regardless
-    cs_info.showing_oa = false;
-    setOnAirText (NULL);
+
+    // init onair colors and text
+    if (!NVReadUInt16 (NV_ONAIR_FG, &cs_info.onair_col.fg)) {
+        cs_info.onair_col.fg = DEFONAIR_FG;
+        NVWriteUInt16 (NV_ONAIR_FG, cs_info.onair_col.fg);
+    }
+    if (!NVReadUInt16 (NV_ONAIR_BG, &cs_info.onair_col.bg)) {
+        cs_info.onair_col.bg = DEFONAIR_BG;
+        NVWriteUInt16 (NV_ONAIR_BG, cs_info.onair_col.bg);
+    }
+    if (!NVReadUInt8 (NV_ONAIR_RAINBOW, &cs_info.onair_col.rainbow)) {
+        cs_info.onair_col.rainbow = 0;
+        NVWriteUInt8 (NV_ONAIR_RAINBOW, cs_info.onair_col.rainbow);
+    }
+    if (!NVReadString (NV_ONAIR_MSG, cs_info.onair)) {
+        cs_info.onair[0] = '\0';
+        NVWriteString (NV_ONAIR_MSG, cs_info.onair);
+    }
+
+
+    // init title colors and text
+    if (!NVReadUInt16 (NV_TITLE_FG, &cs_info.title_col.fg)) {
+        cs_info.title_col.fg = DEFTITLE_FG;
+        NVWriteUInt16 (NV_TITLE_FG, cs_info.title_col.fg);
+    }
+    if (!NVReadUInt16 (NV_TITLE_BG, &cs_info.title_col.bg)) {
+        cs_info.title_col.bg = DEFTITLE_BG;
+        NVWriteUInt16 (NV_TITLE_BG, cs_info.title_col.bg);
+    }
+    if (!NVReadUInt8 (NV_TITLE_RAINBOW, &cs_info.title_col.rainbow)) {
+        cs_info.title_col.rainbow = 0;
+        NVWriteUInt8 (NV_TITLE_RAINBOW, cs_info.title_col.rainbow);
+    }
+    if (!NVReadString (NV_TITLE, cs_info.title)) {
+        cs_info.title[0] = '\0';
+        NVWriteString (NV_TITLE, cs_info.title);
+    }
+
+
+    // get preferred display when not PTT
+    uint8_t preftitle;
+    if (!NVReadUInt8 (NV_PREFERTITLE, &preftitle)) {
+        preftitle = 0;                  // initial default is CT_CALL
+        NVWriteUInt8 (NV_PREFERTITLE, preftitle);
+    }
+    cs_info.type = cs_info.prefer = preftitle ? CT_TITLE : CT_CALL;
 }
 
 /* draw callsign using cs_info.
@@ -190,29 +342,43 @@ void initCallsignInfo()
  */
 void drawCallsign (bool all)
 {
-    // handy
-    uint16_t fg_c = cs_info.showing_oa ? cs_info.oa_fg : cs_info.call_fg;
-    bool rainbow = (cs_info.showing_oa && cs_info.oa_bg_rainbow)
-                                                        || (!cs_info.showing_oa && cs_info.call_bg_rainbow);
+    uint16_t fg_c = 0, bg_c = 0;
+    bool rainbow = false;
+    const char *text = NULL;
+    switch (cs_info.type) {
+    case CT_CALL:
+        fg_c = cs_info.call_col.fg;
+        bg_c = cs_info.call_col.bg;
+        rainbow = cs_info.call_col.rainbow != 0;
+        text = cs_info.call;
+        break;
+    case CT_TITLE:
+        fg_c = cs_info.title_col.fg;
+        bg_c = cs_info.title_col.bg;
+        rainbow = cs_info.title_col.rainbow != 0;
+        text = cs_info.title;
+        break;
+    case CT_ONAIR:
+        fg_c = cs_info.onair_col.fg;
+        bg_c = cs_info.onair_col.bg;
+        rainbow = cs_info.onair_col.rainbow != 0;
+        text = cs_info.onair;
+        break;
+    }
 
     // start with background iff all
     if (all) {
         if (rainbow)
             drawRainbow (cs_info.box);
-        else {
-            uint16_t bg = cs_info.showing_oa ? cs_info.oa_bg : cs_info.call_bg;
-            fillSBox (cs_info.box, bg);
-        }
+        else
+            fillSBox (cs_info.box, bg_c);
     }
 
     // set text color
     tft.setTextColor(fg_c);
 
-    // get desired string
-    const char *str = cs_info.showing_oa ? cs_info.oa_title : cs_info.call;
-
-    // copy str to slash0 with each '0' replaced with DEL which has been hacked into a slashed-0 in BOLD/LARGE
-    StackMalloc call_slash0(str);
+    // copy text to slash0 with each '0' replaced with DEL to use slashed-0 hacked into BOLD/LARGE
+    StackMalloc call_slash0(text);
     char *slash0 = (char *) call_slash0.getMem();
     for (char *z = slash0; *z != '\0' ; z++) {
         if (*z == '0')
@@ -225,56 +391,93 @@ void drawCallsign (bool all)
     if (!drawBoxText (false, box, slash0, fg_c, box.h/2+20, 0, 0, rainbow)) {
         // try smaller font
         selectFontStyle (BOLD_FONT, SMALL_FONT);
-        if (!drawBoxText (false, box, str, fg_c, box.h/2+10, 0, 0, rainbow)) {
+        if (!drawBoxText (false, box, text, fg_c, box.h/2+10, 0, 0, rainbow)) {
             // try smaller font
             selectFontStyle (LIGHT_FONT, SMALL_FONT);
-            if (!drawBoxText (false, box, str, fg_c, box.h/2+10, 0, 0, rainbow)) {
+            if (!drawBoxText (false, box, text, fg_c, box.h/2+10, 0, 0, rainbow)) {
                 // try all upper case to allow 2 lines without regard to descenders
-                StackMalloc call_uc(str);
+                StackMalloc call_uc(text);
                 char *uc = (char *) call_uc.getMem();
                 for (char *z = uc; *z != '\0' ; z++)
                     *z = toupper(*z);
                 if (!drawBoxText (false, box, uc, fg_c, box.h/2+10, box.h/2-2, box.h-3, rainbow)) {
                     // try smallest font
                     selectFontStyle (LIGHT_FONT, FAST_FONT);
-                    (void) drawBoxText (true, box, str, fg_c, box.h/2-10, box.h/2-14, box.h/2+4, rainbow);
+                    (void) drawBoxText (true, box, text, fg_c, box.h/2-10, box.h/2-14, box.h/2+4, rainbow);
                 }
             }
         }
     }
 }
 
-/* set the ON AIR text, else set it to the default.
- * N.B. this neither sets showing_ao nor displays the message.
+/* set and save the given callsign usage info.
+ * N.B. this can NOT be used to change the real call sign.
  */
-void setOnAirText (const char *s)
+void setCallsignInfo (Call_t t, const char *text, uint16_t *fg, uint16_t *bg, uint8_t *rainbow)
 {
-    free (cs_info.oa_title);
-    if (s)
-        cs_info.oa_title = strdup (s);
-    else
-        cs_info.oa_title = strdup (def_oatitle);
-}
+    switch (t) {
 
-/* common test for setOnAirHW() and setOnAirSW().
- * N.B. only draw when aggregate state changes to avoid flashing.
- */
-static void setOnAir(void)
-{
-    if (onair_hw || onair_sw) {
-        if (!cs_info.showing_oa) {
-            cs_info.showing_oa = true;
-            drawCallsign (true);
-            Serial.printf ("ONAIR: on\n");
+    case CT_CALL:
+
+        // just set colors, ignore text
+        setCallColors (cs_info.call_col, fg, bg, rainbow);
+        NVWriteUInt16 (NV_CALL_FG, cs_info.call_col.fg);
+        NVWriteUInt16 (NV_CALL_BG, cs_info.call_col.bg);
+        NVWriteUInt8 (NV_CALL_RAINBOW, cs_info.call_col.rainbow);
+
+        // change to call view unless showing ONAIR
+        if (cs_info.type != CT_ONAIR)
+            cs_info.type = CT_CALL;
+
+        // save as preferred display
+        cs_info.prefer = CT_CALL;
+
+        break;
+
+    case CT_TITLE:
+
+        // just change colors if text is empty
+        if (text && strlen(text) > 0) {
+            quietStrncpy (cs_info.title, text, sizeof(cs_info.title));
+            NVWriteString (NV_TITLE, cs_info.title);
         }
-    } else if (cs_info.showing_oa) {
-        cs_info.showing_oa = false;
-        drawCallsign (true);
-        Serial.printf ("ONAIR: off\n");
+
+        setCallColors (cs_info.title_col, fg, bg, rainbow);
+        NVWriteUInt16 (NV_TITLE_FG, cs_info.title_col.fg);
+        NVWriteUInt16 (NV_TITLE_BG, cs_info.title_col.bg);
+        NVWriteUInt8 (NV_TITLE_RAINBOW, cs_info.title_col.rainbow);
+
+        // change to title view unless showing ONAIR
+        if (cs_info.type != CT_ONAIR)
+            cs_info.type = CT_TITLE;
+
+        // save as preferred display
+        cs_info.prefer = CT_TITLE;
+
+        break;
+
+    case CT_ONAIR:
+
+        // just change colors if text is empty
+        if (text && strlen(text) > 0) {
+            quietStrncpy (cs_info.onair, text, sizeof(cs_info.onair));
+            NVWriteString (NV_ONAIR_MSG, cs_info.onair);
+        }
+
+        setCallColors (cs_info.onair_col, fg, bg, rainbow);
+        NVWriteUInt16 (NV_ONAIR_FG, cs_info.onair_col.fg);
+        NVWriteUInt16 (NV_ONAIR_BG, cs_info.onair_col.bg);
+        NVWriteUInt8 (NV_ONAIR_RAINBOW, cs_info.onair_col.rainbow);
+
+        // just make changes without forcing type, still only shows when really PTT
+
+        break;
     }
 }
 
-/* set ON AIR message state from hardware input -- cooperates with setOnAirSW()
+/* set ON AIR message state from hardware input.
+ *   -- cooperates with setOnAirSW()
+ *   -- harmless if set repeatedly to the same state
  */
 void setOnAirHW (bool on)
 {
@@ -282,7 +485,9 @@ void setOnAirHW (bool on)
     setOnAir();
 }
 
-/* set ON AIR message state from software input -- cooperates with setOnAirSH()
+/* set ON AIR message state from software input.
+ *   -- cooperates with setOnAirHW()
+ *   -- harmless if set repeatedly to the same state
  */
 void setOnAirSW (bool on)
 {
@@ -290,110 +495,83 @@ void setOnAirSW (bool on)
     setOnAir();
 }
 
-
-/* given a touch location check if Op wants to change callsign fg.
- * if so then update cs_info and return true else false.
+/* rotate cu to next fg color
  */
-bool checkCallsignTouchFG (const SCoord &b)
+static void cycleFGColor (NV_Name fg_e, CallColors_t &cu)
 {
-    SBox left_half = cs_info.box;
-    left_half.w /=2;
+    // choose foreground as if over a black background when really over rainbow
+    uint16_t bg = cu.rainbow ? RA8875_BLACK : cu.bg;
+    cu.fg = getNextColor (cu.fg, bg);
 
-    if (inBox (b, left_half)) {
-        // assume black background when over rainbow
-        if (cs_info.showing_oa) {
-            uint16_t bg = cs_info.oa_bg_rainbow ? RA8875_BLACK : cs_info.oa_bg;
-            cs_info.oa_fg = getNextColor (cs_info.oa_fg, bg);
-            NVWriteUInt16 (NV_OA_FG_COLOR, cs_info.oa_fg);
-        } else {
-            uint16_t bg = cs_info.call_bg_rainbow ? RA8875_BLACK : cs_info.call_bg;
-            cs_info.call_fg = getNextColor (cs_info.call_fg, bg);
-            NVWriteUInt16 (NV_CALL_FG_COLOR, cs_info.call_fg);
-        }
-        return (true);
-    }
-    return (false);
+    if (fg_e != NV_NONE)
+        NVWriteUInt16 (fg_e, cu.fg);
 }
 
-
-/* given a touch location check if Op wants to change callsign bg.
- * if so then update cs_info and return true else false.
+/* rotate cu to next bg color
  */
-bool checkCallsignTouchBG (const SCoord &b)
+static void cycleBGColor (NV_Name bg_e, NV_Name rainbow_e, CallColors_t &cu)
 {
-    SBox right_half = cs_info.box;
-    right_half.w /=2;
-    right_half.x += right_half.w;
-
-    if (inBox (b, right_half)) {
-        // cycle through rainbow when current bg is white
-        if (cs_info.showing_oa) {
-            if (cs_info.oa_bg_rainbow) {
-                cs_info.oa_bg_rainbow = 0;
-                cs_info.oa_bg = getNextColor (cs_info.oa_bg, cs_info.oa_fg);
-            } else if (cs_info.oa_bg == RA8875_WHITE) {
-                cs_info.oa_bg_rainbow = 1;
-                // leave cs_info.oa_bg to resume color scan when rainbow turned off
-            } else {
-                cs_info.oa_bg = getNextColor (cs_info.oa_bg, cs_info.oa_fg);
-            }
-            NVWriteUInt16 (NV_OA_BG_COLOR, cs_info.oa_bg);
-            NVWriteUInt8 (NV_OA_BG_RAINBOW, cs_info.oa_bg_rainbow);
-        } else {
-            if (cs_info.call_bg_rainbow) {
-                cs_info.call_bg_rainbow = 0;
-                cs_info.call_bg = getNextColor (cs_info.call_bg, cs_info.call_fg);
-            } else if (cs_info.call_bg == RA8875_WHITE) {
-                cs_info.call_bg_rainbow = 1;
-                // leave cs_info.call_bg to resume color scan when rainbow turned off
-            } else {
-                cs_info.call_bg = getNextColor (cs_info.call_bg, cs_info.call_fg);
-            }
-            NVWriteUInt16 (NV_CALL_BG_COLOR, cs_info.call_bg);
-            NVWriteUInt8 (NV_CALL_BG_RAINBOW, cs_info.call_bg_rainbow);
-        }
-        return (true);
-    }
-
-    return (false);
-}
-
-/* set and save new cs_info parameters.
- * all args are optional but whether msg determines whether remaining args apply to oa or call.
- * rainbow supercedes bg if both are present.
- */
-void setCallsignInfo (const char *oa_msg, uint16_t *fg, uint16_t *bg, uint8_t *rainbow)
-{
-    if (oa_msg) {
-        // affect ON AIR message
-        setOnAirText (oa_msg);
-        cs_info.showing_oa = true;
-        if (fg) {
-            cs_info.oa_fg = *fg;
-        }
-        if (rainbow) {
-            cs_info.oa_bg_rainbow = *rainbow;
-        } else if (bg) {
-            cs_info.oa_bg = *bg;
-            cs_info.oa_bg_rainbow = 0;
-        }
-        NVWriteUInt16 (NV_OA_FG_COLOR, cs_info.oa_fg);
-        NVWriteUInt16 (NV_OA_BG_COLOR, cs_info.oa_bg);
-        NVWriteUInt8 (NV_OA_BG_RAINBOW, cs_info.oa_bg_rainbow);
+    // cycle through rainbow when current bg is white
+    if (cu.rainbow) {
+        cu.rainbow = 0;
+        cu.bg = getNextColor (cu.bg, cu.fg);
+    } else if (cu.bg == RA8875_WHITE) {
+        cu.rainbow = 1;
+        // leave cu.bg in order to resume color scan when rainbow is turned off
     } else {
-        // affect normal call sign
-        cs_info.showing_oa = false;
-        if (fg) {
-            cs_info.call_fg = *fg;
+        cu.bg = getNextColor (cu.bg, cu.fg);
+    }
+
+    if (bg_e != NV_NONE)
+        NVWriteUInt16 (bg_e, cu.bg);
+    if (rainbow_e != NV_NONE)
+        NVWriteUInt8 (rainbow_e, cu.rainbow);
+}
+
+/* given a touch location within cs_info.box perform appropriate action, which might include
+ * changes to cs_info.
+ */
+void doCallsignTouch (const SCoord &s)
+{
+    if (s.x < cs_info.box.x + cs_info.box.w/3) {
+
+        // left third: fg
+
+        switch (cs_info.type) {
+        case CT_CALL:
+            cycleFGColor (NV_CALL_FG, cs_info.call_col);
+            break;
+        case CT_TITLE:
+            cycleFGColor (NV_TITLE_FG, cs_info.title_col);
+            break;
+        case CT_ONAIR:
+            cycleFGColor (NV_ONAIR_FG, cs_info.onair_col);
+            break;
         }
-        if (rainbow) {
-            cs_info.call_bg_rainbow = *rainbow;
-        } else if (bg) {
-            cs_info.call_bg = *bg;
-            cs_info.call_bg_rainbow = 0;
+        drawCallsign (false);   // just foreground
+
+    } else if (s.x < cs_info.box.x + 2*cs_info.box.w/3) {
+
+        // center third: menu
+
+        runCallsignMenu();
+
+    } else {
+
+        // right third: background
+
+        switch (cs_info.type) {
+        case CT_CALL:
+            cycleBGColor (NV_CALL_BG, NV_CALL_RAINBOW, cs_info.call_col);
+            break;
+        case CT_TITLE:
+            cycleBGColor (NV_TITLE_BG, NV_TITLE_RAINBOW, cs_info.title_col);
+            break;
+        case CT_ONAIR:
+            cycleBGColor (NV_ONAIR_BG, NV_ONAIR_RAINBOW, cs_info.onair_col);
+            break;
         }
-        NVWriteUInt16 (NV_CALL_FG_COLOR, cs_info.call_fg);
-        NVWriteUInt16 (NV_CALL_BG_COLOR, cs_info.call_bg);
-        NVWriteUInt8 (NV_CALL_BG_RAINBOW, cs_info.call_bg_rainbow);
+        drawCallsign (true);    // fg and bg
+
     }
 }

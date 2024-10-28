@@ -418,10 +418,10 @@ char live_html[] =  R"_raw_html_(
                     }
 
                     else if (e.data.substring(0,5) == 'open ') {
-                        // try to open a url
+                        // try to open a url in a tab
                         var url = e.data.substring(5);
-                        console.log('opening ', url);
-                        if (!window.open(url))
+                        console.log('opening ' + url);
+                        if (!window.open(url, "HamClockTab"))           // naming the tab allows reuse
                             console.log ("Failed to open ", url);
                     }
 

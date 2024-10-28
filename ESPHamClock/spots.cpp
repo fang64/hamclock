@@ -91,8 +91,7 @@ static void drawSpotTXRXOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMa
     LabelType lblt = getSpotLabelType();
     if (lblt == LBL_NONE)
         return;
-    int dot_r = getSpotDotRadius();
-    // printf ("******** dot_r %d\n", dot_r);        // RBF
+    int dot_r = getSpotDotRadius() * 1.414F;                            // larger for squares
 
     // handy bools
     bool tx_end = txrx == LOME_TXEND;
@@ -106,7 +105,7 @@ static void drawSpotTXRXOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMa
 
     // get screen coord, insure over map
     SCoord s;
-    ll2s (ll, s, dot_r);  // overkill since raw >= canonical
+    ll2s (ll, s, dot_r);                                                // overkill since raw >= canonical
     if (!overMap(s))
         return;
 
@@ -205,10 +204,10 @@ void drawSpotOnList (const SBox &box, const DXSpot &spot, int row, uint16_t bg_c
     char line[50];
 
     // set entire row to bg_col
-    const uint16_t x = box.x+4;
+    const uint16_t x = box.x+1;
     const uint16_t y = box.y + LISTING_Y0 + row*LISTING_DY;
     const uint16_t h = LISTING_DY - 2;
-    tft.fillRect (x, y-LISTING_OS, box.w-6, h, bg_col);
+    tft.fillRect (x, y-LISTING_OS, box.w-2, h, bg_col);
 
     // pretty freq, fixed 8 chars, bg matching band color assignment
     const char *f_fmt = spot.kHz < 1e6F ? "%8.1f" : "%8.0f";
@@ -282,6 +281,14 @@ int16_t app_color)
     ss.drawScrollDownControl (box, dw_color, app_color);
 }
 
+/* return whether the two spots appear substantially similar
+ */
+bool checkDXDup (const DXSpot &s1, const DXSpot &s2)
+{
+    return (strcmp (s1.tx_call, s2.tx_call) == 0
+                && abs (s1.spotted - s2.spotted) < MAXDUP_DT
+                && fabsf (s1.kHz-s2.kHz) < 0.1F);
+}
 
 
 /* qsort-style function to compare two DXSpot by freq
@@ -293,18 +300,27 @@ int qsDXCFreq (const void *v1, const void *v2)
     return (roundf(s1->kHz - s2->kHz));
 }
 
-/* qsort-style function to compare two DXSpot by rx_call AKA id
+/* qsort-style function to compare two DXSpot by rx_call
  */
-int qsDXCDECall (const void *v1, const void *v2)
+int qsDXCRXCall (const void *v1, const void *v2)
 {
     DXSpot *s1 = (DXSpot *)v1;
     DXSpot *s2 = (DXSpot *)v2;
     return (strcmp (s1->rx_call, s2->rx_call));
 }
 
-/* qsort-style function to compare two DXSpot by tx_grid
+/* qsort-style function to compare two DXSpot by rx_grid
  */
-int qsDXCDXCall (const void *v1, const void *v2)
+int qsDXCRXGrid (const void *v1, const void *v2)
+{
+    DXSpot *s1 = (DXSpot *)v1;
+    DXSpot *s2 = (DXSpot *)v2;
+    return (strcmp (s1->rx_grid, s2->rx_grid));
+}
+
+/* qsort-style function to compare two DXSpot by tx_call
+ */
+int qsDXCTXCall (const void *v1, const void *v2)
 {
     DXSpot *s1 = (DXSpot *)v1;
     DXSpot *s2 = (DXSpot *)v2;

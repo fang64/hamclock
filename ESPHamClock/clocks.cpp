@@ -868,7 +868,7 @@ time_t nowWO()
  */
 time_t myNow()
 {
-    static uint32_t prev_m;
+    static uint32_t m_ok;
     static time_t prev_t;
     uint32_t m = millis();
     time_t t = now();
@@ -879,21 +879,29 @@ time_t myNow()
 
     // check progress
     if (t < prev_t) {
+
+        // backwards ?!?!
         if (!time_running_bw)
             Serial.printf ("time: running backwards: %ld -> %ld\n", (long)prev_t, (long)t);
         time_running_bw = true;
 
     } else if (t == prev_t) {
-        if (prev_m && m - prev_m > 2000) {
-            if (!time_is_stuck)
-                Serial.printf ("time: stuck at %ld\n", (long)t);
-            time_is_stuck = true;
+
+        // beware same t for longer than a few seconds
+        if (m_ok && m > m_ok + 5000) {
+            if (!time_is_stuck) {
+                Serial.printf ("time: stuck at %ld for %u ms (%u - %u)\n", (long)t, m - m_ok, m, m_ok);
+                time_is_stuck = true;
+            }
         }
 
     } else {
+
+        // normal advance
         if (time_is_stuck)
-            Serial.printf ("time: unstuck at %ld\n", (long)t);
+            Serial.printf ("time: unstuck at %ld after %d ms\n", (long)t, m - m_ok);
         time_is_stuck = false;
+        m_ok = m;
         if (time_running_bw)
             Serial.printf ("time: running forwards now: %ld -> %ld\n", (long)prev_t, (long)t);
         time_running_bw = false;
@@ -901,7 +909,6 @@ time_t myNow()
 
     // history
     prev_t = t;
-    prev_m = m;
 
     return (t);
 }
@@ -1418,114 +1425,6 @@ void drawTZ (TZInfo &tzi)
     tft.setTextColor (tzi.color);
     tft.setCursor (tzi.box.x+(tzi.box.w-w)/2, tzi.box.y+(tzi.box.h-h)/2);
     tft.print (buf);
-}
-
-/* handy means to break time interval into HHhMM or MM:SS given dt in hours.
- * return each component and the appropriate separate, the expectation is the time
- * can then be printed using *printf (%02d%c%02d", a, sep, b);
- */
-void formatSexa (float dt_hrs, int &a, char &sep, int &b)
-{
-    if (dt_hrs < 1) {
-        // next event is less than 1 hour away, show time in MM:SS
-        dt_hrs *= 60;                           // dt_hrs is now minutes
-        sep = ':';
-    } else {
-        // next event is at least an hour away, show time in HH:MM
-        sep = 'h';
-    }
-
-    // same hexa conversion either way
-    a = (int)dt_hrs;
-    b = (int)((dt_hrs-(int)dt_hrs)*60);
-}
-
-/* format a representation of the given age into line[] exactly cols chars long.
- * return line.
- */
-char *formatAge (time_t age, char *line, int line_l, int cols)
-{
-    // eh?
-    if (age < 0) {
-        Serial.printf ("formatAge(%ld,%d) resetting negative age to zero\n", age, cols);
-        age = 0;
-    }
-
-    switch (cols) {
-
-    case 1:
-
-        // show minutes up thru 9 else +
-        if (age < 10*60-30)
-            snprintf (line, line_l, "%d", (int)(age/60));
-        else
-            strcpy (line, "+");
-        break;
-
-    case 2:
-
-        // show minutes up thru 59 else hrs up thru 9 then +
-        if (age < 60*60-30)
-            snprintf (line, line_l, "%d", (int)(age/60));
-        else if (age < 10*60*60-1800)
-            snprintf (line, line_l, "%dh", (int)(age/(60*60)));
-        else
-            strcpy (line, "+");
-        break;
-
-    case 3:
-
-        // show 2 digits then s, m, h, d, M, y
-        if (age < 60) {
-            snprintf (line, line_l, "%2lds", (long)age);
-        } else if (age < (60*60)) {
-            snprintf (line, line_l, "%2ldm", (long)age/60);
-        } else if (age < 3600*24) {
-            snprintf (line, line_l, "%2ldh", (long)age/3600);
-        } else if (age < 100L*3600*24) {
-            snprintf (line, line_l, "%2ldd", (long)age/(3600L*24));
-        } else if (age < 365L*3600*24) {
-            snprintf (line, line_l, "%2ldM", (long)age/(31L*3600*24));
-        } else {
-            snprintf (line, line_l, "%2ldy", (long)age/(365L*3600*24));
-        }
-
-        break;
-
-    case 4:
-
-        // show seconds thru years(!)
-        if (age < 60) {
-            snprintf (line, line_l, "%3lds", (long)age);
-        } else if (age < (60*60)) {
-            snprintf (line, line_l, "%3ldm", (long)age/60);
-        } else if (age < (24*60*60-1800)) {
-            float hours = age/3600.0F;
-            if (hours < 9.95F)
-                snprintf (line, line_l, "%3.1fh", hours);
-            else
-                snprintf (line, line_l, "%3.0fh", hours);
-        } else if (age < 3600L*(24*365-12)) {
-            float days = age/(3600*24.0F);
-            if (days < 9.95F)
-                snprintf (line, line_l, "%3.1fd", days);
-            else
-                snprintf (line, line_l, "%3.0fd", days);
-        } else {
-            float years = age/(3600*24*365.0F);
-            if (years < 9.95F)
-                snprintf (line, line_l, "%3.1fy", years);
-            else
-                snprintf (line, line_l, "%3.0fy", years);
-        }
-        break;
-
-    default:
-        fatalError("formatAge bad cols %d", cols);
-        break;
-    }
-
-    return (line);
 }
 
 /* given a standard 3-char abbreviation for month, set *monp to 1-12 and return true, else false

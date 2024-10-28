@@ -242,6 +242,11 @@ static void setUsrDateTime (const char *iso8601)
         usr_datetime = mktime (&tms);
 }
 
+static int qsStrcmp (const void *v1, const void *v2)
+{
+    return (strcmp (*(char **)v1, *(char **)v2));
+}
+
 /* log some misc sys info
  */
 static void logSys()
@@ -256,6 +261,20 @@ static void logSys()
         printf ("ruid %d euid %d\n", getuid(), geteuid());
         if (pw_file)
             capturePasswords (pw_file);
+
+        // show sorted env w/o changing original list
+        extern char **environ;
+        int n_env = 0;
+        for (char **e = environ; *e != NULL; e++)
+            n_env++;
+        char **env_sort = (char **) malloc (n_env * sizeof(char *));
+        for (int i = 0; i < n_env; i++)
+            env_sort[i] = environ[i];
+        qsort (env_sort, n_env, sizeof(char*), qsStrcmp);
+        printf ("ENV:\n");
+        for (int i = 0; i < n_env; i++)
+            printf ("  %s\n", env_sort[i]);
+        free (env_sort);
 }
 
 /* log easy OS info
@@ -274,6 +293,22 @@ static void logOS()
 
         if ((system ("uname -a") >> 8) != 0)
             printf ("uname failed\n");
+
+    #if defined (_IS_LINUX_RPI)
+        // try to display model name
+        static const char rpi_model[] = "/sys/firmware/devicetree/base/model";
+        int rpi_fd = open (rpi_model, O_RDONLY);
+        if (rpi_fd >= 0) {
+            char line[100];
+            ssize_t nr = read (rpi_fd, line, sizeof(line));
+            if (nr > 0)
+                printf ("%.*s\n", (int)nr, line);                // line does not include \n
+            else
+                printf ("%.*s: %s\n", (int)nr, line, nr == 0 ? "EOF" : strerror(errno));
+        } else {
+            printf ("%s: %s\n", rpi_model, strerror(errno));
+        }
+    #endif
 }
 
 /* show version info

@@ -1318,9 +1318,9 @@ static void drawAnalogBigClock (bool all)
             hpt[2].x = roundf(BAC_X0 + bac_fr * cosf(a+BAC_HTTH));
             hpt[2].y = roundf(bac_y0 + bac_fr * sinf(a+BAC_HTTH));
             if (color_hands)
-                tft.fillPolygon (hpt, NARRAY(hpt), BAC_FCOL);
+                fillPolygon (hpt, NARRAY(hpt), BAC_FCOL);
             else
-                tft.drawPolygon (hpt, NARRAY(hpt), BAC_FCOL);
+                drawPolygon (hpt, NARRAY(hpt), BAC_FCOL);
         }
 
         // minute ticks
@@ -1375,9 +1375,9 @@ static void drawAnalogBigClock (bool all)
         hand[2].x = BAC_X0+prev_hrdx2; hand[2].y = bac_y0-prev_hrdy2;
         hand[3].x = BAC_X0+prev_hrdx3; hand[3].y = bac_y0-prev_hrdy3;
         if (color_hands)
-            tft.fillPolygon (hand, NARRAY(hand), RA8875_BLACK);
+            fillPolygon (hand, NARRAY(hand), RA8875_BLACK);
         else
-            tft.drawPolygon (hand, NARRAY(hand), RA8875_BLACK);
+            drawPolygon (hand, NARRAY(hand), RA8875_BLACK);
 
         prev_hrdx1 = roundf(bac_hrr/3.0F * cosf(hr_angle-BAC_HRTH));
         prev_hrdy1 = roundf(bac_hrr/3.0F * sinf(hr_angle-BAC_HRTH));
@@ -1393,9 +1393,9 @@ static void drawAnalogBigClock (bool all)
         hand[2].x = BAC_X0+prev_mndx2; hand[2].y = bac_y0-prev_mndy2;
         hand[3].x = BAC_X0+prev_mndx3; hand[3].y = bac_y0-prev_mndy3;
         if (color_hands)
-            tft.fillPolygon (hand, NARRAY(hand), RA8875_BLACK);
+            fillPolygon (hand, NARRAY(hand), RA8875_BLACK);
         else
-            tft.drawPolygon (hand, NARRAY(hand), RA8875_BLACK);
+            drawPolygon (hand, NARRAY(hand), RA8875_BLACK);
 
         prev_mndx1 = roundf(bac_mnr/3.0F * cosf(mn_angle-BAC_MNTH));
         prev_mndy1 = roundf(bac_mnr/3.0F * sinf(mn_angle-BAC_MNTH));
@@ -1445,10 +1445,10 @@ static void drawAnalogBigClock (bool all)
         hand[2].x = BAC_X0+prev_hrdx2; hand[2].y = bac_y0-prev_hrdy2;
         hand[3].x = BAC_X0+prev_hrdx3; hand[3].y = bac_y0-prev_hrdy3;
         if (color_hands)
-            tft.fillPolygon (hand, NARRAY(hand), BAC_HRCOL);
+            fillPolygon (hand, NARRAY(hand), BAC_HRCOL);
         else {
-            tft.fillPolygon (hand, NARRAY(hand), RA8875_BLACK);
-            tft.drawPolygon (hand, NARRAY(hand), BAC_HRCOL);
+            fillPolygon (hand, NARRAY(hand), RA8875_BLACK);
+            drawPolygon (hand, NARRAY(hand), BAC_HRCOL);
         }
     }
     if (want_numbers || mn_moved || hrmn_hit || mnsc_hit) {
@@ -1458,12 +1458,12 @@ static void drawAnalogBigClock (bool all)
         hand[2].x = BAC_X0+prev_mndx2; hand[2].y = bac_y0-prev_mndy2;
         hand[3].x = BAC_X0+prev_mndx3; hand[3].y = bac_y0-prev_mndy3;
         if (color_hands) {
-            tft.fillPolygon (hand, NARRAY(hand), BAC_MNCOL);
+            fillPolygon (hand, NARRAY(hand), BAC_MNCOL);
             if (hrmn_hit)
-                tft.drawPolygon (hand, NARRAY(hand), RA8875_BLACK);        // mn hand border if near hr hand
+                drawPolygon (hand, NARRAY(hand), RA8875_BLACK);        // mn hand border if near hr hand
         } else {
-            tft.fillPolygon (hand, NARRAY(hand), RA8875_BLACK);
-            tft.drawPolygon (hand, NARRAY(hand), BAC_HRCOL);
+            fillPolygon (hand, NARRAY(hand), RA8875_BLACK);
+            drawPolygon (hand, NARRAY(hand), BAC_HRCOL);
         }
     }
 

@@ -13,7 +13,7 @@ static const char ww_page[] = "/worldwx/wx.txt";        // URL for the gridded w
 
 // config
 #define WWXTBL_INTERVAL (45*60)                         // world wx table update interval, secs
-#define MAX_WXINFO_AGE  (20*60)                         // max acceptable de/x_wx entry age, secs
+#define MAX_WXINFO_AGE  (30*60)                         // max acceptable de/x_wx entry age, secs
 
 // WXInfo and exactly where it applies and when it should be updated
 typedef struct {

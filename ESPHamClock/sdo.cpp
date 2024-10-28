@@ -111,12 +111,10 @@ static bool drawSDOImage (const SBox &box)
     const char *fn = sdo_file[sdo_choice];
 
     // check local file first
-    bool need_fresh = true;             // assume true until proven otherwise
     char local_path[1000];
-    snprintf (local_path, sizeof(local_path), "%s/%s", our_dir.c_str(), fn);
     struct stat sbuf;
-    if (stat (local_path, &sbuf) == 0)
-        need_fresh = myNow() > sbuf.st_mtime + SDO_IMG_INTERVAL;
+    snprintf (local_path, sizeof(local_path), "%s/%s", our_dir.c_str(), fn);
+    bool need_fresh = stat (local_path, &sbuf) < 0 || myNow() > sbuf.st_mtime + SDO_IMG_INTERVAL;
 
     // assume download bad until proven otherwise
     bool ok = !need_fresh;

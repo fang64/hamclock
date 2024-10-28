@@ -24,11 +24,10 @@
 // public
 int n_roweb, n_rwweb;                                   // stats for user agent
 bool liveweb_fs_ready;                                  // set when ok to send fullscreen command
-char *liveweb_openurl;                                  // a url to attempt to open
 int liveweb_rw_port = LIVEWEB_RW_PORT;                  // r/w server port -- can be changed with -w
 int liveweb_ro_port = LIVEWEB_RO_PORT;                  // r/o server port -- can be changed with -r
 int liveweb_max = 10;                                   // max allowed connections < ws.h::MAX_CLIENTS
-int liveweb_to;                                         // timeout, minutes
+int liveweb_to;                                         // client inactivity timeout, minutes
 const int liveweb_maxmax = MAX_CLIENTS-1;               // max max for -help
 
 
@@ -41,6 +40,12 @@ const int liveweb_maxmax = MAX_CLIENTS-1;               // max max for -help
 
 // trace level
 static int live_verbose = 0;                            // more chatter if > 0
+
+
+// record client and possible URL for it to display.
+static ws_cli_conn_t *lastest_ws_touch_client;          // most recent client performing set_touch
+static char *liveweb_openurl;                           // malloced url to attempt to open, else NULL
+static pthread_mutex_t lw_url_lock = PTHREAD_MUTEX_INITIALIZER; // thread-safe access for liveweb_openurl
 
 
 // complete scene on browser for each web socket
@@ -389,7 +394,7 @@ static void getLivePNG (ws_cli_conn_t *client, char args[], size_t args_len)
  * we might also:
  *   send a message to enable fullscreen once ready from setup.cpp. must be sent continuously
  *     because we can't tell when user reloaded their page;
- *   open liveweb_openurl
+ *   send a command to the browser to open liveweb_openurl
  *   timeout if reach inactivity limit
  */
 static void getLiveUpdate (ws_cli_conn_t *client, char args[], size_t args_len)
@@ -401,11 +406,17 @@ static void getLiveUpdate (ws_cli_conn_t *client, char args[], size_t args_len)
     if (liveweb_fs_ready && getWebFullScreen())
         sendFullScreen (client);
 
-    // inform to open a URL -- N.B. free and set to NULL after making attempt
-    if (liveweb_openurl) {
-        sendURL (client, liveweb_openurl);
-        free (liveweb_openurl);
-        liveweb_openurl = NULL;
+    // check for pending openurl if this client did a touch
+    if (lastest_ws_touch_client == client) {
+        pthread_mutex_lock (&lw_url_lock);
+        if (liveweb_openurl) {
+            Serial.printf ("LIVE: sending URL %s\n", liveweb_openurl);
+            sendURL (client, liveweb_openurl);
+            free (liveweb_openurl);
+            liveweb_openurl = NULL;
+            lastest_ws_touch_client = NULL;
+        }
+        pthread_mutex_unlock (&lw_url_lock);
     }
 
     // close if time out
@@ -561,6 +572,9 @@ static void setLiveTouch (ws_cli_conn_t *client, char args[], size_t args_len)
             wifi_tt_s.y = y;
             wifi_tt = button ? TT_TAP_BX : TT_TAP;              // 0 means button 1 -- go figure
 
+            // record this client as the latest to do a touch
+            lastest_ws_touch_client = client;
+
             Serial.printf ("LIVE: set_touch %d %d with %d\n", wifi_tt_s.x, wifi_tt_s.y, button);
         }
     }
@@ -683,14 +697,15 @@ static void ws_onopen(ws_cli_conn_t *client)
             bye ("No memory for new live session pixels\n");
 
         // increment appropriate counter
-        if (client->port == liveweb_ro_port)
+        if (client->port == liveweb_ro_port) {
             n_roweb += 1;
-        else
+            Serial.printf ("LIVE: new RO session %d from %s now running\n", n_roweb, ws_getaddress(client));
+        } else {
             n_rwweb += 1;
-
+            Serial.printf ("LIVE: new RW session %d from %s now running\n", n_rwweb, ws_getaddress(client));
+        }
 
         // init user action time
-        Serial.printf ("LIVE: new session starts at %ld\n", (long)myNow());
         client->action_t = myNow();
     }
 
@@ -702,8 +717,6 @@ static void ws_onopen(ws_cli_conn_t *client)
  */
 static void ws_onclose (ws_cli_conn_t *client)
 {
-    Serial.printf ("LIVE: client %s: disconnected\n", ws_getaddress(client));
-
     // remove from si_list
     for (int i = 0; i < si_n; i++) {
         SessionInfo *sip = &si_list[i];
@@ -717,10 +730,13 @@ static void ws_onclose (ws_cli_conn_t *client)
             }
 
             // decrement appropriate counter
-            if (client->port == liveweb_ro_port)
+            if (client->port == liveweb_ro_port) {
                 n_roweb -= 1;
-            else
+                Serial.printf ("LIVE: RO client %s disconnected, now %d\n", ws_getaddress(client), n_roweb);
+            } else {
                 n_rwweb -= 1;
+                Serial.printf ("LIVE: RW client %s disconnected, now %d\n", ws_getaddress(client), n_rwweb);
+            }
 
             return;
         }
@@ -868,4 +884,28 @@ void initLiveWeb (bool verbose)
         if (liveweb_to > 0)
             Serial.printf ("LIVE: timeout set to %d minutes\n", liveweb_to);
     }
+}
+
+/* record desire to open the given url.
+ * client to which it will be sent will be most recent to have done a set_touch.
+ */
+void openLiveWebURL (const char *url)
+{
+    // replace liveweb_openurl
+
+    pthread_mutex_lock (&lw_url_lock);
+    if (liveweb_openurl) {
+        Serial.printf ("LIVE: discarded late URL %s\n", liveweb_openurl);
+        free (liveweb_openurl);
+    }
+    liveweb_openurl = strdup (url);
+    Serial.printf ("LIVE: live web staging URL %s\n", url);
+    pthread_mutex_unlock (&lw_url_lock);
+}
+
+/* return whether there is a pending set_touch
+ */
+bool isLiveWebTouch (void)
+{
+    return (lastest_ws_touch_client != NULL);
 }

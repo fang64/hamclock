@@ -53,6 +53,7 @@ OBJS = \
 	color.o \
         contests.o \
 	cputemp.o \
+	drawextra.o \
 	dxcluster.o \
 	earthmap.o \
 	earthsat.o \
@@ -80,6 +81,7 @@ OBJS = \
 	plotmgmnt.o \
 	prefixes.o \
 	pskreporter.o \
+	qrz.o \
 	radio.o \
 	robinson.o \
 	rss.o \
@@ -97,6 +99,7 @@ OBJS = \
 	string.o \
 	touch.o \
 	tz.o \
+	version.o \
 	webserver.o \
 	watchlist.o \
 	wifi.o \

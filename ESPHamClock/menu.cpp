@@ -31,7 +31,10 @@
  */
 
 
-// #define SHOW_BB                      // RBF
+// #define _SHOW_BB                      // RBF
+#if defined(_SHOW_BB)
+#warning _SHOW_BB is set
+#endif 
 
 // basic parameters
 // allow setting some/all these in Menu?
@@ -39,7 +42,7 @@
 #define MENU_RM         2               // right margin
 #define MENU_RH         11              // row height, includes room for MENU_TEXT cursor
 #define MENU_IS         6               // indicator size
-#define MENU_BB         4               // ok/cancel button horizontal border
+#define MENU_BB         5               // ok/cancel button horizontal border
 #define MENU_BDX        2               // ok/cancel button text horizontal offset
 #define MENU_BDY        2               // ok/cancel button text vertical offset
 #define MENU_FW         6               // MENU_TEXT font width
@@ -76,9 +79,9 @@ static void drawMenuText (const MenuItem &mi, const SBox &pb, bool draw_label, b
     if (draw_label) {
         tft.fillRect (pb.x, pb.y, text_x - pb.x, pb.h, MENU_BGC);
 
-        #if defined(SHOW_BB)
+        #if defined(_SHOW_BB)
             tft.drawRect (pb.x, pb.y, text_x - pb.x, pb.h, RA8875_GREEN);
-        #endif // SHOW_BB
+        #endif // _SHOW_BB
 
         tft.setCursor (pb.x + mi.indent, pb.y+2);
         tft.print (tfp->label);
@@ -87,10 +90,10 @@ static void drawMenuText (const MenuItem &mi, const SBox &pb, bool draw_label, b
     // erase all text, including cursor
     tft.fillRect (text_x, pb.y, pb.w - (text_x - pb.x), pb.h, MENU_BGC);
 
-    #if defined(SHOW_BB)
+    #if defined(_SHOW_BB)
         drawSBox (pb, RA8875_GREEN);
         tft.drawRect (text_x, pb.y, pb.w - (text_x - pb.x), pb.h, RA8875_RED);
-    #endif // SHOW_BB
+    #endif // _SHOW_BB
 
     // check left end
     size_t t_len = strlen(tfp->text);
@@ -139,7 +142,7 @@ static void drawMenuTextMsg (const MenuItem &mi, const SBox &pb, const char *msg
 }
 
 /* draw selector symbol and label for the given menu item in the given pick box.
- * optionally indicate this item has the keyboard focus.
+ * kb_focus indicates this item has the keyboard focus.
  */
 static void menuDrawItem (const MenuItem &mi, const SBox &pb, bool draw_label, bool kb_focus)
 {
@@ -201,15 +204,15 @@ static void menuDrawItem (const MenuItem &mi, const SBox &pb, bool draw_label, b
         break;
 
     case MENU_TEXT:
-        // redraw text and possibly the cursor and/or label
-        drawMenuText (mi, pb, draw_label, mi.set || kb_focus);
+        // this type is complex enough deserves its own drawing code
+        drawMenuText (mi, pb, draw_label, kb_focus);
         break;
     }
 
     // clean up
     free ((void*)no__copy);
 
-    #if defined(SHOW_BB)
+    #if defined(_SHOW_BB)
         drawSBox (pb, RA8875_RED);
     #endif
 
@@ -311,7 +314,6 @@ static void updateMenu (MenuInfo &menu, SBox *pick_boxes, int pick_i, bool kb_fo
         break;
 
     case MENU_TEXT:
-        mi.set = true;
         menuDrawItem (mi, pb, true, kb_focus);
         break;
     }
@@ -507,9 +509,9 @@ static int textFieldEdit (MenuInfo &menu, SBox *pick_boxes, int textf_i, const c
 }
 
 /* update menu from the given tap.
- * return menu.items index, else -1
+ * m_index is index of current menu item, return new item or same if tap not in any item.
  */
-static int checkTapControl (MenuInfo &menu, SBox *pick_boxes, const SCoord &tap)
+static int tapNavigation (MenuInfo &menu, SBox *pick_boxes, int m_index, const SCoord &tap)
 {
     for (int i = 0; i < menu.n_items; i++) {
 
@@ -545,15 +547,18 @@ static int checkTapControl (MenuInfo &menu, SBox *pick_boxes, const SCoord &tap)
                 }
             }
 
+            // erase current location
+            menuDrawItem (menu.items[m_index], pick_boxes[m_index], false, false);
+
             // implement each type of behavior
-            updateMenu (menu, pick_boxes, i, false);
+            updateMenu (menu, pick_boxes, i, mi.type == MENU_TEXT);
 
             // tap found
             return (i);
         }
     }
 
-    return (-1);
+    return (m_index);
 }
 
 /* operate the given menu until ok, cancel or timeout.
@@ -581,8 +586,11 @@ bool runMenu (MenuInfo &menu)
         if (mi.type == MENU_IGNORE)
             continue;
         if (mi.type == MENU_TEXT) {
-            if (i < menu.n_items-1 && menu.items[i+1].type != MENU_TEXT)
+            if (i < menu.n_items-1) {
+                MenuFieldType next_mft = menu.items[i+1].type;
+                if (next_mft != MENU_TEXT && next_mft != MENU_IGNORE)
                 fatalError ("all MENU_TEXT must be last");
+            }
             MenuText *mtp = mi.textf;
             int w = mi.indent + MENU_FW * (mtp->l_mem-1 + mtp->w_len) + MENU_RM;
             if (w > widest_mt)
@@ -703,13 +711,17 @@ bool runMenu (MenuInfo &menu)
         tft.drawPR();
 
     // set kb focus to first member of first active group, if any
-    int focus_i = -1;
+    int focus_idx = -1;
     for (int i = 0; i < menu.n_items; i++) {
         if (MENU_ACTIVE(menu.items[i].type)) {
-            focus_i = i;
+            focus_idx = i;
             break;
         }
     }
+
+    // operations are severely restricted if there are no active menu items
+    // N.B. code below will CRASH if focus < 0.
+    bool is_active_menu = (focus_idx >= 0);
 
     SCoord tap;
     char kb_char;
@@ -736,12 +748,12 @@ bool runMenu (MenuInfo &menu)
             ok = true;
 
             // must also check MenuText field test function if used
-            if (focus_i >= 0 && menu.items[focus_i].type == MENU_TEXT) {
-                MenuItem &mi = menu.items[focus_i];
+            if (is_active_menu && menu.items[focus_idx].type == MENU_TEXT) {
+                MenuItem &mi = menu.items[focus_idx];
                 MenuText *tfp = mi.textf;
                 char ynot[50];
                 if (tfp->text_fp && !(tfp->text_fp)(tfp, ynot, sizeof(ynot))) {
-                    SBox &pb = pick_boxes[focus_i];
+                    SBox &pb = pick_boxes[focus_idx];
                     drawMenuTextMsg (mi, pb, ynot);
                     ok = false;
                 }
@@ -750,22 +762,24 @@ bool runMenu (MenuInfo &menu)
                 break;
         }
 
-        // cancel if check for ESC tap or tap in optional cancel or tap outside box
-        if (kb_char == CHAR_ESC || (menu.cancel == M_CANCELOK && inBox (tap, cancel_b))
-                        || (kb_char == CHAR_NONE && !inBox (tap, menu.menu_b))) {
+        // finished w/o ok if type ESC or tap cancel box or tap anywhere outside the menu box
+        if (kb_char == CHAR_ESC                                                         // type ESC
+                        || (menu.cancel == M_CANCELOK && inBox (tap, cancel_b))         // tap cancel
+                        || (kb_char == CHAR_NONE && !inBox (tap, menu.menu_b))          // tap outside
+                    ) {
             break;
         }
 
         // check for kb or tap control
-        if (kb_char) {
-            if (focus_i >= 0) {
-                if (menu.items[focus_i].type == MENU_TEXT)
-                    focus_i = textFieldEdit (menu, pick_boxes, focus_i, kb_char);
+        if (is_active_menu) {
+            if (kb_char) {
+                if (menu.items[focus_idx].type == MENU_TEXT)
+                    focus_idx = textFieldEdit (menu, pick_boxes, focus_idx, kb_char);
                 else
-                    focus_i = kbNavigation (menu, pick_boxes, focus_i, kb_char);
-            }
-        } else
-            focus_i = checkTapControl (menu, pick_boxes, tap);
+                    focus_idx = kbNavigation (menu, pick_boxes, focus_idx, kb_char);
+            } else
+                focus_idx = tapNavigation (menu, pick_boxes, focus_idx, tap);
+        }
     }
 
     // done

@@ -45,9 +45,9 @@ static const uint8_t nv_sizes[NV_N] = {
     4,                          // NV_DX_LNG
 
     4,                          // NV_DX_GRID_OLD
-    2,                          // NV_CALL_FG_COLOR
-    2,                          // NV_CALL_BG_COLOR
-    1,                          // NV_CALL_BG_RAINBOW
+    2,                          // NV_CALL_FG
+    2,                          // NV_CALL_BG
+    1,                          // NV_CALL_RAINBOW
     1,                          // NV_PSK_SHOWDIST
 
     4,                          // NV_UTC_OFFSET
@@ -66,7 +66,7 @@ static const uint8_t nv_sizes[NV_N] = {
     1,                          // NV_METRIC_ON
     1,                          // NV_LKSCRN_ON
     1,                          // NV_MAPPROJ
-    1,                          // NV_ROTATE_SCRN
+    1,                          // NV_ROTATE_SCRN_OLD
 
     NV_WIFI_SSID_LEN,           // NV_WIFI_SSID
     NV_WIFI_PW_OLD_LEN,         // NV_WIFI_PASSWD_OLD
@@ -76,8 +76,8 @@ static const uint8_t nv_sizes[NV_N] = {
 
     1,                          // NV_DX_SRSS
     1,                          // NV_GRIDSTYLE
-    2,                          // NV_DPYON
-    2,                          // NV_DPYOFF
+    2,                          // NV_DPYON_OLD
+    2,                          // NV_DPYOFF_OLD
     NV_DXHOST_LEN,              // NV_DXHOST
 
     2,                          // NV_DXPORT
@@ -117,7 +117,7 @@ static const uint8_t nv_sizes[NV_N] = {
     2,                          // NV_SHORTPATHCOLOR
 
     2,                          // NV_LONGPATHCOLOR
-    2,                          // NV_PLOTOPS
+    2,                          // NV_PLOTOPS_OLD
     1,                          // NV_NIGHT_ON
     NV_DE_GRID_LEN,             // NV_DE_GRID
     NV_DX_GRID_LEN,             // NV_DX_GRID
@@ -153,7 +153,7 @@ static const uint8_t nv_sizes[NV_N] = {
     NV_DXCLCMD_OLD_LEN,         // NV_DXCMD2_OLD
 
     NV_DXCLCMD_OLD_LEN,         // NV_DXCMD3_OLD
-    1,                          // NV_DXCMDUSED not used as of V3.06
+    1,                          // NV_DXCMDUSED_OLD
     1,                          // NV_PSK_MODEBITS
     4,                          // NV_PSK_BANDS
     2,                          // NV_160M_COLOR
@@ -173,7 +173,7 @@ static const uint8_t nv_sizes[NV_N] = {
     2,                          // NV_2M_COLOR
     4,                          // NV_DASHED
     1,                          // NV_BEAR_MAG
-    1,                          // NV_WSJT_SETSDX
+    1,                          // NV_WSJT_SETSDX_OLD
     1,                          // NV_WSJT_DX
 
     2,                          // NV_PSK_MAXAGE
@@ -182,8 +182,8 @@ static const uint8_t nv_sizes[NV_N] = {
     1,                          // NV_SDO
     1,                          // NV_SDOROT
 
-    1,                          // NV_ONTASPOTA
-    1,                          // NV_ONTASSOTA
+    1,                          // NV_ONTASPOTA_OLD
+    1,                          // NV_ONTASSOTA_OLD
     2,                          // NV_BRB_ROTSET
     2,                          // NV_ROTCOLOR
     1,                          // NV_CONTESTS
@@ -194,9 +194,9 @@ static const uint8_t nv_sizes[NV_N] = {
     1,                          // NV_I2CON
     4,                          // NV_DXMAX_T
 
-    NV_POTAWLIST_OLD_LEN,       // NV_POTAWLIST_OLD
+    NV_POTAWLIST1_OLD_LEN,      // NV_POTAWLIST1_OLD
     1,                          // NV_SCROLLDIR
-    1,                          // NV_SCROLLLEN
+    1,                          // NV_SCROLLLEN_OLD
     NV_DXCLCMD_OLD_LEN,         // NV_DXCMD4_OLD
     NV_DXCLCMD_OLD_LEN,         // NV_DXCMD5_OLD
 
@@ -209,16 +209,16 @@ static const uint8_t nv_sizes[NV_N] = {
     NV_DXCLCMD_OLD_LEN,         // NV_DXCMD11_OLD
     2,                          // NV_DXCMDMASK
     1,                          // NV_DXWLISTMASK
-    1,                          // NV_RANKSW
+    1,                          // NV_RANKSW_OLD
     1,                          // NV_NEWDXDEWX
 
     1,                          // NV_WEBFS
     1,                          // NV_ZOOM
     2,                          // NV_PANX
     2,                          // NV_PANY
-    1,                          // NV_POTAWLISTMASK
+    1,                          // NV_POTAWLISTMASK_OLD
 
-    NV_SOTAWLIST_OLD_LEN,       // NV_SOTAWLIST_OLD
+    NV_SOTAWLIST1_OLD_LEN,      // NV_SOTAWLIST1_OLD
     4,                          // NV_ONCEALARM
     1,                          // NV_ONCEALARMMASK
     1,                          // NV_PANEROTP
@@ -227,16 +227,16 @@ static const uint8_t nv_sizes[NV_N] = {
     1,                          // NV_MAPROTP
     2,                          // NV_MAPROTSET
     1,                          // NV_GRAYDPY
-    1,                          // NV_SOTAWLISTMASK
+    1,                          // NV_SOTAWLISTMASK_OLD
     1,                          // NV_ADIFWLISTMASK
 
     NV_DXWLIST_LEN,             // NV_DXWLIST
     NV_ADIFWLIST_LEN,           // NV_ADIFWLIST
     1,                          // NV_ADIFSORT
-    4,                          // NV_ADIFBANDS
-    NV_POTAWLIST_LEN,           // NV_POTAWLIST
+    4,                          // NV_ADIFBANDS_OLD
+    NV_POTAWLIST_OLD_LEN,       // NV_POTAWLIST_OLD
 
-    NV_SOTAWLIST_LEN,           // NV_SOTAWLIST
+    NV_SOTAWLIST_OLD_LEN,       // NV_SOTAWLIST_OLD
     NV_ADIFFN_LEN,              // NV_ADIFFN
     NV_NTPHOST_LEN,             // NV_NTPHOST
     NV_GPSDHOST_LEN,            // NV_GPSDHOST
@@ -249,9 +249,9 @@ static const uint8_t nv_sizes[NV_N] = {
     1,                          // NV_AUTOMAP
 
     1,                          // NV_DXCAGE
-    2,                          // NV_OA_FG_COLOR
-    2,                          // NV_OA_BG_COLOR
-    1,                          // NV_OA_BG_RAINBOW
+    2,                          // NV_ONAIR_FG
+    2,                          // NV_ONAIR_BG
+    1,                          // NV_ONAIR_RAINBOW
     NV_DXCLCMD_LEN,             // NV_DXCMD0
 
     NV_DXCLCMD_LEN,             // NV_DXCMD1
@@ -267,6 +267,21 @@ static const uint8_t nv_sizes[NV_N] = {
     NV_DXCLCMD_LEN,             // NV_DXCMD10
 
     NV_DXCLCMD_LEN,             // NV_DXCMD11
+    NV_ONAIR_LEN,               // NV_ONAIR_MSG
+    1,                          // NV_SETRADIO
+    NV_ONTAWLIST_LEN,           // NV_ONTAWLIST
+    1,                          // NV_ONTAWLISTMASK
+
+    1,                          // NV_ONTASORTBY
+    NV_ONTAORG_LEN,             // NV_ONTAORG
+    NV_TITLE_LEN,               // NV_TITLE
+    2,                          // NV_TITLE_FG
+    2,                          // NV_TITLE_BG
+
+    1,                          // NV_TITLE_RAINBOW
+    1,                          // NV_ONTA_MAXAGE
+    1,                          // NV_QRZID
+    1,                          // NV_PREFERTITLE
 
 };
 
@@ -279,6 +294,11 @@ static const uint8_t nv_sizes[NV_N] = {
  * 
  *******************************************************************/
 
+/* table of each NV_Name starting address, ie, its NV_COOKIE.
+ * built once at runtime for O(1) access thenceforth.
+ */
+static uint16_t nv_addrs[NV_N];
+
 
 /* called to init EEPROM. ignore after first call.
  */
@@ -290,12 +310,21 @@ static void initEEPROM()
         return;
     before = true;
 
+    // init EEPROM
     uint16_t ee_used, ee_size;
     reportEESize (ee_used, ee_size);
     if (ee_used > ee_size)
         fatalError ("EEPROM too large: %u > %u", ee_used, ee_size);
     EEPROM.begin(ee_size);      
     Serial.printf ("EEPROM size %u + %u = %u, max %u\n", NV_BASE, ee_used-NV_BASE, ee_used, ee_size);
+
+    // build nv_addrs[]
+    uint16_t e_addr = NV_BASE;
+    for (int i = 0; i < NV_N; i++) {
+        nv_addrs[i] = e_addr;
+        e_addr += 1 + nv_sizes[i];              // + 1 for cookie
+    }
+
 
 // #define _SHOW_EEPROM
 #if defined(_SHOW_EEPROM)
@@ -347,11 +376,8 @@ static bool nvramStartAddr (NV_Name e, uint16_t *e_addr, uint8_t *e_len)
 {
     if (e >= NV_N)
         return(false);
-    *e_addr = NV_BASE;
-    uint8_t i;
-    for (i = 0; i < e; i++)
-        *e_addr += 1 + nv_sizes[i];     // + room for cookie
-    *e_len = nv_sizes[i];
+    *e_addr = nv_addrs[e];
+    *e_len = nv_sizes[e];
     return (true);
 }
 

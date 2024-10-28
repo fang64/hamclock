@@ -267,9 +267,6 @@ class WatchList {
 
             bool match = false;
 
-            if (verbose > 1)
-                Serial.printf ("WLIST: checking %s => %s %s %g\n", dx.tx_call, home_call, dx_call, dx_MHz);
-
             for (int i = 0; i < n_specs; i++) {
                 OneSpec &s = specs[i];
 
@@ -305,6 +302,11 @@ class WatchList {
                     break;
                 }
             }
+
+            if (verbose > 1)
+                Serial.printf ("WLIST: checking %s (%s %s %g): %smatch\n",
+                                        dx.tx_call, home_call, dx_call, dx_MHz,
+                                        match ? "" : "no ");
 
             return (match);
         }
@@ -408,6 +410,8 @@ WatchListShow checkWatchListSpot (WatchListId wl_id, const DXSpot &dxsp)
 {
     if (!wlIdOk(wl_id))
         fatalError ("checkWatchList bogus %d", (int)wl_id);
+
+    wlists[wl_id].setVerbosity (gimbal_trace_level);
 
     switch (getWatchListState (wl_id, NULL)) {
     case WLA_OFF:

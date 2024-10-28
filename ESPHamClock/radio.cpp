@@ -615,7 +615,7 @@ static void *radioThread (void *unused)
 }
 
 
-/* insure radioThread is running, harmless if called repeatedly, fatal if fails.
+/* insure radioThread is running, harmless if called repeatedly, fatal if thread creation fails.
  * return whether ok to proceed with rig io.
  */
 static bool startRadioThread (void)
@@ -648,17 +648,19 @@ static bool startRadioThread (void)
  */
 void setRadioSpot (float kHz)
 {
-    // set kx3
 #if defined(_SUPPORT_KX3)
-    setKX3Spot (kHz);
+    // setting kx3 does not require the control thread
+    if (setRadio())
+        setKX3Spot (kHz);
 #endif // _SUPPORT_KX3
 
     // insure thread running or bale if not needed
     if (!startRadioThread())
         return;
 
-    // inform thread
-    set_fl_Hz = set_hl_Hz = (int) (kHz * 1000);
+    // inform thread if desired
+    if (setRadio())
+        set_fl_Hz = set_hl_Hz = (int) (kHz * 1000);
 }
 
 /* leisurely poll radio for state

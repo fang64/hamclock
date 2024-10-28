@@ -9,8 +9,8 @@
  *   [ ] We don't actually enforce the Status ID to be WSJT-X so this may also work for, say, JTCluster.
  *
  * We actually keep two lists:
- *   dx_spots: the complete raw list, not sorted; length in n_dxspots
- *   dxwl_spots: watchlist-filterd and time-sorted for display; length in dxc_ss.n_data
+ *   dxc_spots: the complete raw list, not filtered nor sorted; length in n_dxspots.
+ *   dxwl_spots: watchlist-filterd and time-sorted for display; length in dxc_ss.n_data.
  * 
  * can inject spots from local file for debugging, see getNextDXCLine()
  */
@@ -30,23 +30,28 @@
 #define KEEPALIVE_DT    600                     // send something if last_spot idle this long, secs
 #define BGCHECK_DT      5000                    // background checkDXCluster period, millis
 #define MAXUSE_DT       (5*60)                  // remove all spots memory if pane not used this long, secs
-#define MAXDUP_DT       (5*60)                  // remove dups this close in time, secs
-#define MAXKEEP_DT      3600                    // max age on dx_spots list, secs
+#define MAXKEEP_DT      3600                    // max age on dxc_spots list, secs
 #define DXCMSG_DT       500                     // delay before sending each cluster message, millis
 static time_t last_spot;                        // last time a spot arrived
 
 // connection info
-static WiFiClient dx_client;                    // persistent TCP connection while displayed ...
+static WiFiClient dxc_client;                   // persistent TCP connection while displayed ...
 static WiFiUDP wsjtx_server;                    // or persistent UDP "connection" to WSJT-X client program
 static bool multi_cntn;                         // set when cluster has noticed multiple connections
 #define MAX_LCN         10                      // max lost connections per MAX_LCDT
 #define MAX_LCDT        3600                    // max lost connections period, seconds
 
-// spots. only kept while open.
-static DXSpot *dx_spots;                        // malloced list, complete
-static int n_dxspots;                           // n spots in dx_spots
+// ages
+static uint8_t dxc_ages[] = {10, 20, 40, 60};   // minutes
+static uint8_t dxc_age;                         // one of above, once set
+#define N_DXCAGES NARRAY(dxc_ages)              // handy count
+
+// state
+static DXSpot *dxc_spots;                       // malloced list, complete
+static int n_dxspots;                           // n spots in dxc_spots
 static DXSpot *dxwl_spots;                      // malloced list, filtered for display, count in dxc_ss.n_data
 static ScrollState dxc_ss;                      // scrolling info
+static bool dxc_showbio, dxc_showbio_init;      // whether click shows bio, and whether this is inited
 
 
 
@@ -139,23 +144,25 @@ static void dxcLog (const char *fmt, ...)
     Serial.printf ("DXC: %s", msg);
 }
 
-/* set radio and DX from given row, known to be defined
+/* set bio, radio and DX from given row, known to be defined
  */
 static void engageDXCRow (DXSpot &s)
 {
+    if (dxc_showbio)
+        openQRZBio (s);
     setRadioSpot(s.kHz);
     newDX (s.tx_ll, NULL, s.tx_call);
 }
 
-/* rebuild dxwl_spots from dx_spots
+/* rebuild dxwl_spots from dxc_spots
  */
 static void rebuildDXWatchList(void)
 {
     // extract qualifying spots
-    time_t oldest = myNow() - 60*getDXCMaxAge();        // convert minutes to seconds
+    time_t oldest = myNow() - 60*dxc_age;               // minutes to seconds
     dxc_ss.n_data = 0;                                  // reset count, don't bother to resize dxwl_spots
     for (int i = 0; i < n_dxspots; i++) {
-        DXSpot &spot = dx_spots[i];
+        DXSpot &spot = dxc_spots[i];
         if (spot.spotted >= oldest && checkWatchListSpot (WLID_DX, spot) != WLS_NO) {
             dxwl_spots = (DXSpot *) realloc (dxwl_spots, (dxc_ss.n_data+1) * sizeof(DXSpot));
             if (!dxwl_spots)
@@ -169,7 +176,7 @@ static void rebuildDXWatchList(void)
     dxc_ss.scrollToNewest();
 }
 
-/* add a new spot to dx_spots[] then update dxwl_spots
+/* add a new spot to dxc_spots[] then update dxwl_spots
  */
 static void addDXClusterSpot (DXSpot &new_spot)
 {
@@ -182,13 +189,11 @@ static void addDXClusterSpot (DXSpot &new_spot)
     int n_ancient = 0;
     bool dup = false;
     for (int i = 0; i < n_dxspots; i++) {
-        DXSpot &spot = dx_spots[i];
-        if (!dup && abs (new_spot.spotted - spot.spotted) < MAXDUP_DT 
-                                && fabsf(new_spot.kHz-spot.kHz) < 0.1F
-                                && strcmp (new_spot.tx_call, spot.tx_call) == 0) {
+        DXSpot &spot = dxc_spots[i];
+        if (!dup && checkDXDup (new_spot, spot)) {
             dup = true;
         } else if (spot.spotted < ancient) {
-            memmove (&dx_spots[i], &dx_spots[i+1], (n_dxspots - i - 1) * sizeof(DXSpot));
+            memmove (&dxc_spots[i], &dxc_spots[i+1], (n_dxspots - i - 1) * sizeof(DXSpot));
             n_ancient += 1;
         }
     }
@@ -213,13 +218,13 @@ static void addDXClusterSpot (DXSpot &new_spot)
     // tweak map location for unique picking
     ditherLL (new_spot.tx_ll);
 
-    // bump dx_spots for one more
-    dx_spots = (DXSpot *) realloc (dx_spots, (n_dxspots+1) * sizeof(DXSpot));
-    if (!dx_spots)
+    // bump dxc_spots for one more
+    dxc_spots = (DXSpot *) realloc (dxc_spots, (n_dxspots+1) * sizeof(DXSpot));
+    if (!dxc_spots)
         fatalError ("No memory for %d DX spots", n_dxspots+1);
 
-    // append to dx_spots
-    dx_spots[n_dxspots++] = new_spot;
+    // append to dxc_spots
+    dxc_spots[n_dxspots++] = new_spot;
 
     // update dxwl_spots
     rebuildDXWatchList();
@@ -459,7 +464,7 @@ static void detectMultiConnection (const char *line)
         multi_cntn = true;
 }
 
-/* send a message to dx_client.
+/* send a message to dxc_client.
  * here for convenience of stdarg, logging and delay.
  */
 static void dxcSendMsg (const char *fmt, ...)
@@ -481,7 +486,7 @@ static void dxcSendMsg (const char *fmt, ...)
     wdDelay (DXCMSG_DT);
 
     // send and log
-    dx_client.print (msg);
+    dxc_client.print (msg);
     dxcLog ("> %s", msg);
 }
 
@@ -506,8 +511,8 @@ static void requestRecentSpots (void)
  */
 static void resetDXMem()
 {
-    free (dx_spots);
-    dx_spots = NULL;
+    free (dxc_spots);
+    dxc_spots = NULL;
     n_dxspots = 0;
 
     free (dxwl_spots);
@@ -516,7 +521,7 @@ static void resetDXMem()
 }
 
 /* try to connect to the cluster.
- * if success: dx_client or wsjtx_server is live and return true,
+ * if success: dxc_client or wsjtx_server is live and return true,
  * else: both are closed, display error msg in box, return false.
  * N.B. inforce MAX_LCN
  */
@@ -577,8 +582,8 @@ static bool connectDXCluster (const SBox &box)
     } else {
 
         // open fresh socket
-        dx_client.stop();
-        if (wifiOk() && dx_client.connect(dxhost, dxport)) {
+        dxc_client.stop();
+        if (wifiOk() && dxc_client.connect(dxhost, dxport)) {
 
             // valid connection -- keep an eye out for lost connection
 
@@ -597,7 +602,7 @@ static bool connectDXCluster (const SBox &box)
             char buf[200];
             const size_t bufl = sizeof(buf);
             cl_type = CT_UNKNOWN;
-            while (getTCPLine (dx_client, buf, bufl, &bl)) {
+            while (getTCPLine (dxc_client, buf, bufl, &bl)) {
                 dxcLog ("< %s\n", buf);
                 detectMultiConnection (buf);
                 strtolower(buf);
@@ -617,7 +622,7 @@ static bool connectDXCluster (const SBox &box)
             if (cl_type == CT_UNKNOWN) {
                 incLostConn();
                 showDXClusterErr (box, "Type unknown or Login rejected");
-                dx_client.stop();
+                dxc_client.stop();
                 return (false);
             }
             if (cl_type == CT_DXSPIDER)
@@ -631,7 +636,7 @@ static bool connectDXCluster (const SBox &box)
             if (!sendDXClusterDELLGrid()) {
                 incLostConn();
                 showDXClusterErr (box, "Error sending DE grid");
-                dx_client.stop();
+                dxc_client.stop();
                 return (false);
             }
 
@@ -652,7 +657,7 @@ static bool connectDXCluster (const SBox &box)
             rebuildDXWatchList();
 
             // confirm still ok
-            if (!dx_client) {
+            if (!dxc_client) {
                 incLostConn();
                 if (multi_cntn)
                     showDXClusterErr (box, "Multiple logins");
@@ -667,7 +672,7 @@ static bool connectDXCluster (const SBox &box)
     }
 
     // sorry
-    showDXClusterErr (box, "%s:%d Connection failed", dxhost, dxport);    // calls dx_client.stop()
+    showDXClusterErr (box, "%s:%d Connection failed", dxhost, dxport);    // calls dxc_client.stop()
     return (false);
 }
 
@@ -692,7 +697,7 @@ static void sendDXClusterHeartbeat()
     dxcSendMsg ("%s\n", hbcmd);
 }
 
-/* send our lat/long and grid to dx_client, depending on cluster type.
+/* send our lat/long and grid to dxc_client, depending on cluster type.
  * return whether successful.
  * N.B. can be called any time so be prepared to do nothing fast if not appropriate.
  */
@@ -761,7 +766,7 @@ static void initDXGUI (const SBox &box)
     dxc_ss.scrollToNewest();
 }
 
-/* connect dx_client to a dx cluster or wsjtx_server.
+/* connect dxc_client to a dx cluster or wsjtx_server.
  * return whether successful.
  */
 static bool initDXCluster(const SBox &box)
@@ -780,6 +785,18 @@ static bool initDXCluster(const SBox &box)
 
         // reinit times
         last_spot = myNow();
+
+        // max age
+        if (!NVReadUInt8 (NV_DXCAGE, &dxc_age)) {
+            dxc_age = dxc_ages[1];
+            NVWriteUInt8 (NV_DXCAGE, dxc_age);
+        }
+
+        // determine dxc_showbio first time, menu might change
+        if (!dxc_showbio_init) {
+            dxc_showbio = getQRZId() != QRZ_NONE;
+            dxc_showbio_init = true;
+        }
 
         // ok
         return (true);
@@ -805,12 +822,21 @@ static bool crackClusterSpot (char line[], DXSpot &news)
         return (false);
     }
 
-    // looks good so far, reach over and extract time augmented with current seconds
+    // looks good so far, reach over to extract time and perform strict sanity check
+    int hr = 10*(line[70]-'0') + (line[71]-'0');
+    int mn = 10*(line[72]-'0') + (line[73]-'0');
+    if (!isdigit(line[70]) || !isdigit(line[71]) || !isdigit(line[72]) || !isdigit(line[73])
+                        || hr < 0 || hr > 59 || mn < 0 || mn > 60) {
+        dxcLog ("bogus time in spot: '%4.4s'\n", &line[70]);
+        return (false);
+    }
+
+    // assign time augmented with current date
     tmElements_t tm;
     time_t n0 = myNow();
     breakTime (n0, tm);
-    tm.Hour = 10*(line[70]-'0') + (line[71]-'0');
-    tm.Minute = 10*(line[72]-'0') + (line[73]-'0');
+    tm.Hour = hr;
+    tm.Minute = mn;
     news.spotted = makeTime (tm);
 
     // the spot does not indicate the date so assume future times are from yesterday
@@ -837,29 +863,39 @@ static void runDXClusterMenu (const SBox &box)
     char wl_state[WLA_MAXLEN];                                  // wl state, menu may change
     setupWLMenuText (WLID_DX, mtext, box, wl_state);
 
-    // build the possible ages
-    #define NDXC_AGES 4                                         // must match setup.cpp::dxcage_vals[]
-    char dxages_str[NDXC_AGES][10];
-    int dxage_now = getDXCMaxAge();                             // minutes
-    int *dxages, n_ages;
-    getDXCMaxAges (&dxages, &n_ages);
-    if (n_ages != NDXC_AGES)
-        fatalError ("runDXClusterMenu ages %d != %d", n_ages, NDXC_AGES);
-    for (int i = 0; i < NDXC_AGES; i++)
-        snprintf (dxages_str[i], sizeof(dxages_str[i]), "%d m", dxages[i]);
+    // build the possible age labels
+    char dxages_str[N_DXCAGES][10];
+    for (int i = 0; i < N_DXCAGES; i++)
+        snprintf (dxages_str[i], sizeof(dxages_str[i]), "%d m", dxc_ages[i]);
 
-    // only menu item is the watch list
+    // whether to show bio on click, only show in menu at all if bio source has been set in Setup
+    bool show_bio_enabled = getQRZId() != QRZ_NONE;
+    MenuFieldType bio_lbl_mft = show_bio_enabled ? MENU_LABEL : MENU_IGNORE;
+    MenuFieldType bio_yes_mft = show_bio_enabled ? MENU_1OFN : MENU_IGNORE;
+    MenuFieldType bio_no_mft = show_bio_enabled ? MENU_1OFN : MENU_IGNORE;
+
+    // optional bio and watch list
     #define MI_AGE_GRP  3                                       // MenuItem.group for the age items
-    MenuItem mitems[7] = {
-        // build column-major order
-        {MENU_LABEL, false,                  1, 2, "Age:", NULL},
-        {MENU_BLANK, false,                  2, 0, NULL, NULL},
-        {MENU_1OFN,  dxage_now == dxages[0], MI_AGE_GRP, 2, dxages_str[0], NULL},
-        {MENU_1OFN,  dxage_now == dxages[2], MI_AGE_GRP, 2, dxages_str[2], NULL},
-        {MENU_1OFN,  dxage_now == dxages[1], MI_AGE_GRP, 2, dxages_str[1], NULL},
-        {MENU_1OFN,  dxage_now == dxages[3], MI_AGE_GRP, 2, dxages_str[3], NULL},
-        {MENU_TEXT,  false,                  4, 2, wl_state, &mtext},
+    MenuItem mitems[10] = {
+        // column 1
+        {bio_lbl_mft, false,                 0, 2, "Bio:", NULL},                       // 0
+        {MENU_LABEL, false,                  1, 2, "Age:", NULL},                       // 1
+        {MENU_BLANK, false,                  2, 0, NULL, NULL},                         // 2
+
+        // column 2
+        {bio_yes_mft, dxc_showbio,           5, 2, "Yes", NULL},                        // 3
+        {MENU_1OFN,  dxc_age == dxc_ages[0], MI_AGE_GRP, 2, dxages_str[0], NULL},       // 4
+        {MENU_1OFN,  dxc_age == dxc_ages[2], MI_AGE_GRP, 2, dxages_str[2], NULL},       // 5
+
+        // column 3
+        {bio_no_mft, !dxc_showbio,           5, 2, "No", NULL},                         // 6
+        {MENU_1OFN,  dxc_age == dxc_ages[1], MI_AGE_GRP, 2, dxages_str[1], NULL},       // 7
+        {MENU_1OFN,  dxc_age == dxc_ages[3], MI_AGE_GRP, 2, dxages_str[3], NULL},       // 8
+
+        // watch list
+        {MENU_TEXT,  false,                  4, 2, wl_state, &mtext},                   // 9
     };
+
 
     SBox menu_b = box;                                  // copy, not ref!
     menu_b.x = box.x + 5;
@@ -869,11 +905,15 @@ static void runDXClusterMenu (const SBox &box)
     MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 3, NARRAY(mitems), mitems};
     if (runMenu (menu)) {
 
+        // check bio
+        dxc_showbio = mitems[3].set;
+
         // set desired age
         for (int i = 0; i < NARRAY(mitems); i++) {
             MenuItem &mi = mitems[i];
             if (mi.group == MI_AGE_GRP && mi.set) {
-                setDXCMaxAge (atoi (mi.label));
+                dxc_age = atoi (mi.label);
+                NVWriteUInt8 (NV_DXCAGE, dxc_age);
                 break;
             }
         }
@@ -897,7 +937,7 @@ static void runDXClusterMenu (const SBox &box)
     free (mtext.text);
 }
 
-/* get next line from dx_client, or inject from local debug file
+/* get next line from dxc_client, or inject from local debug file
  */
 static bool getNextDXCLine (char line[], size_t ll)
 {
@@ -922,7 +962,7 @@ static bool getNextDXCLine (char line[], size_t ll)
     } else {
 
         // normal
-        return (dx_client.available() && getTCPLine (dx_client, line, ll, NULL));
+        return (dxc_client.available() && getTCPLine (dxc_client, line, ll, NULL));
     }
 }
 
@@ -931,9 +971,9 @@ static bool getNextDXCLine (char line[], size_t ll)
 void closeDXCluster()
 {
     // make sure either/both connection is/are closed
-    if (dx_client) {
-        dx_client.stop();
-        dxcLog ("disconnect %s\n", dx_client ? "failed" : "ok");
+    if (dxc_client) {
+        dxc_client.stop();
+        dxcLog ("disconnect %s\n", dxc_client ? "failed" : "ok");
     }
     if (wsjtx_server) {
         wsjtx_server.stop();
@@ -992,7 +1032,7 @@ void checkDXCluster()
         return;
     }
 
-    if ((cl_type == CT_DXSPIDER || cl_type == CT_ARCLUSTER || cl_type == CT_VE7CC) && dx_client) {
+    if ((cl_type == CT_DXSPIDER || cl_type == CT_ARCLUSTER || cl_type == CT_VE7CC) && dxc_client) {
 
         // roll all pending new spots into list as fast as possible
 
@@ -1030,7 +1070,7 @@ void checkDXCluster()
             }
 
             // check for no network or server closing the connection
-            if (!dx_client) {
+            if (!dxc_client) {
                 dxcLog ("bg lost connection\n");
                 incLostConn();
                 closeDXCluster();
@@ -1161,7 +1201,7 @@ bool checkDXClusterTouch (const SCoord &s, const SBox &box)
 bool getDXClusterSpots (DXSpot **spp, uint8_t *nspotsp)
 {
     if (useDXCluster()) {
-        *spp = dx_spots;
+        *spp = dxc_spots;
         *nspotsp = n_dxspots;
         return (true);
     }
@@ -1193,7 +1233,7 @@ void drawDXClusterSpotsOnMap ()
  */
 bool isDXClusterConnected()
 {
-    return (useDXCluster() && (dx_client || wsjtx_server));
+    return (useDXCluster() && (dxc_client || wsjtx_server));
 }
 
 /* find closest spot and location on either end to given ll, if any.
@@ -1207,11 +1247,47 @@ bool getClosestDXCluster (const LatLong &ll, DXSpot *sp, LatLong *llp)
  */
 void cleanDXCluster()
 {
-    if (dx_spots || dxwl_spots) {
+    if (dxc_spots || dxwl_spots) {
         static time_t last_used;
         if (findPaneForChoice(PLOT_CH_DXCLUSTER) != PANE_NONE)
             last_used = myNow();
         else if (myNow() - last_used > MAXUSE_DT)
             resetDXMem();
     }
+}
+
+/* return spot in our pane if under ms
+ */
+bool getDXCPaneSpot (SCoord &ms, DXSpot *dxs, LatLong *ll)
+{
+    // done if ms not showing our pane or not in our box
+    PlotPane pp = findPaneChoiceNow (PLOT_CH_DXCLUSTER);
+    if (pp == PANE_NONE)
+        return (false);
+    if (!inBox (ms, plot_b[pp]))
+        return (false);
+
+    // create box that will be placed over each listing entry
+    SBox listrow_b;
+    listrow_b.x = plot_b[pp].x;
+    listrow_b.w = plot_b[pp].w;
+    listrow_b.h = LISTING_DY;
+
+    // scan listed spots for one located at ms
+    uint16_t y0 = plot_b[pp].y + LISTING_Y0;
+    int min_i, max_i;
+    if (dxc_ss.getVisIndices (min_i, max_i) > 0) {
+        for (int i = min_i; i <= max_i; i++) {
+            listrow_b.y = y0 + dxc_ss.getDisplayRow(i) * LISTING_DY;
+            if (inBox (ms, listrow_b)) {
+                // ms is over this spot
+                *dxs = dxwl_spots[i];
+                *ll = dxs->tx_ll;
+                return (true);
+            }
+        }
+    }
+
+    // none
+    return (false);
 }

@@ -243,13 +243,6 @@ static bool parseADIFLocation (const char *loc, float &degs)
     return (true);
 }
 
-/* strncpy that insures "to" has EOS (and avoids the g++ fussing)
- */
-static void quietStrncpy (char *to, const char *from, int len)
-{
-    snprintf (to, len, "%.*s", len-1, from);
-}
-
 /* add a completed ADIF name/value pair to spot and update fields mask if recognized.
  * return false if outright syntax error.
  * N.B. within spot we assign "my" fields to be rx, the "other" guy to be tx.
@@ -792,8 +785,10 @@ bool checkADIFFilename (const char *fn, char *ynot, size_t n_ynot)
     bool ok = fp != NULL;
     if (ok)
         fclose (fp);
-    else
-        snprintf (ynot, n_ynot, "bad file");
+    else {
+        snprintf (ynot, n_ynot, "open failed");
+        Serial.printf ("ADIF: %s %s\n", fn_exp, strerror(errno));
+    }
     free (fn_exp);
     return (ok);
 }
@@ -1076,4 +1071,40 @@ void cleanADIF()
 {
     if (adif_spots && findPaneForChoice(PLOT_CH_ADIF) == PANE_NONE)
         resetADIFMem();
+}
+
+/* return spot in our pane if under ms 
+ */
+bool getADIFPaneSpot (SCoord &ms, DXSpot *dxs, LatLong *ll)
+{
+    // done if ms not showing our pane or not in our box
+    PlotPane pp = findPaneChoiceNow (PLOT_CH_ADIF);
+    if (pp == PANE_NONE)
+        return (false);
+    if (!inBox (ms, plot_b[pp]))
+        return (false);
+
+    // create box that will be placed over each listing entry
+    SBox listrow_b;
+    listrow_b.x = plot_b[pp].x;
+    listrow_b.w = plot_b[pp].w;
+    listrow_b.h = LISTING_DY;
+
+    // scan listed spots for one located at ms
+    uint16_t y0 = plot_b[pp].y + LISTING_Y0;
+    int min_i, max_i;
+    if (adif_ss.getVisIndices (min_i, max_i) > 0) {
+        for (int i = min_i; i <= max_i; i++) {
+            listrow_b.y = y0 + adif_ss.getDisplayRow(i) * LISTING_DY;
+            if (inBox (ms, listrow_b)) {
+                // ms is over this spot
+                *dxs = adif_spots[i];
+                *ll = dxs->tx_ll;
+                return (true);
+            }
+        }
+    }
+
+    // none
+    return (false);
 }

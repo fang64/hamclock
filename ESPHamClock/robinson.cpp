@@ -64,32 +64,34 @@ static float RobY2Lat (const float Y)
     return (90*y);
 }
 
-/* convert ll to map_b screen coords at the given canonical scale factor.
- * avoid globe edge by at least the given number of canonical pixels.
+/* convert ll to map_b screen coords at the given pixel scale factor.
+ * avoid globe edge by at least the given number of raw pixels.
  */
 void ll2sRobinson (const LatLong &ll, SCoord &s, int edge, int scalesz)
 {
-    // handy half-sizes
-    float hw = map_b.w/2.0F;
-    float hh = map_b.h/2.0F;
+    // handy half-sizes and center pix
+    uint16_t hw = map_b.w/2;
+    uint16_t hh = map_b.h/2;
+    uint16_t xc = map_b.x + hw;
+    uint16_t yc = map_b.y + hh;
 
     // find Robinson Y and X scale at this lat
     float Y = RobLat2Y (ll.lat_d);
     float G = RobLat2G (ll.lat_d);
+    float hw_lat = hw * G;                                      // halfwidth at this lat
 
     // pixels from map center
     float deg_pan = 360.0F*pan_zoom.pan_x/map_b.w;
     float lng0_d = fmodf (ll.lng_d - getCenterLng() - deg_pan + 7*180, 2*180) - 180; // [-180,180]
-    float dx = hw * G * lng0_d / 180;
-    float dy = hh * Y;
+    float dx = hw * G * lng0_d / 180;                           // pixels right of center
+    float dy = hh * Y;                                          // pixels up from center
+
+    // project edge away from rob curve at this lat
+    float edge_lat = edge/cosf(0.8F*ll.lat)+2;                    // vert at lat=0, 70 at lat=90 + extra
 
     // convert to scaled screen coords, insuring within edge
-    edge += 5;                                                  // test is not exact
-    float x0 = map_b.x + hw;
-    float y0 = map_b.y + hh;
-    float dx_edge = hw * G;                                     // full halfwidth at this lat
-    s.x = CLAMPF (roundf (scalesz*(x0 + dx)), scalesz*(x0-dx_edge+edge), scalesz*(x0+dx_edge-edge));
-    s.y = CLAMPF (roundf (scalesz*(y0 - dy)), scalesz*(y0-hh+edge), scalesz*(y0+hh-edge));
+    s.x = CLAMPF (roundf (scalesz*(xc + dx)), scalesz*(xc-hw_lat)+edge_lat, scalesz*(xc+hw_lat)-edge_lat);
+    s.y = CLAMPF (roundf (scalesz*(yc - dy)), scalesz*(yc-hh)+edge, scalesz*(yc+hh)-edge);
 }
 
 /* convert map_b screen coords to ll.
