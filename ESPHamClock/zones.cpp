@@ -28184,6 +28184,11 @@ bool findZoneNumber (ZoneID id, const SCoord &s, int *zone_n)
  */
 void drawZone (ZoneID id, uint16_t color, int n_only)
 {
+    // thickness if any
+    int lw = getRawPathWidth (GRID_CSPR);
+    if (lw == 0)
+        return;
+
     ZonePoly *zpoly = id == ZONE_CQ ? cqzones : ituzones;
     int n_z = id == ZONE_CQ ? NARRAY(cqzones) : NARRAY(ituzones);
 
@@ -28205,10 +28210,10 @@ void drawZone (ZoneID id, uint16_t color, int n_only)
                 SCoord &sp0 = zp->verts[vn-1].s[0];             // previous vertex first polygon
                 SCoord &sp1 = zp->verts[vn-1].s[1];             // previous vertex second polygon
 
-                if (sp0.x > 0 && sc0.x > 0 && segmentSpanOkRaw (sp0, sc0, 0))
-                    tft.drawLineRaw (sp0.x, sp0.y, sc0.x, sc0.y, 1, color);
-                if (sp1.x > 0 && sc1.x > 0 && segmentSpanOkRaw (sp1, sc1, 0))
-                    tft.drawLineRaw (sp1.x, sp1.y, sc1.x, sc1.y, 1, color);
+                if (sp0.x > 0 && sc0.x > 0 && segmentSpanOkRaw (sp0, sc0, lw))
+                    tft.drawLineRaw (sp0.x, sp0.y, sc0.x, sc0.y, lw, color);
+                if (sp1.x > 0 && sc1.x > 0 && segmentSpanOkRaw (sp1, sc1, lw))
+                    tft.drawLineRaw (sp1.x, sp1.y, sc1.x, sc1.y, lw, color);
             }
 
             #ifdef DEBUG_ZONES_BB       // #define this in HamClock.h for initEarthMap() also

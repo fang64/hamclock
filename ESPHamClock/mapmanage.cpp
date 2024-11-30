@@ -58,7 +58,7 @@ static const char muf_v_style[] = "MUFMap";
 /* marshall the day and night file names and display titles for the given style.
  * N.B. we do not check for suffient room in the arrays
  * N.B. CM_DRAP name adds -S for no-scale version as of HamClock V2.67
- * N.B. CM_WX name depends on useMetricUnits()
+ * N.B. CM_WX name depends on user units
  * N.B. file names are not for query files on UNIX
  */
 static void buildMapNames (const char *style, char *dfile, char *nfile, char *dtitle, char *ntitle)
@@ -67,7 +67,7 @@ static void buildMapNames (const char *style, char *dfile, char *nfile, char *dt
             snprintf (dfile, 32, "/map-D-%dx%d-DRAP-S.bmp", ZOOM_W, ZOOM_H);
             snprintf (nfile, 32, "/map-N-%dx%d-DRAP-S.bmp", ZOOM_W, ZOOM_H);
         } else if (strcmp (style, "Weather") == 0) {
-            const char *units = useMetricUnits() ? "mB" : "in";
+            const char *units = showATMhPa() ? "mB" : "in";
             snprintf (dfile, 32, "/map-D-%dx%d-Wx-%s.bmp", ZOOM_W, ZOOM_H, units);
             snprintf (nfile, 32, "/map-N-%dx%d-Wx-%s.bmp", ZOOM_W, ZOOM_H, units);
         } else {
@@ -973,7 +973,7 @@ void drawMapScale()
     case CM_WX:
         msp = w_scale;
         n_scale = NARRAY(w_scale);
-        n_labels = useMetricUnits() ? 11 : 10;
+        n_labels = showTempC() ? 11 : 10;
         title = "Degs C";
         break;
     case CM_PMTOA:
@@ -1063,7 +1063,7 @@ void drawMapScale()
     const char *my_title;
 
     // prep values and center x locations
-    if (core_map == CM_WX && !useMetricUnits()) {
+    if (core_map == CM_WX && !showTempC()) {
 
         // switch to F scale
         my_title = "Degs F";
@@ -1125,36 +1125,6 @@ void drawMapScale()
         tft.drawLine (marker_x+2, mapscale_b.y, marker_x+2, mapscale_b.y+mapscale_b.h-1, 1, RA8875_BLACK);
     }
 
-}
-
-
-/* erase mapscale_b by redrawing map within
- * N.B. beware globals being temporarily changed -- see comments
- */
-void eraseMapScale ()
-{
-    // save then move mapscale_b off the map so drawMapCoord doesn't skip it
-    SBox db = mapscale_b;
-    mapscale_b.y = 0;
-
-    // save whether rss is on too because it is skipped also
-    uint8_t rs = rss_on;
-    rss_on = false;
-
-    // only mercator can erase by just redrawing map
-    if (map_proj != MAPP_MERCATOR)
-        fillSBox (db, RA8875_BLACK);
-
-    // restore map
-    for (uint16_t y = db.y; y < db.y+db.h; y++) {
-        for (uint16_t x = db.x; x < db.x+db.w; x++)
-            drawMapCoord (x, y);
-        drawSatPointsOnRow (y);
-    }
-
-    // restore
-    mapscale_b = db;
-    rss_on = rs;
 }
 
 /* log and show message in a nice box over map_b.

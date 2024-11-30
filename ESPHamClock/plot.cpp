@@ -276,8 +276,8 @@ void plotWX (const SBox &box, uint16_t color, const WXInfo &wi)
     // large temperature with degree symbol and units
     tft.setTextColor(color);
     selectFontStyle (BOLD_FONT, LARGE_FONT);
-    f = useMetricUnits() ? wi.temperature_c : CEN2FAH(wi.temperature_c);
-    snprintf (buf, sizeof(buf), "%.0f %c", f, useMetricUnits() ? 'C' : 'F');
+    f = showTempC() ? wi.temperature_c : CEN2FAH(wi.temperature_c);
+    snprintf (buf, sizeof(buf), "%.0f %c", f, showTempC() ? 'C' : 'F');
     w = maxStringW (buf, box.w-attr_w);
     tft.setCursor (box.x+(box.w-attr_w-w)/2, box.y+dy);
     tft.print(buf);
@@ -304,7 +304,7 @@ void plotWX (const SBox &box, uint16_t color, const WXInfo &wi)
         // main info line
 
         selectFontStyle (LIGHT_FONT, SMALL_FONT);
-        if (useMetricUnits())
+        if (showATMhPa())
             snprintf (buf, sizeof(buf), _FX("%.0f%% %.0f"), wi.humidity_percent, wi.pressure_hPa);
         else
             snprintf (buf, sizeof(buf), _FX("%.0f%% %.2f"), wi.humidity_percent, wi.pressure_hPa/33.8639);
@@ -317,7 +317,7 @@ void plotWX (const SBox &box, uint16_t color, const WXInfo &wi)
         uint16_t pchg_x = tft.getCursorX() + PCHG_LG;
         uint16_t pchg_y = tft.getCursorY() - PCHG_H - 1;
         selectFontStyle (LIGHT_FONT, FAST_FONT);
-        if (useMetricUnits()) {
+        if (showATMhPa()) {
             tft.setCursor (pchg_x, pchg_y); tft.print ("h");
             tft.setCursor (pchg_x, pchg_y+8); tft.print ("P");
             tft.setCursor (pchg_x, pchg_y+14); tft.print ("a");
@@ -349,7 +349,7 @@ void plotWX (const SBox &box, uint16_t color, const WXInfo &wi)
         // no pressure change symbol
 
         selectFontStyle (LIGHT_FONT, SMALL_FONT);
-        if (useMetricUnits())
+        if (showATMhPa())
             snprintf (buf, sizeof(buf), _FX("%.0f%% %.0f hPa"), wi.humidity_percent, wi.pressure_hPa);
         else
             snprintf (buf, sizeof(buf), _FX("%.0f%% %.2f in"), wi.humidity_percent, wi.pressure_hPa/33.8639);
@@ -362,12 +362,12 @@ void plotWX (const SBox &box, uint16_t color, const WXInfo &wi)
 
     // wind
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
-    f = (useMetricUnits() ? 3.6 : 2.237) * wi.wind_speed_mps; // kph or mph
-    snprintf (buf, sizeof(buf), _FX("%s @ %.0f %s"), wi.wind_dir_name, f, useMetricUnits() ? "kph" : "mph");
+    f = (showDistKm() ? 3.6 : 2.237) * wi.wind_speed_mps; // kph or mph
+    snprintf (buf, sizeof(buf), _FX("%s @ %.0f %s"), wi.wind_dir_name, f, showDistKm() ? "kph" : "mph");
     w = maxStringW (buf, box.w-attr_w);
     if (buf[strlen(buf)-1] != 'h') {
         // try shorter string in case of huge speed
-        snprintf (buf, sizeof(buf),_FX("%s @ %.0f%s"), wi.wind_dir_name, f, useMetricUnits() ? "k/h" : "m/h");
+        snprintf (buf, sizeof(buf),_FX("%s @ %.0f%s"), wi.wind_dir_name, f, showDistKm() ? "k/h" : "m/h");
         w = maxStringW (buf, box.w-attr_w);
     }
     tft.setCursor (box.x+(box.w-attr_w-w)/2, box.y+dy);

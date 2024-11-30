@@ -62,7 +62,7 @@
   #elif defined(_IS_LINUX)
     // be prepared for either gpiod or legacy broadcom memory map interface
     #if __has_include(<gpiod.h>)
-        #include <gpiod.hpp>
+        #include <gpiod.h>
         #define _NATIVE_GPIO_LINUX              // set for either GPIOD or GPIOBC
         #define _NATIVE_GPIOD_LINUX             // gpiod is sufficiently mature to use
     #endif
@@ -117,7 +117,7 @@ typedef enum {
 // #define RGB2GRAY(r,g,b) ((r)*0.26F + (g)*0.65F + (b)*0.09F)
 #define RGB2GRAY(r,g,b) ((r)/4 + 2*(g)/3 + (b)/12)      // faster??
 
-
+// glue
 extern void setX11FullScreen (bool);
 extern void setDemoMode(bool on);
 extern void setCenterLng (int16_t l);
@@ -142,6 +142,9 @@ extern std::string our_dir;
 extern void doExit(void);
 extern bool testPassword (const char *category, const char *candidate_pw);
 extern const char *pw_file;
+extern void NVReadX11Geom (int &x, int &y, int &w, int &h);
+extern void NVWriteX11Geom (int x, int y, int w, int h);
+
 
 #define N_DIAG_FILES 4
 extern const char *diag_files[N_DIAG_FILES];

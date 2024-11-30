@@ -1,4 +1,4 @@
-/* code to support santa easter egg
+/* code to support a few easter eggs.
  */
 
 #include "HamClock.h"
@@ -70,7 +70,6 @@ SBox santa_b = {0, 0, SANTA_WPIX, SANTA_HPIX};
 static void drawSantaBox(void)
 {
     // Serial.printf ("Painting santa at %d x %d\n", santa_b.x, santa_b.y);
-    resetWatchdog();
     for (uint16_t sr = 0; sr < SANTA_HPIX; sr++) {
         for (uint16_t sc = 0; sc < SANTA_W; sc++) {
             uint16_t mask = pgm_read_byte(&santa[sr*SANTA_W+sc]);
@@ -89,7 +88,6 @@ static void eraseSantaBox(const SBox &s)
 #if defined(_IS_ESP8266)
     // only ESP erases, UNIX just redraws the whole scene every update cycle.
     // Serial.printf ("Erasing santa from %d x %d\n", s.x, s.y);
-    resetWatchdog();
     for (uint16_t sr = 0; sr < SANTA_HPIX; sr++) {
         for (uint16_t sc = 0; sc < SANTA_W; sc++) {
             for (uint16_t bc = 0; bc < 8; bc++) {
@@ -116,8 +114,6 @@ void drawSanta()
         santa_b.x = santa_b.y = 0;
         return;
     }
-
-    resetWatchdog();
 
     // place so he moves over the globe througout the day.
     // left-right each hour, top-bottom throughout the day
@@ -221,4 +217,100 @@ void drawSanta()
         drawSantaBox();
     else
         santa_b.x = 0;
+}
+
+/* take over the screen to show some fireworks at local midnight new year's day
+ */
+void drawFireworks()
+{
+    // skip unless local midnight on new year's day or already shown this year
+    static int show_year;                       // prevent immediate repeat after click
+    time_t local = nowWO() + getTZ (de_tz);
+    if (month(local) != 1 || day(local) != 1 || hour(local) != 0
+                                        || minute(local) != 0 || year(local) == show_year)
+        return;
+    uint32_t start_m = millis();
+    show_year = year(local);
+
+    // all ours
+    eraseScreen();
+
+    // config
+    #define FW_MAX_RAYS    30                   // max n rays in each shot
+    #define FW_N_KEEP      6                    // n shots to keep then erase
+    #define FW_GRAV        (0.2*tft.SCALESZ)    // gravity vel change each iteration, pixels/FLOW_DT/FLOW_DT
+    #define FW_VEL         (4*tft.SCALESZ)      // velocity, pixels/FLOW_DT
+    #define FW_FLOW_DT     2                    // one ray drawing iteration, msec
+    #define FW_SHOW_DT     (60*1000)            // show duration, millis()
+    #define FW_SHOT_DT     (1000)               // max time between shots, msec
+
+    // counting for FW_N_KEEP
+    int n_show = 0;
+
+    // show lasts for FW_SHOW_DT or user does anything
+    SCoord tap;
+    bool ctrl, shift;
+    while (millis() - start_m < FW_SHOW_DT
+                        && readCalTouch(tap) == TT_NONE && tft.getChar(&ctrl, &shift) == CHAR_NONE) {
+
+        // draw rays outward from center, keep each previous point to connect the dots
+        float px[FW_MAX_RAYS];
+        float py[FW_MAX_RAYS];
+        int n_rays = FW_MAX_RAYS/2 + random(FW_MAX_RAYS/2);
+
+        // set random starting posiiton of each ray
+        float x = 100*tft.SCALESZ+random(600*tft.SCALESZ);
+        float y = 150*tft.SCALESZ-random(100*tft.SCALESZ);
+        for (int i = 0; i < n_rays; i++) {
+            px[i] = x;
+            py[i] = y;
+        }
+
+        // set max radius squared
+        int maxr2 = 100*tft.SCALESZ+random(100*tft.SCALESZ);
+        maxr2 *= maxr2;
+
+        // init velocity change due to gravity
+        float vg = 0;
+
+        // point size
+        int pr = (random(4) * tft.SCALESZ) == 0;
+
+        // pick a random color
+        uint8_t h = random(256);
+        uint8_t r, g, b;
+        hsvtorgb (&r, &g, &b, h, 255, 255);
+        uint16_t c = RGB565(r,g,b);
+
+        // repeat until hit edge or max radius
+        bool done = false;
+        while(!done) {
+            for (int i = 0; i < n_rays; i++) {
+                float a = i*2*M_PIF/n_rays;
+                float vx = FW_VEL * cosf(a);
+                float vy = FW_VEL * sinf(a) + vg;
+                x = px[i] + vx;
+                y = py[i] + vy;
+                if (x >= 0 && x < BUILD_W && y >= 0 && y < BUILD_H
+                                        && (x-px[0])*(x-px[0]) + (y-py[0])*(y-py[0]) < maxr2) {
+                    tft.drawLineRaw (roundf(px[i]), roundf(py[i]), roundf(x), roundf(y), 1, c);
+                    if (pr > 0)
+                        tft.fillCircleRaw (roundf(x), roundf(y), pr, RA8875_WHITE);
+                    px[i] = x;
+                    py[i] = y;
+                    wdDelay(2);
+                } else
+                    done = true;
+            }
+            vg += FW_GRAV;
+        }
+        wdDelay(random(FW_SHOT_DT));
+        if (++n_show == FW_N_KEEP) {
+            eraseScreen();
+            n_show = 0;
+        }
+    }
+
+    // resume
+    initScreen();
 }

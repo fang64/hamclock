@@ -748,16 +748,20 @@ bool runMenu (MenuInfo &menu)
             ok = true;
 
             // must also check MenuText field test function if used
-            if (is_active_menu && menu.items[focus_idx].type == MENU_TEXT) {
-                MenuItem &mi = menu.items[focus_idx];
-                MenuText *tfp = mi.textf;
-                char ynot[50];
-                if (tfp->text_fp && !(tfp->text_fp)(tfp, ynot, sizeof(ynot))) {
-                    SBox &pb = pick_boxes[focus_idx];
-                    drawMenuTextMsg (mi, pb, ynot);
-                    ok = false;
+            for (int i = 0; ok && i < menu.n_items; i++) {
+                if (menu.items[i].type == MENU_TEXT) {
+                    MenuItem &mi = menu.items[i];
+                    MenuText *tfp = mi.textf;
+                    char ynot[50];
+                    if (tfp->text_fp && !(tfp->text_fp)(tfp, ynot, sizeof(ynot))) {
+                        SBox &pb = pick_boxes[i];
+                        drawMenuTextMsg (mi, pb, ynot);
+                        ok = false;
+                    }
                 }
             }
+
+            // finished if still ok
             if (ok)
                 break;
         }

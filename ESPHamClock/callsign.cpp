@@ -184,12 +184,12 @@ static void setOnAir(void)
     }
 }
 
-/* run a menu over the callsign area to allow editing title and ON AIR message.
+/* run a menu overlaying the callsign area to allow editing title and ON AIR message.
  */
 static void runCallsignMenu (void)
 {
     // check whether PTT is a potentional option
-    bool ptt = getFlrig(NULL,NULL) || getRigctld(NULL,NULL);
+    bool ptt = getFlrig(NULL,NULL) || getRigctld(NULL,NULL) || GPIOOk();
 
     // set up the ONAIR field
     MenuText onair_mt;
@@ -304,7 +304,7 @@ void initCallsignInfo()
         NVWriteUInt8 (NV_ONAIR_RAINBOW, cs_info.onair_col.rainbow);
     }
     if (!NVReadString (NV_ONAIR_MSG, cs_info.onair)) {
-        cs_info.onair[0] = '\0';
+        strcpy (cs_info.onair, "ON THE AIR");
         NVWriteString (NV_ONAIR_MSG, cs_info.onair);
     }
 

@@ -293,13 +293,21 @@ bool Adafruit_RA8875::begin (int not_used)
 
         visual = vinfo.visual;
 
+        // determine default or last-known geometry
+        int win_x, win_y;
+        if (ignore_x11geom) {
+            win_x = win_y = 0;
+            fb_si.xres = FB_XRES;
+            fb_si.yres = FB_YRES;
+        } else {
+            NVReadX11Geom (win_x, win_y, fb_si.xres, fb_si.yres);
+        }
+
 	// set initial scale to match, FB_X/Y0 can change to stay centered if window size changes
-	fb_si.xres = FB_XRES;
-	fb_si.yres = FB_YRES;
         SCALESZ = FB_XRES / APP_WIDTH;
         FB_CURSOR_SZ = FB_CURSOR_W*SCALESZ;
-        FB_X0 = 0;
-        FB_Y0 = 0;
+        FB_X0 = (fb_si.xres - FB_XRES)/2;
+        FB_Y0 = (fb_si.yres - FB_YRES)/2;
         fb_nbytes = FB_XRES * FB_YRES * BYTESPFBPIX;
 
 	// get memory for canvas where the drawing methods update their pixels
@@ -327,7 +335,7 @@ bool Adafruit_RA8875::begin (int not_used)
 	wa.bit_gravity = StaticGravity;
 	wa.background_pixel = black_pixel;
 	unsigned long value_mask = CWBitGravity | CWBackPixel;
-        win = XCreateWindow(display, root, 0, 0, fb_si.xres, fb_si.yres, 0, visdepth, InputOutput,
+        win = XCreateWindow(display, root, win_x, win_y, fb_si.xres, fb_si.yres, 0, visdepth, InputOutput,
                 visual, value_mask, &wa);
 
 	// create a black GC for this visual
@@ -341,11 +349,15 @@ bool Adafruit_RA8875::begin (int not_used)
 	// init with black for first expose
 	XFillRectangle (display, pixmap, black_gc, 0, 0, FB_XRES, FB_YRES);
 
-	// set initial and min size
+	// set initial size hints
         XSizeHints* win_size_hints = XAllocSizeHints();
-	win_size_hints->flags = PSize | PMinSize;
-        win_size_hints->base_width = FB_XRES;
-        win_size_hints->base_height = FB_YRES;
+	win_size_hints->flags = USPosition | USSize | PPosition | PSize | PSize | PMinSize;
+        win_size_hints->x = win_x;
+        win_size_hints->y = win_y;
+        win_size_hints->width = fb_si.xres;
+        win_size_hints->height = fb_si.yres;
+        win_size_hints->base_width = fb_si.xres;
+        win_size_hints->base_height = fb_si.yres;
         win_size_hints->min_width = FB_XRES;
         win_size_hints->min_height = FB_YRES;
         XSetWMNormalHints(display, win, win_size_hints);
@@ -406,7 +418,11 @@ bool Adafruit_RA8875::begin (int not_used)
 #elif defined(_USE_FB0)
 
 	// try to disable some fb interference
-	ourSystem ("sudo dmesg -n 1");
+	ourSystem ("dmesg -n 1");
+
+        // try to engage 16 bit
+        ourSystem ("fbset -depth 16");
+        ourSystem ("fbset");
 
 	// init for mouse thread
         mouse_fd = touch_fd = -1;
@@ -457,7 +473,7 @@ bool Adafruit_RA8875::begin (int not_used)
 	    close(fb_fd);
 	    exit(1);
 	}
-	printf ("fb0 is %d x %d x %d\n", fb_si.xres, fb_si.yres, fb_si.bits_per_pixel);
+        ::printf ("fb0 is %d x %d x %d\n", fb_si.xres, fb_si.yres, fb_si.bits_per_pixel);
 	if (fb_si.xres < FB_XRES || fb_si.yres < FB_YRES || fb_si.bits_per_pixel != BITSPFBPIX) {
 	    ::printf ("Sorry, frame buffer must be at least %u x %u with %u bits per pixel\n",
 				FB_XRES, FB_YRES, BITSPFBPIX);
@@ -475,8 +491,9 @@ bool Adafruit_RA8875::begin (int not_used)
 	// map fb to our address space
         size_t si_bytes = BYTESPFBPIX * fb_si.xres * fb_si.yres;
         fb_fb = (fbpix_t*) mmap (NULL, si_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
-	if (!fb_fb) {
-	    ::printf ("mmap(%u): %s\n", (unsigned) si_bytes, strerror(errno));
+	if (fb_fb == MAP_FAILED) {
+	    ::printf ("mmap(%d,%ux%ux%u=%u): %s\n", fb_fd, BYTESPFBPIX, fb_si.xres, fb_si.yres,
+                                                (unsigned) si_bytes, strerror(errno));
 	    close (fb_fd);
 	    exit(1);
 	}
@@ -739,6 +756,12 @@ void Adafruit_RA8875::setFont (const GFXfont *f)
 	else
 	    current_font = &Courier_Prime_Sans6pt7b;
 }
+
+const GFXfont* Adafruit_RA8875::getFont (void)
+{
+        return (current_font ? current_font : &Courier_Prime_Sans6pt7b);
+}
+
 
 int16_t Adafruit_RA8875::getCursorX(void)
 {
@@ -1008,10 +1031,10 @@ uint16_t color16)
 	fbpix_t fbpix = RGB16TOFBPIX(color16);
 	pthread_mutex_lock(&fb_lock);
 	    plotLineRaw (x0, y0, x1, y1, thickness, fbpix);
-            if (thickness >= 3) {
+            // if (thickness >= 3) {
                 // round cap style??
-                plotFillCircle (x1, y1, thickness/2, fbpix);
-            }
+                // plotFillCircle (x1, y1, thickness/2, fbpix);
+            // }
 	    fb_dirty = true;
 	pthread_mutex_unlock (&fb_lock);
 }
@@ -1928,6 +1951,29 @@ void Adafruit_RA8875::encodeKeyEvent (XKeyEvent *event)
         }
 }
 
+// _USE_X11
+void Adafruit_RA8875::saveWinGeom(void)
+{
+        if (options_fullscreen || ignore_x11geom)
+            return;
+
+        Screen *screen = XDefaultScreenOfDisplay (display);
+        int screen_num = XScreenNumberOfScreen(screen);
+        Window root = RootWindow(display,screen_num);
+
+        int x, y;
+        Window child;
+        XWindowAttributes xwa;  // account for decorations
+        XTranslateCoordinates (display, win, root, 0, 0, &x, &y, &child);
+        XGetWindowAttributes (display, win, &xwa);
+        int winpos_now_x = x - xwa.x;
+        int winpos_now_y = y - xwa.y;
+        int winpos_now_w = xwa.width;
+        int winpos_now_h = xwa.height;
+
+        NVWriteX11Geom (winpos_now_x, winpos_now_y, winpos_now_w, winpos_now_h);
+}
+
 /* return Button code from event.
  * N.B. must be used both in ButtonPress and ButtonRelease
  */
@@ -2159,6 +2205,10 @@ void Adafruit_RA8875::fbThread ()
 
 		    break;
 
+                case MapNotify:
+                    // ::printf ("MapNotify\n");
+                    break;
+
 		case ConfigureNotify:
 		    // ::printf ("ConfigureNotify: %dx%d+%d+%d\n", event.xconfigure.width, event.xconfigure.height, event.xconfigure.x, event.xconfigure.y);
 		    fb_si.xres = event.xconfigure.width;
@@ -2172,10 +2222,14 @@ void Adafruit_RA8875::fbThread ()
 		    XFillRectangle (display, win, black_gc, 0, FB_Y0 + FB_YRES, fb_si.xres, FB_Y0+1);
                     // invalidate staging area to get a full refresh
                     memset (fb_stage, ~0, fb_nbytes);
+
+                    saveWinGeom();
+
 		    break;
 
                 case ClientMessage:
                     if ((Atom)event.xclient.data.l[0] == wmDeleteMessage) {
+                        saveWinGeom();
                         XCloseDisplay(display);
                         doExit();
                     }

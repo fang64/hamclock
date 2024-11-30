@@ -94,8 +94,8 @@ static void connectSensors(bool all)
         Serial.println(F("BME none found"));
 }
 
-/* read the given temperature, pressure and humidity in units determined by useMetricUnits() into
- * next q enttry. if ok advance q and return if ok.
+/* read the given temperature, pressure and humidity in user units into next q entry.
+ * if ok advance q and return if ok.
  */
 static bool readSensor (int device)
 {
@@ -124,21 +124,19 @@ static bool readSensor (int device)
         connectSensors(false);
     } else {
         // all good
-        if (useMetricUnits()) {
-            // want C and hPa
-            dp->t[dp->q_head] = BMEPACK_T (t + getBMETempCorr(device));                 // already C
-            dp->p[dp->q_head] = BMEPACK_P (p/100 + getBMEPresCorr(device));             // Pascals to hPa
-        } else {
-            // want F and inches Hg
-            dp->t[dp->q_head] = BMEPACK_T (1.8*t + 32.0 + getBMETempCorr(device));      // C to F
-            dp->p[dp->q_head] = BMEPACK_P (p / 3386.39 + getBMEPresCorr(device));       // Pascals to in_Hg
-        }
-        dp->h[dp->q_head] = BMEPACK_H(h);
+        if (showATMhPa())
+            dp->p[dp->q_head] = p/100 + getBMEPresCorr(device);                         // Pascals to hPa
+        else
+            dp->p[dp->q_head] = p / 3386.39 + getBMEPresCorr(device);                   // Pascals to in_Hg
+        if (showTempC())
+            dp->t[dp->q_head] = t + getBMETempCorr(device);                             // already C
+        else
+            dp->t[dp->q_head] = 1.8*t + 32.0 + getBMETempCorr(device);                  // C to F
+        dp->h[dp->q_head] = h;
         dp->u[dp->q_head] = myNow();
 
         // Serial.printf (_FX("BME %u %x %7.2f %7.2f %7.2f\n"), dp->u[dp->q_head], dp->i2c,
-                            // BMEUNPACK_T(dp->t[dp->q_head]), BMEUNPACK_P(dp->p[dp->q_head]),
-                            // BMEUNPACK_H(dp->h[dp->q_head])); 
+                            // dp->t[dp->q_head], dp->p[dp->q_head], dp->h[dp->q_head]); 
 
         // advance q
         dp->q_head = (dp->q_head+1)%N_BME_READINGS;
@@ -167,7 +165,7 @@ static bool readSensors(void)
 
 
 /* convert temperature and relative humidity to dewpoint.
- * both temp units are as per useMetricUnits().
+ * N.B. both temp units are in user units.
  * http://irtfweb.ifa.hawaii.edu/~tcs3/tcs3/Misc/Dewpoint_Calculation_Humidity_Sensor_E.pdf
  */
 float dewPoint (float T, float RH)
@@ -177,11 +175,11 @@ float dewPoint (float T, float RH)
         return (0);
 
     // want C
-    if (!useMetricUnits())
+    if (!showTempC())
         T = FAH2CEN(T);
     float H = (log10f(RH)-2)/0.4343F + (17.62F*T)/(243.12F+T);
     float Dp = 243.12F*H/(17.62F-H);
-    if (!useMetricUnits())
+    if (!showTempC())
         Dp = CEN2FAH(Dp);
     return (Dp);
 }
@@ -200,34 +198,34 @@ void drawOneBME280Pane (const SBox &box, PlotChoice ch)
             continue;
 
         // prepare the appropriate plot
-        int16_t *q;
+        float *valu_q;
         char title[32];
         uint16_t color;
         switch (ch) {
         case PLOT_CH_TEMPERATURE:
-            q = dp->t;
-            if (useMetricUnits())
+            valu_q = dp->t;
+            if (showTempC())
                 snprintf (title, sizeof(title), _FX("I2C %x: Temperature, C"), bme_i2c[i]);
             else
                 snprintf (title, sizeof(title), _FX("I2C %x: Temperature, F"), bme_i2c[i]);
             color = TEMP_COLOR;
             break;
         case PLOT_CH_PRESSURE:
-            q = dp->p;
-            if (useMetricUnits())
+            valu_q = dp->p;
+            if (showATMhPa())
                 snprintf (title, sizeof(title), _FX("I2C %x: Pressure, hPa"), bme_i2c[i]);
             else
                 snprintf (title, sizeof(title), _FX("I2C %x: Pressure, inHg"), bme_i2c[i]);
             color = PRES_COLOR;
             break;
         case PLOT_CH_HUMIDITY:
-            q = dp->h;
+            valu_q = dp->h;
             snprintf (title, sizeof(title), _FX("I2C %x: Humidity, %%"), bme_i2c[i]);
             color = HUM_COLOR;
             break;
         case PLOT_CH_DEWPOINT:
-            q = NULL;               // DP is derived, see below
-            if (useMetricUnits())
+            valu_q = NULL;               // DP is derived, see below
+            if (showTempC())
                 snprintf (title, sizeof(title), _FX("I2C %x: Dew point, C"), bme_i2c[i]);
             else
                 snprintf (title, sizeof(title), _FX("I2C %x: Dew point, F"), bme_i2c[i]);
@@ -255,13 +253,13 @@ void drawOneBME280Pane (const SBox &box, PlotChoice ch)
                     continue;                                   // limit plot age
                 x[nxy] = age_s;                                 // rescaled after we know total period
                 if (ch == PLOT_CH_DEWPOINT) {
-                    value_now = y[nxy] = dewPoint (BMEUNPACK_T(dp->t[qj]), BMEUNPACK_H(dp->h[qj]));
+                    value_now = y[nxy] = dewPoint (dp->t[qj], dp->h[qj]);
                 } else if (ch == PLOT_CH_TEMPERATURE) {
-                    value_now = y[nxy] = BMEUNPACK_T(q[qj]);
+                    value_now = y[nxy] = valu_q[qj];
                 } else if (ch == PLOT_CH_PRESSURE) {
-                    value_now = y[nxy] = BMEUNPACK_P(q[qj]);
+                    value_now = y[nxy] = valu_q[qj];
                 } else if (ch == PLOT_CH_HUMIDITY) {
-                    value_now = y[nxy] = BMEUNPACK_H(q[qj]);
+                    value_now = y[nxy] = valu_q[qj];
                 }
                 nxy++;
             }
@@ -291,7 +289,7 @@ void drawOneBME280Pane (const SBox &box, PlotChoice ch)
         }
 
         // plot in plbox, showing a bit more precision for imperial pressure
-        if (ch == PLOT_CH_PRESSURE && !useMetricUnits()) {
+        if (ch == PLOT_CH_PRESSURE && !showATMhPa()) {
             char buf[32];
             snprintf (buf, sizeof(buf), _FX("%.2f"), value_now);
             plotXYstr (plbox, x, y, nxy, xlabel, title, color, 0, 0, buf);
@@ -432,25 +430,25 @@ void drawBMEStats()
     int i = 0;
 
     snprintf (titles[i], sizeof(titles[i]), _FX("Temp%s"), name);
-    snprintf (values[i], sizeof(values[i]), _FX("%.1f"), BMEUNPACK_T(dp->t[qi]));
+    snprintf (values[i], sizeof(values[i]), _FX("%.1f"), dp->t[qi]);
     colors[i] = TEMP_COLOR;
     i++;
 
     strcpy (titles[i], _FX("Humidity"));
-    snprintf (values[i], sizeof(values[i]), _FX("%.1f"), BMEUNPACK_H(dp->h[qi]));
+    snprintf (values[i], sizeof(values[i]), _FX("%.1f"), dp->h[qi]);
     colors[i] = HUM_COLOR;
     i++;
 
     strcpy (titles[i], _FX("Dew Pt"));
-    snprintf (values[i], sizeof(values[i]), _FX("%.1f"), dewPoint(BMEUNPACK_T(dp->t[qi]),BMEUNPACK_H(dp->h[qi])));
+    snprintf (values[i], sizeof(values[i]), _FX("%.1f"), dewPoint(dp->t[qi],dp->h[qi]));
     colors[i] = DP_COLOR;
     i++;
 
     strcpy (titles[i], _FX("Pressure"));
-    if (useMetricUnits())
-        snprintf (values[i], sizeof(values[i]), _FX("%.0f"), BMEUNPACK_P(dp->p[qi]));
+    if (showATMhPa())
+        snprintf (values[i], sizeof(values[i]), _FX("%.0f"), dp->p[qi]);        // hPa
     else
-        snprintf (values[i], sizeof(values[i]), _FX("%.2f"), BMEUNPACK_P(dp->p[qi]));
+        snprintf (values[i], sizeof(values[i]), _FX("%.2f"), dp->p[qi]);        // inHg
     colors[i] = PRES_COLOR;
     i++;
 
@@ -477,7 +475,7 @@ void doBMETouch (const SCoord &s)
 }
 
 /* change the temperature correction for the given BME, both any current data and NV persistent.
- * correction is in current units as determined by useMetricUnits().
+ * correction is in current user units.
  */
 bool recalBMETemp (BMEIndex device, float new_corr)
 {
@@ -491,7 +489,7 @@ bool recalBMETemp (BMEIndex device, float new_corr)
         // apply to all existing data
         for (int i = 0; i < N_BME_READINGS; i++)
             if (dp->u[i] > 0)
-                dp->t[i] = BMEPACK_T (BMEUNPACK_T (dp->t[i]) + del_corr);
+                dp->t[i] = dp->t[i] + del_corr;
 
         // update display, if any applicable
         drawBME280Panes();
@@ -503,7 +501,7 @@ bool recalBMETemp (BMEIndex device, float new_corr)
 }
 
 /* change the pressure correction for the given BME, both cpurrent data and NV persistent.
- * correction is in current units as determined by useMetricUnits().
+ * correction is in current user units.
  */
 bool recalBMEPres (BMEIndex device, float new_corr)
 {
@@ -517,7 +515,7 @@ bool recalBMEPres (BMEIndex device, float new_corr)
         // apply to all existing data
         for (int i = 0; i < N_BME_READINGS; i++)
             if (dp->u[i] > 0)
-                dp->p[i] = BMEPACK_P (BMEUNPACK_P (dp->p[i]) + del_corr);
+                dp->p[i] = dp->p[i] + del_corr;
 
         // update display, if any applicable
         drawBME280Panes();

@@ -11,22 +11,11 @@
 bool dx_info_for_sat;                   // global to indicate whether dx_info_b is for DX info or sat info
 
 // path drawing
-// N.B. MAX_PATH must be a power of 2 for dashed lines
-#if defined(_IS_ESP8266)
-    // this requires dense collection of individual dots that are plotted as the map is drawn
-    #define MAX_PATH    2048            // max number of points in orbit path
-    #define FOOT_ALT0   1000            // n dots for 0 deg altitude locus
-    #define FOOT_ALT30  300             // n dots for 30 deg altitude locus
-    #define FOOT_ALT60  100             // n dots for 60 deg altitude locus
-#else
-    // can be sparser because we just draw lines
-    #define MAX_PATH    512
-    #define FOOT_ALT0   200
-    #define FOOT_ALT30  100
-    #define FOOT_ALT60  75
-#define SHSATDTMAP      1               // whether to show satellite time on map
-#endif
-#define N_FOOT      3                   // number of footprint altitude loci
+#define MAX_PATH        512             // N.B. MAX_PATH must be a power of 2 for dashed lines to work right
+#define FOOT_ALT0       200
+#define FOOT_ALT30      100
+#define FOOT_ALT60      75
+#define N_FOOT          3               // number of footprint altitude loci
 
 
 // config
@@ -41,6 +30,7 @@ bool dx_info_for_sat;                   // global to indicate whether dx_info_b 
 #define FONT_H          (dx_info_b.h/6) // height for SMALL_FONT
 #define FONT_D          5               // font descent
 #define SAT_COLOR       RA8875_RED      // overall annotation color
+#define BTN_COLOR       RA8875_GREEN    // button fill color
 #define SATUP_COLOR     RGB565(0,200,0) // time color when sat is up
 #define SOON_COLOR      RGB565(200,0,0) // table text color for pass soon
 #define SOON_MINS       10              // "soon", minutes
@@ -530,11 +520,7 @@ static void setSatMapNameLoc()
     // set size based on longest of sat name or rise/set time
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
     map_name_b.w = fmaxf (MAP_DT_W, getTextWidth(user_name));
-#if defined(SHSATDTMAP)
     map_name_b.h = FONT_H + 10;
-#else
-    map_name_b.h = FONT_H + 1;          // reduce flashing by not including height for time not shown anyway
-#endif
 
     switch ((MapProjection)map_proj) {
 
@@ -886,7 +872,7 @@ static bool satLookup ()
 
 static void showSelectionBox (const SCoord &c, bool on)
 {
-    uint16_t fill_color = on ? SAT_COLOR : RA8875_BLACK;
+    uint16_t fill_color = on ? BTN_COLOR : RA8875_BLACK;
     tft.fillRect (c.x, c.y+(CELL_H-CB_SIZE)/2+3, CB_SIZE, CB_SIZE, fill_color);
     tft.drawRect (c.x, c.y+(CELL_H-CB_SIZE)/2+3, CB_SIZE, CB_SIZE, RA8875_WHITE);
 }
@@ -1446,8 +1432,8 @@ void updateSatPath()
     if (!sat_path)
         fatalError (_FX("No memory for satellite path"));
 
-    // decide line width
-    int lw = getPathWidth();
+    // decide line width, if used
+    int lw = getRawPathWidth(SATPATH_CSPR);
 
     // fill sat_path
     float period = sat->period();
@@ -1457,7 +1443,7 @@ void updateSatPath()
     for (uint16_t p = 0; p < max_path; p++) {
 
         // place dashed line points off screen courtesy overMap()
-        if (getColorDashed(SATPATH_CSPR) && (dashed++ & (MAX_PATH>>7))) {   // first always on for center dot
+        if (getPathDashed(SATPATH_CSPR) && (dashed++ & (MAX_PATH>>7))) {   // first always on for center dot
             sat_path[n_path] = {10000, 10000};
         } else {
             // compute next point along path
@@ -1471,10 +1457,6 @@ void updateSatPath()
         t += period/max_path;   // show 1 rev
         sat->predict (t);
         sat->geo (satlat, satlng);
-
-        // loop takes over a second on ESP so update clock midway
-        if (p == max_path/2)
-            updateClocks(false);
     }
 
     updateClocks(false);
@@ -1495,77 +1477,35 @@ void drawSatPathAndFoot()
     if (!sat)
         return;
 
-
-    // decide line width
-    int lw = getPathWidth();
-
-    // draw path
-    uint16_t path_color = getMapColor(SATPATH_CSPR);
-    for (int i = 1; i < n_path; i++) {
-        SCoord &sp0 = sat_path[i-1];
-        SCoord &sp1 = sat_path[i];
-        if (segmentSpanOkRaw(sp0, sp1, 2*lw)) {
-            if (i == 1) {
-                // first coord is always the current location, show only if visible
-                // N.B. set ll2s edge to accommodate this dot
-                tft.fillCircleRaw (sp0.x, sp0.y, 2*lw, path_color);
-                tft.drawCircleRaw (sp0.x, sp0.y, 2*lw, RA8875_BLACK);
+    // draw path, if on
+    int pw = getRawPathWidth(SATPATH_CSPR);
+    if (pw) {
+        uint16_t pc = getMapColor(SATPATH_CSPR);
+        for (int i = 1; i < n_path; i++) {
+            SCoord &sp0 = sat_path[i-1];
+            SCoord &sp1 = sat_path[i];
+            if (segmentSpanOkRaw(sp0, sp1, 2*pw)) {
+                if (i == 1) {
+                    // first coord is always the current location, show only if visible
+                    // N.B. set ll2s edge to accommodate this dot
+                    tft.fillCircleRaw (sp0.x, sp0.y, 2*pw, pc);
+                    tft.drawCircleRaw (sp0.x, sp0.y, 2*pw, RA8875_BLACK);
+                }
+                tft.drawLineRaw (sp0.x, sp0.y, sp1.x, sp1.y, pw, pc);
             }
-            tft.drawLineRaw (sp0.x, sp0.y, sp1.x, sp1.y, lw, path_color);
         }
     }
 
     // draw foots
-    uint16_t foot_color = getMapColor(SATFOOT_CSPR);
-    for (int alt_i = 0; alt_i < N_FOOT; alt_i++) {
-        for (uint16_t foot_i = 0; foot_i < n_foot[alt_i]; foot_i++) {
-            SCoord &sf0 = sat_foot[alt_i][foot_i];
-            SCoord &sf1 = sat_foot[alt_i][(foot_i+1)%n_foot[alt_i]];   // closure!
-            if (segmentSpanOkRaw(sf0,sf1,1))
-                tft.drawLineRaw (sf0.x, sf0.y, sf1.x, sf1.y, lw, foot_color);
-        }
-    }
-}
-
-/* draw all sat path points on the given screen row.
- * N.B. only used with _IS_ESP8266
- */
-void drawSatPointsOnRow (uint16_t y0)
-{
-    if (!sat)
-        return;
-
-
-    // draw fat pixel above so we don't clobber it on next row down
-
-    // path
-    uint16_t path_color = getMapColor(SATPATH_CSPR);
-    for (uint16_t p = 0; p < n_path; p++) {
-        SCoord s = sat_path[p];
-        if (y0 == s.y && overMap(s)) {
-            tft.drawPixel (s.x, s.y, path_color);
-            s.y -= 1;
-            if (overMap(s)) tft.drawPixel (s.x, s.y, path_color);
-            s.x += 1;
-            if (overMap(s)) tft.drawPixel (s.x, s.y, path_color);
-            s.y += 1;
-            if (overMap(s)) tft.drawPixel (s.x, s.y, path_color);
-        }
-    }
-
-    // 3 footprint segments
-    uint16_t foot_color = getMapColor(SATFOOT_CSPR);
-    for (uint8_t alt_i = 0; alt_i < N_FOOT; alt_i++) {
-        for (uint16_t foot_i = 0; foot_i < n_foot[alt_i]; foot_i++) {
-            SCoord s = sat_foot[alt_i][foot_i];
-            if (y0 == s.y && overMap(s)) {
-                tft.drawPixel (s.x, s.y, foot_color);
-                s.y -= 1;
-                if (overMap(s)) tft.drawPixel (s.x, s.y, foot_color);
-                s.x += 1;
-                if (overMap(s)) tft.drawPixel (s.x, s.y, foot_color);
-                s.y += 1;
-                if (overMap(s)) tft.drawPixel (s.x, s.y, foot_color);
+    int fw = getRawPathWidth(SATFOOT_CSPR);
+    if (fw) {
+        uint16_t fc = getMapColor(SATFOOT_CSPR);
+        for (int alt_i = 0; alt_i < N_FOOT; alt_i++) {
+            for (uint16_t foot_i = 0; foot_i < n_foot[alt_i]; foot_i++) {
+                SCoord &sf0 = sat_foot[alt_i][foot_i];
+                SCoord &sf1 = sat_foot[alt_i][(foot_i+1)%n_foot[alt_i]];   // closure!
+                if (segmentSpanOkRaw (sf0, sf1, 1))
+                    tft.drawLineRaw (sf0.x, sf0.y, sf1.x, sf1.y, fw, fc);
             }
         }
     }
@@ -1594,7 +1534,6 @@ void drawSatNameOnRow(uint16_t y0)
     shadowString (user_name, true, getMapColor(SATFOOT_CSPR), un_x, un_y);
 
     // draw time to next event, if any, unless ESP which never erases
-#if defined(SHSATDTMAP)
     float days;
     PassState ps = findPassState(&days);
     switch (ps) {
@@ -1625,7 +1564,6 @@ void drawSatNameOnRow(uint16_t y0)
         }
         break;
     }
-#endif // SHSATDTMAP
 }
 
 /* return whether user has tapped near the head of the satellite path or in the map name

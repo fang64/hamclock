@@ -19,20 +19,20 @@
 
 
 
-// config 
+// layout 
 #define DXC_COLOR       RA8875_GREEN
 #define CLRBOX_DX       10                      // dx clear control box center from left
-#define CLRBOX_DY       15                      // dy " down from top
+#define CLRBOX_DY       10                      // dy " center down from top
 #define CLRBOX_R        4                       // clear box radius
 #define SPOTMRNOP       (tft.SCALESZ+4)         // raw spot marker radius when no path
 
 // times
-#define KEEPALIVE_DT    600                     // send something if last_spot idle this long, secs
+#define KEEPALIVE_DT    600                     // send something if last_heard idle this long, secs
 #define BGCHECK_DT      5000                    // background checkDXCluster period, millis
 #define MAXUSE_DT       (5*60)                  // remove all spots memory if pane not used this long, secs
 #define MAXKEEP_DT      3600                    // max age on dxc_spots list, secs
 #define DXCMSG_DT       500                     // delay before sending each cluster message, millis
-static time_t last_spot;                        // last time a spot arrived
+static time_t last_heard;                       // last time anything arrived from the cluster
 
 // connection info
 static WiFiClient dxc_client;                   // persistent TCP connection while displayed ...
@@ -51,8 +51,9 @@ static DXSpot *dxc_spots;                       // malloced list, complete
 static int n_dxspots;                           // n spots in dxc_spots
 static DXSpot *dxwl_spots;                      // malloced list, filtered for display, count in dxc_ss.n_data
 static ScrollState dxc_ss;                      // scrolling info
-static bool dxc_showbio, dxc_showbio_init;      // whether click shows bio, and whether this is inited
-
+static bool dxc_showbio;                        // whether click shows bio
+static time_t scrolledaway_tm;                  // time when user scrolled away from top of list
+static time_t rebuild_tm;                       // last time rebuildDXWatchList() was called
 
 
 // type
@@ -82,13 +83,45 @@ static void drawClearListBtn (const SBox &box, bool draw)
 {
     uint16_t color = draw ? DXC_COLOR : RA8875_BLACK;
 
-    tft.drawRect (box.x + CLRBOX_DX - CLRBOX_R, box.y + CLRBOX_DY - CLRBOX_R, 2*CLRBOX_R+1, 2*CLRBOX_R+1, color);
+    tft.drawRect (box.x + CLRBOX_DX - CLRBOX_R, box.y + CLRBOX_DY - CLRBOX_R,
+                  2*CLRBOX_R+1, 2*CLRBOX_R+1, color);
     tft.drawLine (box.x + CLRBOX_DX - CLRBOX_R, box.y + CLRBOX_DY - CLRBOX_R,
                   box.x + CLRBOX_DX + CLRBOX_R, box.y + CLRBOX_DY + CLRBOX_R, color);
     tft.drawLine (box.x + CLRBOX_DX + CLRBOX_R, box.y + CLRBOX_DY - CLRBOX_R,
                   box.x + CLRBOX_DX - CLRBOX_R, box.y + CLRBOX_DY + CLRBOX_R, color);
 }
 
+/* handy check whether we are, or should, show the New spots symbol
+ */
+static bool showingNewSpot(void)
+{
+    return (scrolledaway_tm > 0 && n_dxspots > 0 && dxc_spots[n_dxspots-1].spotted > scrolledaway_tm);
+}
+
+/* rebuild dxwl_spots from dxc_spots
+ */
+static void rebuildDXWatchList(void)
+{
+    // extract qualifying spots
+    time_t oldest = myNow() - 60*dxc_age;               // minutes to seconds
+    dxc_ss.n_data = 0;                                  // reset count, don't bother to resize dxwl_spots
+    for (int i = 0; i < n_dxspots; i++) {
+        DXSpot &spot = dxc_spots[i];
+        if (spot.spotted >= oldest && checkWatchListSpot (WLID_DX, spot) != WLS_NO) {
+            dxwl_spots = (DXSpot *) realloc (dxwl_spots, (dxc_ss.n_data+1) * sizeof(DXSpot));
+            if (!dxwl_spots)
+                fatalError ("No mem for %d watch list spots", dxc_ss.n_data+1);
+            dxwl_spots[dxc_ss.n_data++] = spot;
+        }
+    }
+
+    // resort and scroll to newest
+    qsort (dxwl_spots, dxc_ss.n_data, sizeof(DXSpot), qsDXCSpotted);
+    dxc_ss.scrollToNewest();
+
+    // note time
+    rebuild_tm = myNow();
+}
 
 /* draw all currently visible spots in the pane then update scroll markers if more
  */
@@ -98,25 +131,45 @@ static void drawAllVisDXCSpots (const SBox &box)
     drawClearListBtn (box, dxc_ss.n_data > 0);
 }
 
+/* handy check whether New Spot symbol needs changing on/off
+ */
+static void checkNewSpotSymbol (const SBox &box, bool was_at_newest)
+{
+    if (was_at_newest && !dxc_ss.atNewest()) {
+        scrolledaway_tm = myNow();                              // record when moved off top
+        ROTHOLD_SET(PLOT_CH_DXCLUSTER);                         // disable rotation
+    } else if (!was_at_newest && dxc_ss.atNewest()) {
+        dxc_ss.drawNewSpotsSymbol (box, false, false);          // turn off entirely
+        rebuildDXWatchList ();
+        scrolledaway_tm = 0;
+        ROTHOLD_CLR(PLOT_CH_DXCLUSTER);                         // resume rotation
+    }
+}
 
-/* shift the visible list to show newer spots, if appropriate
+/* shift the visible list up, if possible.
+ * if reach the end with the newest entry, turn off New spots and update dxwl_spots
  */
 static void scrollDXCUp (const SBox &box)
 {
+    bool was_at_newest = dxc_ss.atNewest();
     if (dxc_ss.okToScrollUp()) {
         dxc_ss.scrollUp();
         drawAllVisDXCSpots(box);
     }
+    checkNewSpotSymbol (box, was_at_newest);
 }
 
-/* shift the visible list to show older spots, if appropriate
+/* shift the visible list down, if possible.
+ * set scrolledaway_tm if scrolling away from newest entry
  */
 static void scrollDXCDown (const SBox &box)
 {
+    bool was_at_newest = dxc_ss.atNewest();
     if (dxc_ss.okToScrollDown()) {
         dxc_ss.scrollDown ();
         drawAllVisDXCSpots (box);
     }
+    checkNewSpotSymbol (box, was_at_newest);
 }
 
 /* log the given message
@@ -152,28 +205,6 @@ static void engageDXCRow (DXSpot &s)
         openQRZBio (s);
     setRadioSpot(s.kHz);
     newDX (s.tx_ll, NULL, s.tx_call);
-}
-
-/* rebuild dxwl_spots from dxc_spots
- */
-static void rebuildDXWatchList(void)
-{
-    // extract qualifying spots
-    time_t oldest = myNow() - 60*dxc_age;               // minutes to seconds
-    dxc_ss.n_data = 0;                                  // reset count, don't bother to resize dxwl_spots
-    for (int i = 0; i < n_dxspots; i++) {
-        DXSpot &spot = dxc_spots[i];
-        if (spot.spotted >= oldest && checkWatchListSpot (WLID_DX, spot) != WLS_NO) {
-            dxwl_spots = (DXSpot *) realloc (dxwl_spots, (dxc_ss.n_data+1) * sizeof(DXSpot));
-            if (!dxwl_spots)
-                fatalError ("No mem for %d watch list spots", dxc_ss.n_data+1);
-            dxwl_spots[dxc_ss.n_data++] = spot;
-        }
-    }
-
-    // resort and scroll to newest
-    qsort (dxwl_spots, dxc_ss.n_data, sizeof(DXSpot), qsDXCSpotted);
-    dxc_ss.scrollToNewest();
 }
 
 /* add a new spot to dxc_spots[] then update dxwl_spots
@@ -225,9 +256,6 @@ static void addDXClusterSpot (DXSpot &new_spot)
 
     // append to dxc_spots
     dxc_spots[n_dxspots++] = new_spot;
-
-    // update dxwl_spots
-    rebuildDXWatchList();
 }
 
 /* given address of pointer into a WSJT-X message, extract bool and advance pointer to next field.
@@ -654,7 +682,6 @@ static bool connectDXCluster (const SBox &box)
 
             // request recent spots
             requestRecentSpots();
-            rebuildDXWatchList();
 
             // confirm still ok
             if (!dxc_client) {
@@ -750,7 +777,7 @@ bool sendDXClusterDELLGrid()
  */
 static void initDXGUI (const SBox &box)
 {
-    // prep
+    // prep box
     prepPlotBox (box);
 
     // title
@@ -763,7 +790,7 @@ static void initDXGUI (const SBox &box)
 
     // init scroller for this box size but leave n_data
     dxc_ss.max_vis = (box.h - LISTING_Y0)/LISTING_DY;
-    dxc_ss.scrollToNewest();
+    dxc_ss.initNewSpotsSymbol (box, DXC_COLOR);
 }
 
 /* connect dxc_client to a dx cluster or wsjtx_server.
@@ -773,6 +800,7 @@ static bool initDXCluster(const SBox &box)
 {
     // prep box
     initDXGUI (box);
+    dxc_ss.scrollToNewest();
 
     // show cluster host busy
     showHost (box, RA8875_YELLOW);
@@ -784,7 +812,7 @@ static bool initDXCluster(const SBox &box)
         showHost (box, RA8875_GREEN);
 
         // reinit times
-        last_spot = myNow();
+        last_heard = myNow();
 
         // max age
         if (!NVReadUInt8 (NV_DXCAGE, &dxc_age)) {
@@ -792,11 +820,13 @@ static bool initDXCluster(const SBox &box)
             NVWriteUInt8 (NV_DXCAGE, dxc_age);
         }
 
-        // determine dxc_showbio first time, menu might change
-        if (!dxc_showbio_init) {
-            dxc_showbio = getQRZId() != QRZ_NONE;
-            dxc_showbio_init = true;
+        // determine dxc_showbio
+        uint8_t bio = 0;
+        if (getQRZId() != QRZ_NONE) {
+            if (!NVReadUInt8 (NV_DXCBIO, &bio))
+                bio = 0;
         }
+        dxc_showbio = (bio != 0);
 
         // ok
         return (true);
@@ -906,7 +936,10 @@ static void runDXClusterMenu (const SBox &box)
     if (runMenu (menu)) {
 
         // check bio
-        dxc_showbio = mitems[3].set;
+        if (show_bio_enabled) {
+            dxc_showbio = mitems[3].set;
+            NVWriteUInt8 (NV_DXCBIO, dxc_showbio);
+        }
 
         // set desired age
         for (int i = 0; i < NARRAY(mitems); i++) {
@@ -926,12 +959,21 @@ static void runDXClusterMenu (const SBox &box)
         setWatchList (WLID_DX, mtext.label, mtext.text);
         dxcLog ("set WL to %s %s\n", mtext.label, mtext.text);
 
-        // restart list
+        // rebuild with new options
         rebuildDXWatchList();
+
+        // full update to capture any/all changes
+        scheduleNewPlot (PLOT_CH_DXCLUSTER);
+
+    } else {
+
+        // cancelled so just restore 
+        initDXGUI (box);
+        showHost (box, RA8875_GREEN);
+        drawAllVisDXCSpots (box);
+
     }
 
-    // always do a full update even if just to erase menu
-    scheduleNewPlot (PLOT_CH_DXCLUSTER);
 
     // always free the working watch list text
     free (mtext.text);
@@ -998,7 +1040,23 @@ bool updateDXCluster (const SBox &box, bool fresh)
     // fresh prep
     if (fresh) {
         initDXGUI (box);
+        dxc_ss.scrollToNewest();
         showHost (box, RA8875_GREEN);
+    }
+
+    if (dxc_ss.atNewest()) {
+        // rebuild displayed list if new spot since last rebuild
+        if (n_dxspots > 0 && dxc_spots[n_dxspots-1].spotted > rebuild_tm) {
+            rebuildDXWatchList();
+            dxc_ss.drawNewSpotsSymbol (box, false, false);      // insure off
+            scrolledaway_tm = 0;
+        }
+        ROTHOLD_CLR(PLOT_CH_DXCLUSTER);                         // resume rotation
+    } else {
+        // show "new spots" symbol if added more spots since scrolled away
+        if (showingNewSpot())
+            dxc_ss.drawNewSpotsSymbol (box, true, false);       // show passively
+        ROTHOLD_SET(PLOT_CH_DXCLUSTER);                         // disable rotation
     }
 
     // update list, if only to show aging
@@ -1055,7 +1113,7 @@ void checkDXCluster()
                 updateClocks(false);
 
                 // any new data counts even if not valid
-                last_spot = myNow();
+                last_heard = myNow();
 
                 // crack
                 DXSpot new_spot;
@@ -1077,8 +1135,8 @@ void checkDXCluster()
             }
 
             // send something if spider quiet for too long
-            if (cl_type == CT_DXSPIDER && myNow() - last_spot > KEEPALIVE_DT) {
-                last_spot = myNow();        // avoid banging
+            if (cl_type == CT_DXSPIDER && myNow() - last_heard > KEEPALIVE_DT) {
+                last_heard = myNow();        // avoid banging
                 sendDXClusterHeartbeat();
             }
         }
@@ -1132,7 +1190,7 @@ void checkDXCluster()
             free (sts_msg);
 
             // any new data counts even if invalid
-            last_spot = myNow();
+            last_heard = myNow();
         }
 
         // clean up
@@ -1164,13 +1222,27 @@ bool checkDXClusterTouch (const SCoord &s, const SBox &box)
         }
 
         // clear control?
-        if (s.x < box.x + CLRBOX_DX+2*CLRBOX_R) {
+        if (s.y < box.y + CLRBOX_DY+CLRBOX_R && s.x < box.x + CLRBOX_DX+CLRBOX_R) {
             dxcLog ("User erased list of %d spots, %d qualified\n", n_dxspots, dxc_ss.n_data);
             resetDXMem();
             initDXGUI(box);
+            dxc_ss.scrollToNewest();
             showHost (box, RA8875_GREEN);
             return (true);
         }
+
+        // New spots?
+        if (dxc_ss.checkNewSpotsTouch (s, box)) {
+            if (!dxc_ss.atNewest() && showingNewSpot()) {
+                // scroll to newest, let updateDXCluster() do the rest
+                dxc_ss.scrollToNewest();
+            }
+            return (true);                      // claim our even if not showing
+        }
+
+        // on hold?
+        if (ROTHOLD_TST(PLOT_CH_DXCLUSTER))
+            return (true);
 
         // none of those, so we return indicating user can choose another pane
         return (false);
@@ -1240,7 +1312,7 @@ bool isDXClusterConnected()
  */
 bool getClosestDXCluster (const LatLong &ll, DXSpot *sp, LatLong *llp)
 {
-    return (isDXClusterConnected() && getClosestSpot (dxwl_spots, dxc_ss.n_data, ll, sp, llp));
+    return (isDXClusterConnected() && getClosestSpot (dxwl_spots, dxc_ss.n_data, LOME_BOTH, ll, sp, llp));
 }
 
 /* remove all spots memory if unused for some time
@@ -1258,7 +1330,7 @@ void cleanDXCluster()
 
 /* return spot in our pane if under ms
  */
-bool getDXCPaneSpot (SCoord &ms, DXSpot *dxs, LatLong *ll)
+bool getDXCPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll)
 {
     // done if ms not showing our pane or not in our box
     PlotPane pp = findPaneChoiceNow (PLOT_CH_DXCLUSTER);

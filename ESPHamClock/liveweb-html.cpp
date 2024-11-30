@@ -421,8 +421,10 @@ char live_html[] =  R"_raw_html_(
                         // try to open a url in a tab
                         var url = e.data.substring(5);
                         console.log('opening ' + url);
-                        if (!window.open(url, "HamClockTab"))           // naming the tab allows reuse
+                        if (!window.open(url, "HamClockTab")) {         // naming the tab allows reuse
                             console.log ("Failed to open ", url);
+                            alert ("Failed to open " + url + ". \nYou may have popups blocked");
+                        }
                     }
 
                     else if (e.data === 'Too many connections') {       // N.B. string must match liveweb.cpp

@@ -241,8 +241,7 @@ static bool runContestMenu (const SCoord &s, const SBox &box)
     AlarmState a_s;
     time_t a_t;
     bool a_utc;
-    char a_str[100];
-    getOneTimeAlarmState (a_s, a_t, a_utc, a_str, sizeof(a_str));
+    getOneTimeAlarmState (a_s, a_t, a_utc);
     bool starts_in_future = cep && cep->start_t > nowWO();
     bool alarm_is_set = cep && a_s == ALMS_ARMED && a_t == cep->start_t && starts_in_future;
 

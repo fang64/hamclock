@@ -35,10 +35,10 @@ HamBandSetting findHamBand (long Hz)
 
 
 
-/* find closest location from ll to either end of paths defined in the given list of spots.
+/* find closest location from ll to the given end(s) of paths defined in the given list of spots.
  * return whether found one within MAX_CSR_DIST.
  */
-bool getClosestSpot (const DXSpot *list, int n_list, const LatLong &from_ll,
+bool getClosestSpot (const DXSpot *list, int n_list, LabelOnMapEnd which_end, const LatLong &from_ll,
     DXSpot *closest_sp, LatLong *closest_llp)
 {
     // linear search -- not worth kdtree etc
@@ -50,18 +50,22 @@ bool getClosestSpot (const DXSpot *list, int n_list, const LatLong &from_ll,
         const DXSpot *sp = &list[i];
         float d;                    
 
-        d = simpleSphereDist (sp->rx_ll, from_ll);
-        if (d < min_d) {
-            min_d = d;
-            min_sp = sp;
-            min_is_de = true;
+        if (which_end == LOME_RXEND || which_end == LOME_BOTH) {
+            d = simpleSphereDist (sp->rx_ll, from_ll);
+            if (d < min_d) {
+                min_d = d;
+                min_sp = sp;
+                min_is_de = true;
+            }
         }
 
-        d = simpleSphereDist (sp->tx_ll, from_ll);
-        if (d < min_d) {
-            min_d = d;
-            min_sp = sp;
-            min_is_de = false;
+        if (which_end == LOME_TXEND || which_end == LOME_BOTH) {
+            d = simpleSphereDist (sp->tx_ll, from_ll);
+            if (d < min_d) {
+                min_d = d;
+                min_sp = sp;
+                min_is_de = false;
+            }
         }
     }
 
@@ -91,11 +95,13 @@ static void drawSpotTXRXOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMa
     LabelType lblt = getSpotLabelType();
     if (lblt == LBL_NONE)
         return;
-    int dot_r = getSpotDotRadius() * 1.414F;                            // larger for squares
 
     // handy bools
     bool tx_end = txrx == LOME_TXEND;
     bool just_dot = dot == LOMD_JUSTDOT;
+
+    // get dot size
+    int dot_r = getRawBandSpotRadius (spot.kHz * 1000);                 // wants Hz
 
     // handy ll of desired end
     const LatLong &ll = tx_end ? spot.tx_ll : spot.rx_ll;
@@ -112,13 +118,7 @@ static void drawSpotTXRXOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMa
     // rx "dot" end is square, tx is a circle
     SCoord s_raw;
     ll2sRaw (ll, s_raw, dot_r);
-    if (tx_end) {
-        tft.fillCircleRaw (s_raw.x, s_raw.y, dot_r, b_color);
-        tft.drawCircleRaw (s_raw.x, s_raw.y, dot_r, RA8875_BLACK);
-    } else {
-        tft.fillRectRaw (s_raw.x-dot_r, s_raw.y-dot_r, 2*dot_r, 2*dot_r, b_color);
-        tft.drawRectRaw (s_raw.x-dot_r, s_raw.y-dot_r, 2*dot_r, 2*dot_r, RA8875_BLACK);
-    }
+    drawSpotDot (s_raw.x, s_raw.y, dot_r, txrx, b_color);
 
     // done if no text label
     if (lblt == LBL_DOT || just_dot)
@@ -161,7 +161,7 @@ void drawSpotLabelOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMapDot d
 void drawSpotPathOnMap (const DXSpot &spot)
 {
     // raw line size, unless none
-    int raw_pw = getSpotPathWidth();
+    int raw_pw = getRawBandPathWidth(spot.kHz * 1000);                  // wants Hz
     if (raw_pw == 0)
         return;
 
@@ -174,12 +174,13 @@ void drawSpotPathOnMap (const DXSpot &spot)
     float clat = cosf (spot.rx_ll.lat);
     float dist, bear;
     propPath (false, spot.rx_ll, slat, clat, spot.tx_ll, &dist, &bear);
-    const int n_step = (int)ceilf(dist/deg2rad(PATH_SEGLEN)) | 1;   // always odd for dashed ends
+    const int n_step = ((int)ceilf(dist/deg2rad(PATH_SEGLEN))) | 1;     // always odd so both ends are drawn
     const float step = dist/n_step;
-    const bool dashed = getBandDashed (spot.kHz * 1000);
-    SCoord prev_s = {0, 0};                                         // .x == 0 means don't show
+    const bool dashed = getBandPathDashed (spot.kHz * 1000);            // wants Hz
+    SCoord prev_s = {0, 0};                                             // .x == 0 means don't show
 
-    for (int i = 0; i <= n_step; i++) {                             // fence posts
+
+    for (int i = 0; i <= n_step; i++) {                                 // fence posts
         float r = i*step;
         float ca, B;
         SCoord s;

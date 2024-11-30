@@ -2666,6 +2666,17 @@ void setDailyAlarmState (const AlarmState &as, uint16_t hr, uint16_t mn, bool ut
 /* return the one-time alarm info.
  *   t_utc: always in UTC
  *   utc:   whether user wants to see it in DE's TZ
+ */
+void getOneTimeAlarmState (AlarmState &as, time_t &t_utc, bool &utc)
+{
+    as = alarm_once.state;
+    t_utc = alarm_once.time;
+    utc = alarm_once.utc;
+}
+
+/* return the one-time alarm info.
+ *   t_utc: always in UTC
+ *   utc:   whether user wants to see it in DE's TZ
  *   str:   time as user wants to see it
  */
 void getOneTimeAlarmState (AlarmState &as, time_t &t_utc, bool &utc, char str[], size_t str_l)

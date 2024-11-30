@@ -622,13 +622,14 @@ static void updateGimbalGUI(const SBox &box)
     drawUpOver();
 }
 
-/* draw a beam on the main map along az_now; not on ESP
+/* draw an expanding set of wavefronts in direction of az_now
  */
 static void drawGimbalBeam()
 {
-#if defined(_IS_UNIX)
-
-    // draw an expanding set if wavefronts in direection of az_now
+    // thickness if any
+    int lw = getRawPathWidth (ROTATOR_CSPR);
+    if (lw == 0)
+        return;
 
     float ca, B;
     uint16_t col = getMapColor (ROTATOR_CSPR);
@@ -639,14 +640,12 @@ static void drawGimbalBeam()
         for (int i = 0; i <= BEAM_W; i++) {
             float beam_az = az_0 + (i-BEAM_W/2.0F);
             solveSphere (deg2rad(beam_az), b, sdelat, cdelat, &ca, &B);
-            ll2sRaw (asinf(ca), fmodf(de_ll.lng+B+5*M_PIF,2*M_PIF)-M_PIF, s1, 1);
-            if (s2.x != 0 && segmentSpanOkRaw (s1, s2, 1))
-                tft.drawLineRaw (s1.x, s1.y, s2.x, s2.y, 1, col);
+            ll2sRaw (asinf(ca), fmodf(de_ll.lng+B+5*M_PIF,2*M_PIF)-M_PIF, s1, lw);
+            if (s2.x != 0 && segmentSpanOkRaw (s1, s2, lw))
+                tft.drawLineRaw (s1.x, s1.y, s2.x, s2.y, lw, col);
             s2 = s1;
         }
     }
-
-#endif // _IS_UNIX
 }
 
 static void drawArrow (const SBox &b, ArrowDir d)

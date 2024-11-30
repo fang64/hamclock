@@ -55,6 +55,7 @@ extern uint16_t analogRead(int pin);
 extern void setup(void);
 extern void loop(void);
 extern bool rm_eeprom;
+extern bool ignore_x11geom;
 
 
 extern char **our_argv;

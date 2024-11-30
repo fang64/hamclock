@@ -6,8 +6,6 @@
 #include "HamClock.h"
 
 
-static const char ww_page[] = "/worldwx/wx.txt";        // URL for the gridded world weather table
-
 
 /* look up timezone from local grid for the approx location.
  */
@@ -59,20 +57,20 @@ int getTZ (TZInfo &tz)
          return (0);    // lint
     }
 
-    // N.B. avoid nested network calls
-    static int depth;
+    // N.B. avoid recursive network calls via net retry scheculing
+    static bool here_again;
+    if (here_again)
+        Serial.printf ("getTZ: detected recursion\n");
 
-    if (tz.auto_tz && depth == 0) {
+    if (tz.auto_tz && !here_again) {
         char ynot[100];
-        depth += 1;
-        const WXInfo *wip = findWXCache (tz.ll, is_de, ynot);
-        depth -= 1;
-        if (!wip) {
-            Serial.printf ("TZ: %s getTZ err: %s\n", is_de ? "DE" : "DX", ynot);
-            tz.tz_secs = 0;
-        } else {
+        here_again = true;
+        const WXInfo *wip = findTZCache (tz.ll, is_de, ynot);
+        here_again = false;
+        if (wip)
             tz.tz_secs = wip->timezone;
-        }
+        else
+            Serial.printf ("TZ: %s getTZ err: %s\n", is_de ? "DE" : "DX", ynot);
     }
 
     return (tz.tz_secs);

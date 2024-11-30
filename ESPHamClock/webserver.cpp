@@ -603,10 +603,10 @@ static bool getWiFiDEDXInfo_helper (WiFiClient &client, char line[], size_t line
         dist *= ERAD_M;                             // radians to miles
         B *= 180/M_PIF;                             // radians to degrees
         bool B_ismag = desiredBearing (de_ll, B);
-        if (useMetricUnits())
+        if (showDistKm())
             dist *= KM_PER_MI;
         FWIFIPR (client, "DX_path_SP    ");
-        snprintf (buf, sizeof(buf), "%.0f %s @ %.0f deg %s\n", dist, useMetricUnits() ? "km" : "mi", B,
+        snprintf (buf, sizeof(buf), "%.0f %s @ %.0f deg %s\n", dist, showDistKm() ? "km" : "mi", B,
                 B_ismag ? "magnetic" : _FX("true"));
         client.print (buf);
 
@@ -615,10 +615,10 @@ static bool getWiFiDEDXInfo_helper (WiFiClient &client, char line[], size_t line
         dist *= ERAD_M;                             // radians to miles
         B *= 180/M_PIF;                             // radians to degrees
         B_ismag = desiredBearing (de_ll, B);
-        if (useMetricUnits())
+        if (showDistKm())
             dist *= KM_PER_MI;
         FWIFIPR (client, "DX_path_LP    ");
-        snprintf (buf, sizeof(buf), "%.0f %s @ %.0f deg %s\n", dist, useMetricUnits() ? "km" : "mi", B,
+        snprintf (buf, sizeof(buf), "%.0f %s @ %.0f deg %s\n", dist, showDistKm() ? "km" : "mi", B,
                 B_ismag ? "magnetic" : _FX("true"));
         client.print (buf);
 
@@ -722,21 +722,21 @@ static bool getWiFiDEDXInfo_helper (WiFiClient &client, char line[], size_t line
     if (getCurrentWX (ll, want_de, wip, buf)) {
         float x;
 
-        x = useMetricUnits() ? wip->temperature_c : CEN2FAH(wip->temperature_c);
-        snprintf (buf, sizeof(buf), "%sWxTemp     %.1f %c\n", prefix, x, useMetricUnits() ? 'C' : 'F');
+        x = showTempC() ? wip->temperature_c : CEN2FAH(wip->temperature_c);
+        snprintf (buf, sizeof(buf), "%sWxTemp     %.1f %c\n", prefix, x, showTempC() ? 'C' : 'F');
         client.print(buf);
 
-        x = useMetricUnits() ? wip->pressure_hPa : wip->pressure_hPa/33.8639;
+        x = showATMhPa() ? wip->pressure_hPa : wip->pressure_hPa/33.8639;
         snprintf (buf, sizeof(buf), "%sWxPressure %.2f %s %s\n", prefix, x,
-            useMetricUnits() ? "hPa" : "inHg",
+            showATMhPa() ? "hPa" : "inHg",
             wip->pressure_chg < 0 ? "falling" : (wip->pressure_chg > 0 ? _FX("rising") : _FX("steady")));
         client.print(buf);
 
         snprintf (buf, sizeof(buf), "%sWxHumidity %.1f %%\n", prefix, wip->humidity_percent);
         client.print(buf);
 
-        x = (useMetricUnits() ? 3.6F : 2.237F) * wip->wind_speed_mps; // kph or mph
-        snprintf (buf, sizeof(buf), "%sWxWindSpd  %.1f %s\n", prefix, x, useMetricUnits()?"kph":"mph");
+        x = (showDistKm() ? 3.6F : 2.237F) * wip->wind_speed_mps; // kph or mph
+        snprintf (buf, sizeof(buf), "%sWxWindSpd  %.1f %s\n", prefix, x, showDistKm()?"kph":"mph");
         client.print(buf);
 
         snprintf (buf, sizeof(buf), "%sWxWindDir  %s\n", prefix, wip->wind_dir_name);
@@ -795,7 +795,7 @@ static void spotsHelper (WiFiClient &client, const DXSpot *spots, int nspots, ch
         dist *= ERAD_M;                                 // angle to miles
         bear *= 180/M_PIF;                              // rad -> degrees
         bool bear_ismag = desiredBearing (de_ll, bear);
-        if (useMetricUnits())
+        if (showDistKm())
             dist *= KM_PER_MI;
 
         // add remaining fields
@@ -869,7 +869,7 @@ static bool getWiFiLiveStats (WiFiClient &client, char *line, size_t line_len)
 
     // heading
     char buf[100];
-    if (useMetricUnits())
+    if (showDistKm())
         FWIFIPR (client, "# Band Count MaxKm    @Lat    @Lng\n");
     else
         FWIFIPR (client, "# Band Count MaxMi    @Lat    @Lng\n");
@@ -878,7 +878,7 @@ static bool getWiFiLiveStats (WiFiClient &client, char *line, size_t line_len)
     for (int i = 0; i < HAMBAND_N; i++) {
         PSKBandStats &s = stats[i];
         snprintf (buf, sizeof(buf), "%-6s %5d %5.0f %7.2f %7.2f\n", names[i], s.count,
-                useMetricUnits() ? s.maxkm : s.maxkm / KM_PER_MI, s.maxll.lat_d, s.maxll.lng_d);
+                showDistKm() ? s.maxkm : s.maxkm / KM_PER_MI, s.maxll.lat_d, s.maxll.lng_d);
         client.print(buf);
     }
 
@@ -1179,11 +1179,11 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
 
 
     // report units
-    FWIFIPR (client, "Units     ");
-    if (useMetricUnits())
-        FWIFIPRLN (client, "metric");
-    else
-        FWIFIPRLN (client, "imperial");
+    snprintf (buf, sizeof(buf), "Units     %s %s %s\n",
+                    showDistKm() ? "km" : "mi",
+                    showTempC()  ? "C"  : "F",
+                    showATMhPa() ? "hPa" : "inHg");
+    client.print(buf);
 
 
     // report BME info
@@ -1416,7 +1416,7 @@ static bool getWiFiSensorData (WiFiClient &client, char line[], size_t line_len)
     startPlainText(client);
 
     // send content header
-    if (useMetricUnits())
+    if (showTempC() && showATMhPa())
         FWIFIPR (client, "#   UTC ISO 8601      UNIX secs I2C  Temp,C   P,hPa   Hum,%  DewP,C\n");
     else
         FWIFIPR (client, "#   UTC ISO 8601      UNIX secs I2C  Temp,F  P,inHg   Hum,%  DewP,F\n");
@@ -1435,9 +1435,8 @@ static bool getWiFiSensorData (WiFiClient &client, char line[], size_t line_len)
                     snprintf (buf, sizeof(buf),
                                 "%4d-%02d-%02dT%02d:%02d:%02dZ %ld  %02x %7.2f %7.2f %7.2f %7.2f\n",
                                 year(u), month(u), day(u), hour(u), minute(u), second(u), u,
-                                dp->i2c, BMEUNPACK_T(dp->t[qj]), BMEUNPACK_P(dp->p[qj]),
-                                BMEUNPACK_H(dp->h[qj]),
-                                dewPoint (BMEUNPACK_T(dp->t[qj]), BMEUNPACK_H(dp->h[qj])));
+                                dp->i2c, dp->t[qj], dp->p[qj], dp->h[qj],
+                                dewPoint (dp->t[qj], dp->h[qj]));
                     client.print (buf);
                 }
             }
@@ -2736,7 +2735,6 @@ static bool setWiFiMapView (WiFiClient &client, char line[], size_t line_len)
     // all options look good, engage any that have changed.
     // this is rather like drawMapMenu().
 
-    bool full_redraw = false;
     if (S && my_cm != core_map) {
         // just schedule for updating
         scheduleNewCoreMap (my_cm);
@@ -2744,33 +2742,22 @@ static bool setWiFiMapView (WiFiClient &client, char line[], size_t line_len)
     if (G && my_llg != mapgrid_choice) {
         mapgrid_choice = my_llg;
         NVWriteUInt8 (NV_GRIDSTYLE, mapgrid_choice);
-        full_redraw = true;
     }
     if (P && my_proj != map_proj) {
         map_proj = my_proj;
         NVWriteUInt8 (NV_MAPPROJ, map_proj);
-        full_redraw = true;
     }
     if (N && my_night != night_on) {
         night_on = my_night;
         NVWriteUInt8 (NV_NIGHT_ON, night_on);
-        full_redraw = true;
     }
     if (R && my_rss != rss_on) {
         rss_on = my_rss;
         NVWriteUInt8 (NV_RSS_ON, rss_on);
-        if (!full_redraw) {
-            // minimal change if don't need to restart whole map
-            if (rss_on)
-                drawRSSBox();
-            else
-                eraseRSSBox();
-        }
     }
 
-    // restart map if enough has changed
-    if (full_redraw)
-        initEarthMap();
+    // restart map
+    initEarthMap();
 
     // ack
     startPlainText (client);
@@ -2864,75 +2851,53 @@ static bool setWiFiADIF (WiFiClient &client, char line[], size_t line_len)
     // define all possible args
     WebArgs wa;
     wa.nargs = 0;
-    wa.name[wa.nargs++] = "file";
-    wa.name[wa.nargs++] = "none";
     wa.name[wa.nargs++] = "pane";
 
     // parse
     if (!parseWebCommand (wa, line, line_len))
         return (false);
 
-    // check which
-    bool found_file = wa.found[0] && wa.value[0] == NULL;       // no arg
-    bool found_none = wa.found[1] && wa.value[1] == NULL;       // no arg
-
-    if (found_file) {
+    if (wa.found[0]) {
 
         // pane arg
-        int pane = wa.found[2] ? atoi(wa.value[2]) : PANE_3;
+        int pane = wa.value[0] ? atoi(wa.value[0]) : PANE_N;    // bogus pane if not specified
         if (pane < PANE_0 || pane >= PANE_N) {
-            strcpy (line, "Bad pane num");
+            snprintf (line, line_len, "pane must be %d .. %d", PANE_0, PANE_N-1);
             return (false);
         }
         PlotPane pp = (PlotPane)pane;
 
+        // already up elsewhere?
+        PlotPane adif_pp = findPaneForChoice(PLOT_CH_ADIF);
+        if (adif_pp != PANE_NONE && adif_pp != pp) {
+            snprintf (line, line_len, "ADIF already in pane %d", adif_pp);
+            return (false);
+        }
+
+        // assign if not already
+        if (adif_pp == PANE_NONE && setPlotChoice (pp, PLOT_CH_ADIF)) {
+            adif_pp = pp;
+            plot_rotset[adif_pp] |= (1 << PLOT_CH_ADIF);
+        }
+
         // create GenReader using existing client
         GenReader gr(client);
 
-        // POST content immediately follows header
+        // process POST content which immediately follows header
         int n_good, n_bad;
-        readADIFFile (gr, content_length, n_good, n_bad);
+        loadADIFFile (gr, content_length, "via set_adif", plot_b[adif_pp], n_good, n_bad);
         if (n_good == 0) {
-            strcpy (line, "No spots found");
+            strcpy (line, "No qualifying spots found");
             return (false);
         }
 
-        // nice to put ADIF pane up too
-        if (findPaneForChoice(PLOT_CH_ADIF) == PANE_NONE && setPlotChoice (pp, PLOT_CH_ADIF))
-            plot_rotset[pane] |= (1 << PLOT_CH_ADIF);
-
-        // tell adif new spots are from us and refresh
-        from_set_adif = true;
-        scheduleNewPlot(PLOT_CH_ADIF);
-
-        // reply count
+        // ack count
         startPlainText (client);
-        char msg[50];
-        snprintf (msg, sizeof(msg), "found %d good %d bad spots\n", n_good, n_bad);
+        char msg[100];
+        snprintf (msg, sizeof(msg), "found %d qualifying %d busted spots\n", n_good, n_bad);
         client.print (msg);
 
         return (true);
-
-    } else if (found_none) {
-
-        // return to file handling, if any
-        if (getADIFilename()) {
-
-            // tell adif to use file and refresh
-            from_set_adif = false;
-            scheduleNewPlot(PLOT_CH_ADIF);
-
-            // ack
-            startPlainText (client);
-            char msg[50];
-            snprintf (msg, sizeof(msg), "resume ADIF file handling\n");
-            client.print (msg);
-            return (true);
-
-        } else {
-            strcpy (line, "No ADIF file defined");
-            return (false);
-        }
 
     } else {
         strcpy (line, garbcmd);
@@ -2947,7 +2912,6 @@ static bool setWiFiloadBMP (WiFiClient &client, char line[], size_t line_len)
     // define all possible args
     WebArgs wa;
     wa.nargs = 0;
-    wa.name[wa.nargs++] = "file";
     wa.name[wa.nargs++] = "none";
     wa.name[wa.nargs++] = "pane";
 
@@ -2955,37 +2919,27 @@ static bool setWiFiloadBMP (WiFiClient &client, char line[], size_t line_len)
     if (!parseWebCommand (wa, line, line_len))
         return (false);
 
-    // check which
-    bool found_file = wa.found[0] && wa.value[0] == NULL;       // no arg
-    bool found_none = wa.found[1] && wa.value[1] == NULL;       // no arg
-
     // pane arg is required
-    if (!wa.found[2] || !wa.value[2]) {
-        snprintf (line, line_len, "pane is required");
+    int pane = 0;
+    if (!wa.found[1] || !wa.value[1] || (pane = atoi(wa.value[1])) < PANE_1 || pane >= PANE_N) {
+        snprintf (line, line_len, "pane %d..%d is required", PANE_1, PANE_N-1);
         return(false);
     }
-    int pane = atoi(wa.value[2]);
-    if (pane < PANE_1 || pane >= PANE_N) {
-        strcpy (line, "Bad pane num");
-        return (false);
-    }
 
-    if (found_file) {
+    // show file else restore
+    if (wa.found[0]) {
+
+        // "none" means restore pane content
+        scheduleNewPlot(plot_ch[pane]);
+
+    } else {
 
         // POST content immediately follows header
         GenReader r (client);
         if (!install24BMP (r, plot_b[pane], line, line_len))
             return (false);             // error already in line[]
-
-    } else if (found_none) {
-
-        // restore pane
-        scheduleNewPlot(plot_ch[pane]);
-
-    } else {
-        strcpy (line, garbcmd);
-        return (false);
     }
+
 
     // ack
     startPlainText (client);
@@ -3168,15 +3122,15 @@ static bool setWiFiRSS (WiFiClient &client, char line[], size_t line_len)
     } else if (wa.found[5] && wa.value[5] == NULL) {
         // turn on display with immediate update
         rss_on = 1;;
+        initEarthMap();                                 // immediate on
         NVWriteUInt8 (NV_RSS_ON, rss_on);
-        drawRSSBox();
 
     } else if (wa.found[6] && wa.value[6] == NULL) {
-        // turn off display, if on
+        // turn off
         if (rss_on) {
             rss_on = 0;
+            initEarthMap();                             // immediate erase
             NVWriteUInt8 (NV_RSS_ON, rss_on);
-            eraseRSSBox();
         }
 
     } else {
@@ -4022,10 +3976,10 @@ static const CmdTble command_table[] = {
     { "get_sys.txt ",       getWiFiSys,            "get system stats" },
     { "get_time.txt ",      getWiFiTime,           "get current time" },
     { "get_voacap.txt ",    getWiFiVOACAP,         "get current band conditions matrix" },
-    { "set_adif?",          setWiFiADIF,           "file POST&pane=[0123]|none" },
+    { "set_adif?",          setWiFiADIF,           "pane=[0123] (POST)" },
     { "set_alarm?",         setWiFiAlarm,          "state=off|armed&time=HR:MN&utc=yes|no" },
     { "set_auxtime?",       setWiFiAuxTime,        "format=[one_from_menu]" },
-    { "set_bmp?",           setWiFiloadBMP,        "file POST&pane=[123]|none" },
+    { "set_bmp?",           setWiFiloadBMP,        "pane=[123][&none] (POST)" },
     { "set_cluster?",       setWiFiCluster,        "host=xxx&port=yyy" },
     { "set_defmt?",         setWiFiDEformat,       "fmt=[one_from_menu]&atin=RSAtAt|RSInAgo" },
     { "set_displayOnOff?",  setWiFiDisplayOnOff,   "on|off" },
@@ -4041,7 +3995,7 @@ static const CmdTble command_table[] = {
     { "set_pane?",          setWiFiPane,           "Pane[0123]=X,Y,Z... any from:" },
     { "set_panzoom?",       setWiFiPanZoom,        "pan_x=X&pan_y=Y&pan_dx=dX&pan_dy=dY&zoom=Z" },
     { "set_rotator?",       setWiFiRotator,        "state=[un]stop|[un]auto&az=X&el=X" },
-    { "set_rss?",           setWiFiRSS,            "reset|add=X|network|interval=secs|on|off|file POST" },
+    { "set_rss?",           setWiFiRSS,            "reset|add=X|network|interval=secs|on|off|file (POST)" },
     { "set_satname?",       setWiFiSatName,        "abc|none" },
     { "set_sattle?",        setWiFiSatTLE,         "name=abc&t1=line1&t2=line2" },
     { "set_senscorr?",      setWiFiSensorCorr,     "sensor=76|77&dTemp=X&dPres=Y" },
@@ -4462,10 +4416,7 @@ static bool runDemoChoice (DemoChoice choice, bool &slow, char msg[], size_t msg
     case DEMO_RSS:
         rss_on = !rss_on;
         NVWriteUInt8 (NV_RSS_ON, rss_on);
-        if (rss_on)
-            drawRSSBox();
-        else
-            eraseRSSBox();
+        initEarthMap();                         // immediately udate
         ok = true;
         demoMsg (ok, choice, msg, msg_len, "RSS %s", rss_on ? "On" : "Off");
         break;

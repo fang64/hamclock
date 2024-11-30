@@ -68,6 +68,10 @@ extern const GFXfont Courier_Prime_Sans6pt7b;
 
 
 // choose 16 or 32 bit hw frame buffer
+#if defined(_USE_FB0)
+    // can find no way to support 32 on Pi5 so use 16 by default
+    #define _16BIT_FB
+#endif
 #if defined(_16BIT_FB)
 typedef uint16_t fbpix_t;
 #define BYTESPFBPIX     2
@@ -136,6 +140,7 @@ class Adafruit_RA8875 {
 	void setXY (int16_t x, int16_t y);
 	uint16_t readData(void);
 	void setFont (const GFXfont *f);
+	const GFXfont* getFont (void);
 	int16_t getCursorX(void);
 	int16_t getCursorY(void);
 	bool touched(void);
@@ -259,6 +264,7 @@ class Adafruit_RA8875 {
         bool requestSelection (KeySym ks, unsigned kb_state);
         int decodeMouseButton (XEvent event);
 
+        void saveWinGeom(void);
 
 #endif // _USE_X11
 

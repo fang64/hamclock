@@ -86,9 +86,8 @@ bool readWiFiRSSI(int &rssi)
 
 /* run the wifi meter screen until op taps Dismiss or Ignore.
  * show ignore based on incoming ignore_on and update if user changes.
- * return last known rssi.
  */
-int runWiFiMeter(bool warn, bool &ignore_on)
+void runWiFiMeter(bool warn, bool &ignore_on)
 {
     // prep
     Serial.printf ("WiFiM: start with ignore %s\n", ignore_on ? "on" : "off");
@@ -228,7 +227,7 @@ int runWiFiMeter(bool warn, bool &ignore_on)
 
             // log occassionally
             if (timesUp (&log_t, 5000))
-                Serial.printf ("WiFiM: %d\n", rssi);
+                Serial.printf ("WiFiM: %d .. %d .. %d\n", rssi_min, rssi, rssi_max);
         }
 
         // update BME and brightness
@@ -273,7 +272,4 @@ int runWiFiMeter(bool warn, bool &ignore_on)
     // new state
     wifi_meter_up = false;
     initScreen();
-
-    return (rssi);
-
 }

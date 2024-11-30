@@ -138,7 +138,7 @@ bool WiFiClient::connect(const char *host, int port)
         }
 
         /* connect */
-        if (connect_to (sockfd, aip->ai_addr, aip->ai_addrlen, 5000) < 0) {
+        if (connect_to (sockfd, aip->ai_addr, aip->ai_addrlen, 8000) < 0) {
             printf ("WiFiCl: connect(%s:%d): %s\n", host, port, strerror(errno));
             freeaddrinfo (aip);
             close (sockfd);

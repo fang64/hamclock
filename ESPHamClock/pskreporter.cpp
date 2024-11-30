@@ -26,6 +26,11 @@ static int n_malloced;                          // total n malloced in reports[]
 static int spot_maxrpt[HAMBAND_N];              // indices into reports[] for the farthest spot per band
 static PSKBandStats bstats[HAMBAND_N];          // band stats
 
+// layout
+#define SUBHEAD_DYUP 15                         // distance up from bottom to subheading
+#define TBLHGAP (PLOTBOX123_W/20)               // table horizontal gap
+#define TBLCOLW (43*PLOTBOX123_W/100)           // table column width
+#define TBLROWH ((PLOTBOX123_H-LISTING_Y0-SUBHEAD_DYUP)/(HAMBAND_N/2))      // table row height
 
 // handy test and set whether a band is in use
 #define SET_PSKBAND(b)  (psk_bands |= (1 << (b)))               // record that band b paths are displayed
@@ -34,21 +39,25 @@ static PSKBandStats bstats[HAMBAND_N];          // band stats
 
 /* draw a distance target marker at Raw s with the given fill color.
  */
-static void drawDistanceTarget (const SCoord &s, uint16_t fill_color)
+static void drawDistanceTarget (const SCoord &s, ColorSelection id)
 {
-    // ignore if not enabled
-    uint16_t szRaw = getSpotDotRadius();
-    if (szRaw == 0)
+    // ignore if no dots
+    if (getSpotLabelType() == LBL_NONE)
         return;
 
+    // get radius
+    uint16_t dot_r = getRawSpotRadius(id);
+
+    // get colors
+    uint16_t fill_color = getMapColor (id);
     uint16_t cross_color = getGoodTextColor (fill_color);
 
     // raw looks nicer
 
-    tft.fillCircleRaw (s.x, s.y, szRaw, fill_color);
-    tft.drawCircleRaw (s.x, s.y, szRaw, cross_color);
-    tft.drawLineRaw (s.x-szRaw, s.y, s.x+szRaw, s.y, 1, cross_color);
-    tft.drawLineRaw (s.x, s.y-szRaw, s.x, s.y+szRaw, 1, cross_color);
+    tft.fillCircleRaw (s.x, s.y, dot_r, fill_color);
+    tft.drawCircleRaw (s.x, s.y, dot_r, cross_color);
+    tft.drawLineRaw (s.x-dot_r, s.y, s.x+dot_r, s.y, 1, cross_color);
+    tft.drawLineRaw (s.x, s.y-dot_r, s.x, s.y+dot_r, 1, cross_color);
 }
 
 /* return whether the given age, in minutes, is allowed.
@@ -99,23 +108,20 @@ void savePSKState()
  */
 void drawFarthestPSKSpots ()
 {
-    // or not
-    int tw = getSpotDotRadius();
-    if (tw == 0)
+    // proceed unless not wanted or not in use`
+    if (getSpotLabelType() == LBL_NONE || findPaneForChoice(PLOT_CH_PSK) == PANE_NONE)
         return;
 
-    // proceed unless not in use
-    if (findPaneForChoice(PLOT_CH_PSK) == PANE_NONE)
-        return;
-
+    // draw each that are enabled
     for (int i = 0; i < HAMBAND_N; i++) {
         PSKBandStats &pbs = bstats[i];
         if (pbs.maxkm > 0 && TST_PSKBAND(i)) {
+            int tw = getRawSpotRadius (ham_bands[i].cid);
             SCoord s;
             ll2s (pbs.maxll, s, tw);
             if (overMap(s)) {
                 ll2sRaw (pbs.maxll, s, tw);
-                drawDistanceTarget (s, getMapColor(ham_bands[i].cid));
+                drawDistanceTarget (s, ham_bands[i].cid);
             }
         }
     }
@@ -166,18 +172,15 @@ static void drawPSKPane (const SBox &box)
     tft.print (where_how);
 
     // table
-    #define TBLHGAP (box.w/20)
-    #define TBCOLW (43*box.w/100)
-    #define TBLRH (PLOTBOX123_H/HAMBAND_N)      // really each /2 but that loses too much precision
     for (int i = 0; i < HAMBAND_N; i++) {
         int row = i % (HAMBAND_N/2);
         int col = i / (HAMBAND_N/2);
-        uint16_t x = box.x + TBLHGAP + col*(TBCOLW+TBLHGAP);
-        uint16_t y = box.y + 3*box.h/8 + row*TBLRH;
+        uint16_t x = box.x + TBLHGAP + col*(TBLCOLW+TBLHGAP);
+        uint16_t y = box.y + LISTING_Y0 + row*TBLROWH;
         char report[30];
         if (psk_showdist) {
             float d = bstats[i].maxkm;
-            if (!useMetricUnits())
+            if (!showDistKm())
                 d *= MI_PER_KM;
             snprintf (report, sizeof(report), "%3sm %5.0f", ham_bands[i].name, d);
         } else
@@ -185,13 +188,13 @@ static void drawPSKPane (const SBox &box)
         if (TST_PSKBAND(i)) {
             uint16_t map_col = getMapColor(ham_bands[i].cid);
             uint16_t txt_col = getGoodTextColor(map_col);
-            tft.fillRect (x, y-LISTING_OS+1, TBCOLW, box.h/14, map_col);
+            tft.fillRect (x, y-LISTING_OS+1, TBLCOLW, TBLROWH-3, map_col);      // leave black below
             tft.setTextColor (txt_col);
             tft.setCursor (x+2, y);
             tft.print (report);
         } else {
             // disabled, always show but diminished
-            tft.fillRect (x, y-LISTING_OS+1, TBCOLW, box.h/14, RA8875_BLACK);
+            tft.fillRect (x, y-LISTING_OS+1, TBLCOLW, TBLROWH-3, RA8875_BLACK);
             tft.setTextColor (GRAY);
             tft.setCursor (x+2, y);
             tft.print (report);
@@ -199,25 +202,14 @@ static void drawPSKPane (const SBox &box)
     }
 
     // caption
-    const char *label = psk_showdist ? (useMetricUnits() ? "Max distance (km)" : "Max distance (mi)")
+    const char *label = psk_showdist ? (showDistKm() ? "Max distance (km)" : "Max distance (mi)")
                                      : "Counts";
     uint16_t lw = getTextWidth (label);
-    uint16_t tr = getSpotDotRadius();
-    uint16_t x = box.x + (box.w-lw)/2;
-    if (psk_showdist && tr)
-        x -= 2*tr;
-    uint16_t y = box.y + box.h - 15;
+    uint16_t lx = box.x + (box.w-lw)/2;
+    uint16_t ly = box.y + box.h - SUBHEAD_DYUP;
     tft.setTextColor (RA8875_WHITE);
-    tft.setCursor (x, y);
+    tft.setCursor (lx, ly);
     tft.print (label);
-
-    // show a target example if showing distance
-    if (psk_showdist && tr) {
-        SCoord s;
-        s.x = tft.SCALESZ*(tft.getCursorX() + 3 + tr);
-        s.y = tft.SCALESZ*(y + 3);
-        drawDistanceTarget (s, RA8875_BLACK);
-    }
 }
 
 /* retrieve spots into reports[] according to current settings.
@@ -637,6 +629,10 @@ void drawPSKPaths ()
             // N.B. we know band in all reports[] are ok
             DXSpot &s = reports[i];
             if (TST_PSKBAND(findHamBand(1000*s.kHz)))
+
+
+
+
                 drawSpotLabelOnMap (s, LOME_BOTH, LOMD_JUSTDOT);
         }
 
@@ -647,20 +643,12 @@ void drawPSKPaths ()
     }
 }
 
-/* return spot closest to ll if appropriate.
- * also indicate whether these are of_de spots
+/* report spot closest to ll and which end to mark on map, if any within MAX_CSR_DIST.
  */
-bool getClosestPSK (const LatLong &ll, DXSpot *sp, bool &of_de)
+bool getClosestPSK (const LatLong &ll, DXSpot *sp, LatLong *mark_ll)
 {
-    // ignore if not in any rotation set
-    if (findPaneForChoice(PLOT_CH_PSK) == PANE_NONE)
-        return (false);
-
-    // report which way
-    of_de = (psk_mask & PSKMB_OFDE) != 0;
-
-    // find closest spot -- kd3tree would consider all spots even if not being shown, linear is fine.
-    DXSpot *return_sp = NULL;
+    // which way?
+    bool of_de = (psk_mask & PSKMB_OFDE) != 0;
 
     if (psk_showdist) {
 
@@ -678,8 +666,11 @@ bool getClosestPSK (const LatLong &ll, DXSpot *sp, bool &of_de)
             }
         }
 
-        if (min_i >= 0 && min_d*ERAD_M < MAX_CSR_DIST)
-            return_sp = &reports[spot_maxrpt[min_i]];
+        if (min_i >= 0 && min_d*ERAD_M < MAX_CSR_DIST) {
+            *sp = reports[spot_maxrpt[min_i]];
+            *mark_ll = of_de ? sp->rx_ll : sp->tx_ll;
+            return (true);
+        }
     
     } else {
 
@@ -704,17 +695,51 @@ bool getClosestPSK (const LatLong &ll, DXSpot *sp, bool &of_de)
             }
         }
 
-        if (min_i >= 0 && min_d*ERAD_M < MAX_CSR_DIST)
-            return_sp = &reports[min_i];
+        if (min_i >= 0 && min_d*ERAD_M < MAX_CSR_DIST) {
+            *sp = reports[min_i];
+            *mark_ll = of_de ? sp->rx_ll : sp->tx_ll;
+            return (true);
+        }
     }
 
-    // well??
-    if (return_sp) {
-        *sp = *return_sp;
-        return (true);
-    }
+    // none
     return (false);
 }
+
+/* if ms is over one of the bands in our pane report its info and where to mark on map.
+ * return whether ms is really over any of our bands.
+ */
+bool getMaxDistPSK (const SCoord &ms, DXSpot *sp, LatLong *mark_ll)
+{
+    // ignore if not currently up
+    PlotPane pp = findPaneChoiceNow(PLOT_CH_PSK);
+    if (pp == PANE_NONE)
+        return (false);
+
+    // which way?
+    bool of_de = (psk_mask & PSKMB_OFDE) != 0;
+
+    // find band where ms is located
+    const SBox &box = plot_b[pp];
+    SBox band_box;
+    band_box.w = TBLCOLW;
+    band_box.h = TBLROWH;
+    for (int i = 0; i < HAMBAND_N; i++) {
+        int row = i % (HAMBAND_N/2);
+        int col = i / (HAMBAND_N/2);
+        band_box.x = box.x + TBLHGAP + col*(TBLCOLW+TBLHGAP);
+        band_box.y = box.y + LISTING_Y0 + row*TBLROWH;
+        if (TST_PSKBAND(i) && inBox (ms, band_box) && bstats[i].maxkm > 0) {
+            // report farthest spot on this band
+            *sp = reports[spot_maxrpt[i]];
+            *mark_ll = of_de ? sp->rx_ll : sp->tx_ll;
+            return (true);
+        }
+    }
+
+    return (false);
+}
+
 
 /* return PSKReports list
  */
@@ -734,8 +759,26 @@ uint16_t getBandColor (long Hz)
 
 /* return whether the path for the given freq should be drawn dashed
  */
-bool getBandDashed (long Hz)
+bool getBandPathDashed (long Hz)
 {
     HamBandSetting b = findHamBand (Hz);
-    return (b != HAMBAND_NONE ? getColorDashed(ham_bands[(int)b].cid) : false);
+    return (b != HAMBAND_NONE ? getPathDashed(ham_bands[(int)b].cid) : false);
+}
+
+/* return width to draw a map path for the given frequency.
+ * returns 0 if band is turned off.
+ */
+int getRawBandPathWidth (long Hz)
+{
+    HamBandSetting b = findHamBand (Hz);
+    return (b != HAMBAND_NONE ? getRawPathWidth(ham_bands[(int)b].cid) : false);
+}
+
+/* return width to draw a map spot for the given frequency.
+ * always returns the size even if the path color is turned off.
+ */
+int getRawBandSpotRadius (long Hz)
+{
+    HamBandSetting b = findHamBand (Hz);
+    return (b != HAMBAND_NONE ? getRawSpotRadius (ham_bands[(int)b].cid) : RAWWIDEPATHSZ);
 }

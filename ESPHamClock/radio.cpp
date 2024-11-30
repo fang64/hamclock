@@ -57,6 +57,11 @@ static void postMsgToMain (const char *fmt, ...)
  *
  **********************************************************************************/
 
+/* set if rigctld was run with the --vfo arguement.
+ * determined using +\chk_vfo.
+ * when true most commands require an extra initial arg of "currVFO"
+ */
+static bool hamlib_vfo;
 
 /* Hamlib helper to send the given command then read and discard response until find RPRT.
  * return whether io was ok.
@@ -102,17 +107,18 @@ static bool intHamlibCmd (WiFiClient &client, const char cmd[], const char kw[],
     do {
         ok = getTCPLine (client, buf, sizeof(buf), NULL);
         if (ok) {
-            if (gimbal_trace_level > 1)
-                Serial.printf ("RADIO: HAMLIB reply: %s\n", buf);
             if (strncmp (buf, kw, kw_l) == 0) {
                 reply = atoi (buf + kw_l);
                 if (reply < 0)
-                    Serial.printf ("RADIO: HAMLIB %s -> %d", cmd, reply);
-            }
+                    Serial.printf ("RADIO: HAMLIB rejected %s -> %d\n", cmd, reply);
+                else if (gimbal_trace_level)
+                    Serial.printf ("RADIO: HAMLIB %s -> %d\n", cmd, reply);
+            } else if (gimbal_trace_level > 1)
+                Serial.printf ("RADIO: HAMLIB reply: %s\n", buf);
          } else {
             Serial.printf ("RADIO: HAMLIB cmd %s: no reply\n", cmd);
         }
-    } while (ok && !strstr (buf, "RPRT"));
+    } while (ok && (!strstr (buf, "RPRT") && !strstr (cmd, "chk_vfo"))); // chk_vfo does not reply RPRT
 
     return (ok);
 }
@@ -122,8 +128,7 @@ static bool intHamlibCmd (WiFiClient &client, const char cmd[], const char kw[],
 static bool setHamlibFreq (WiFiClient &client, int Hz)
 {
     // send setup commands, require RPRT for each but ignore error values
-    bool ok = true;
-    static const char *setup_cmds[] = {
+    static const char *setup_cmds[] = {         // without --vfo
         "+\\set_split_vfo 0 VFOA",
         "+\\set_vfo VFOA",
         "+\\set_func RIT 0",
@@ -131,20 +136,40 @@ static bool setHamlibFreq (WiFiClient &client, int Hz)
         "+\\set_func XIT 0",
         "+\\set_xit 0",
     };
-    for (int i = 0; ok && i < NARRAY(setup_cmds); i++)
-        ok = sendHamlibCmd (client, setup_cmds[i]);
+    static const char *setup_cmds_vfo[] = {         // with --vfo
+        "+\\set_split_vfo currVFO 0 VFOA",
+        "+\\set_vfo VFOA",
+        "+\\set_func currVFO RIT 0",
+        "+\\set_rit currVFO 0",
+        "+\\set_func currVFO XIT 0",
+        "+\\set_xit currVFO 0",
+    };
+
+    bool ok = true;
+    if (hamlib_vfo)
+        for (int i = 0; ok && i < NARRAY(setup_cmds_vfo); i++)
+            ok = sendHamlibCmd (client, setup_cmds_vfo[i]);
+    else
+        for (int i = 0; ok && i < NARRAY(setup_cmds); i++)
+            ok = sendHamlibCmd (client, setup_cmds[i]);
 
     // send freq if all still ok
     if (ok) {
         char cmd[128];
-        snprintf (cmd, sizeof(cmd), "+\\set_freq %d", Hz);
+        if (hamlib_vfo)
+            snprintf (cmd, sizeof(cmd), "+\\set_freq currVFO %d", Hz);
+        else
+            snprintf (cmd, sizeof(cmd), "+\\set_freq %d", Hz);
         ok = sendHamlibCmd (client, cmd);
     }
 
     // ask for confirmation if still ok
     if (ok) {
         int reply = -1;
-        ok = intHamlibCmd (client, "+\\get_freq", "Frequency:", reply) && reply == Hz;
+        if (hamlib_vfo)
+            ok = intHamlibCmd (client, "+\\get_freq currVFO", "Frequency:", reply) && reply == Hz;
+        else
+            ok = intHamlibCmd (client, "+\\get_freq", "Frequency:", reply) && reply == Hz;
         if (!ok)
             Serial.printf ("RADIO: HAMLIB set %d Hz but acked %d\n", Hz, reply);
     }
@@ -158,7 +183,6 @@ static bool setHamlibFreq (WiFiClient &client, int Hz)
 
 
 /* connect to rigctld, return whether successful.
- * N.B. we assume getRigctld will be true.
  */
 static bool tryHamlibConnect (WiFiClient &client)
 {
@@ -166,7 +190,7 @@ static bool tryHamlibConnect (WiFiClient &client)
     char host[NV_RIGHOST_LEN];
     int port;
     if (!getRigctld (host, &port))
-        fatalError ("tryHamlibConnect no control");
+        fatalError ("bug! tryHamlibConnect no getRigctld()");
 
     // connect, bale if can't
     if (!client.connect(host, port))
@@ -175,8 +199,16 @@ static bool tryHamlibConnect (WiFiClient &client)
     if (gimbal_trace_level)
         Serial.printf ("RADIO: HAMLIB: %s:%d connect ok\n", host, port);
 
-    // ok
-    return (true);
+    // check for --vfo
+    int reply = -1;
+    bool ok = intHamlibCmd (client, "+\\chk_vfo", "ChkVFO:", reply) && reply >= 0;
+    if (ok) {
+        hamlib_vfo = reply;
+        Serial.printf ("RADIO: HAMLIB was %sstarted with --vfo\n", hamlib_vfo ? "" : "not ");
+    }
+
+    // ok?
+    return (ok);
 }
 
 
@@ -534,8 +566,8 @@ static void *radioThread (void *unused)
     pthread_detach(pthread_self());
 
     WiFiClient hl_client, fl_client;
-    uint32_t hlpoll_ms = 0, hlwarn_ms;
-    uint32_t flpoll_ms = 0, flwarn_ms;
+    uint32_t hlpoll_ms = 0, hlwarn_ms = 0;
+    uint32_t flpoll_ms = 0, flwarn_ms = 0;
 
     while (true) {
 
@@ -545,7 +577,7 @@ static void *radioThread (void *unused)
             if (!hl_client.connected()) {
                 if (tryHamlibConnect (hl_client))
                     postMsgToMain ("HAMLIB connection successful");
-                else if (timesUp (&flwarn_ms, WARN_MS))
+                else if (timesUp (&hlwarn_ms, WARN_MS))
                     postMsgToMain ("HAMLIB no connection");
             }
 
@@ -554,6 +586,8 @@ static void *radioThread (void *unused)
                 if (hl_client.connected()) {
                     if (!setHamlibFreq (hl_client, set_hl_Hz))
                         postMsgToMain ("HAMLIB failed to verify %d Hz", set_hl_Hz);
+                    else
+                        Serial.printf ("RADIO HAMLIB set %d Hz\n", set_hl_Hz);
                 } else 
                     postMsgToMain ("HAMLIB not connected to set %d Hz", set_hl_Hz);
 
@@ -564,9 +598,14 @@ static void *radioThread (void *unused)
             // continuous automatic poll PTT every RADIOPOLL_MS -- only post errors every WARN_MS
             if (timesUp (&hlpoll_ms, RADIOPOLL_MS) && hl_client.connected()) {
                 int reply = -1;
-                if (intHamlibCmd (hl_client, "+\\get_ptt", "PTT:", reply) && reply >= 0)
-                    thread_onair = reply;
-                else if (timesUp (&hlwarn_ms, WARN_MS)) {
+                if (hamlib_vfo) {
+                    if (intHamlibCmd (hl_client, "+\\get_ptt currVFO", "PTT:", reply) && reply >= 0)
+                        thread_onair = reply;
+                } else {
+                    if (intHamlibCmd (hl_client, "+\\get_ptt", "PTT:", reply) && reply >= 0)
+                        thread_onair = reply;
+                }
+                if (reply < 0 && timesUp (&hlwarn_ms, WARN_MS)) {
                     postMsgToMain ("HAMLIB PTT query failed");
                     thread_onair = 0;
                 }
@@ -588,6 +627,8 @@ static void *radioThread (void *unused)
                 if (fl_client.connected()) {
                     if (!setFlrigFreq (fl_client, set_fl_Hz))
                         postMsgToMain ("FLRIG failed to verify %d Hz", set_fl_Hz);
+                    else
+                        Serial.printf ("RADIO FLRIG set %d Hz\n", set_hl_Hz);
                 } else 
                     postMsgToMain ("FLRIG not connected to set %d Hz", set_fl_Hz);
 

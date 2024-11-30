@@ -102,21 +102,27 @@ static void readCities()
         city_root = mkKD3NodeTree (city_malloc, n_cities, 0);
 }
 
-/* return name of city and location nearest the given ll, else NULL.
- * also always report longest city length for drawing purposes unless NULL.
+/* return name of nearest city and location but no farther than MAX_CSR_DIST from the given ll, else NULL.
+ * also report back longest city length for drawing purposes unless NULL.
  */
 const char *getNearestCity (const LatLong &ll, LatLong &city_ll, int *max_cl)
 {
         // refresh
-        static time_t refresh;
-        if (myNow() > refresh) {
+        static time_t next_update;
+        if (myNow() > next_update) {
             readCities();
-            refresh = myNow() + (city_root ? CITIES_DT : CRETRY_DT);
+            if (!city_root) {
+                next_update = myNow() + CRETRY_DT;
+                Serial.printf ("%s failed, next update in %d\n", cities_fn, CRETRY_DT);
+            } else
+                next_update = myNow() + CITIES_DT;
         }
-        if (!city_root)
-            fatalError ("Can not create cities KD3 tree from %s", cities_fn);
+        if (!city_root) {
+            Serial.printf ("still no %s after refresh attempt", cities_fn);
+            return (NULL);
+        }
 
-        // always pass back max length if interested
+        // pass back max length if interested
         if (max_cl)
             *max_cl = max_city_len;
 

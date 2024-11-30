@@ -20,7 +20,6 @@
 #define GL_LC   BRGRAY                                  // scale color
 #define GL_TC   RA8875_WHITE                            // text color
 #define RISE_R  2                                       // rise line circle radius
-#define SPD     (3600L*24L)                             // seconds per day
 
 // handy conversions
 #define GL_X2D(x)    (((x)-GL_X0)*GL_PI/GL_PW)          // x to doy

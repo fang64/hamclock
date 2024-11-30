@@ -1,5 +1,6 @@
 /* This file manages two types of caches for weather and time zone:
- *   exact: WXInfo for last know  DE and DX locations
+ *   exact: WXInfo for last known DE and DX locations
+ *          uses separate timeouts for wx and tz
  *   fast:  collection of WXInfo in WXTable on a fixed grid of lat/lng for approx but fast info.
  */
 
@@ -12,14 +13,16 @@ static const char ww_page[] = "/worldwx/wx.txt";        // URL for the gridded w
 
 
 // config
-#define WWXTBL_INTERVAL (45*60)                         // world wx table update interval, secs
-#define MAX_WXINFO_AGE  (30*60)                         // max acceptable de/x_wx entry age, secs
+#define WWXTBL_INTERVAL (45*60)                         // "fast" world wx table update interval, secs
+#define MAX_WXINFO_AGE  (30*60)                         // max acceptable "exact" de/x wx entry age, secs
+#define MAX_TZINFO_AGE  (2*3600)                        // max acceptable "exact" de/x tz entry age, secs
 
 // WXInfo and exactly where it applies and when it should be updated
 typedef struct {
     WXInfo info;
     float lat_d, lng_d;
-    time_t next_update;
+    time_t next_wxupdate;
+    time_t next_tzupdate;
 } WXCache;
 static WXCache de_cache, dx_cache;
 
@@ -316,6 +319,8 @@ out:
     return (ok);
 }
 
+
+
 /* display the given location weather in NCDXF_b or err.
  */
 static void drawNCDXFBoxWx (BRB_MODE m, const WXInfo &wi, bool ok)
@@ -337,11 +342,11 @@ static void drawNCDXFBoxWx (BRB_MODE m, const WXInfo &wi, bool ok)
     }
 
     if (ok) {
-        float v = useMetricUnits() ? wi.temperature_c : CEN2FAH(wi.temperature_c);
+        float v = showTempC() ? wi.temperature_c : CEN2FAH(wi.temperature_c);
         snprintf (values[0], sizeof(values[0]), "%.1f", v);
         snprintf (values[1], sizeof(values[1]), "%.1f", wi.humidity_percent);
         snprintf (values[2], sizeof(values[2]), "%s", wi.wind_dir_name);
-        v = (useMetricUnits() ? 3.6 : 2.237) * wi.wind_speed_mps;                       // kph or mph
+        v = (showDistKm() ? 3.6 : 2.237) * wi.wind_speed_mps;                       // kph or mph
         snprintf (values[3], sizeof(values[3]), "%.0f", v);
     }
 
@@ -413,39 +418,74 @@ bool drawNCDXFWx (BRB_MODE m)
 }
 
 
-/* return pointer to WXInfo with current data for exact ll, else NULL.
- */
-const WXInfo *findWXCache (const LatLong &ll, bool is_de, char ynot[])
-{
-    if (is_de) {
-        if (ll.lat_d != de_cache.lat_d || ll.lng_d != de_cache.lng_d || myNow() > de_cache.next_update) {
-            if (!retrieveCurrentWX (ll, true, &de_cache.info, ynot)) {
-                de_cache.next_update = nextWiFiRetry ("DE WXInfo");
-                return (NULL);
-            }
-            de_cache.lat_d = ll.lat_d;
-            de_cache.lng_d = ll.lng_d;
-            de_cache.next_update = myNow() + MAX_WXINFO_AGE;
-            int at = millis()/1000 + MAX_WXINFO_AGE;
-            Serial.printf ("WX: Next DE WXInfo update in %d sec at %d\n", MAX_WXINFO_AGE, at);
-        }
-        return (&de_cache.info);
 
-    } else {
-        if (ll.lat_d != dx_cache.lat_d || ll.lng_d != dx_cache.lng_d || myNow() > dx_cache.next_update) {
-            if (!retrieveCurrentWX (ll, false, &dx_cache.info, ynot)) {
-                dx_cache.next_update = nextWiFiRetry ("DX WXInfo");
-                return (NULL);
-            }
-            dx_cache.lat_d = ll.lat_d;
-            dx_cache.lng_d = ll.lng_d;
-            dx_cache.next_update = myNow() + MAX_WXINFO_AGE;;
-            int at = millis()/1000 + MAX_WXINFO_AGE;
-            Serial.printf ("WX: Next DX WXInfo update in %d sec at %d\n", MAX_WXINFO_AGE, at);
+/* return current WXInfo for the given combination of de/dx wx/tz.
+ */
+static const WXInfo *findWXTXCache (const LatLong &ll, bool is_de, bool is_wx, char ynot[])
+{
+    // set depending on de/dx
+    WXCache *wxp           = is_de ? &de_cache : &dx_cache;
+
+    // set depending on wx/tz
+    time_t *this_update    = is_wx ? &wxp->next_wxupdate : &wxp->next_tzupdate;
+
+    // update if new location or expired
+    if (ll.lat_d != wxp->lat_d || ll.lng_d != wxp->lng_d || myNow() > *this_update) {
+
+        // set a few more depending on de/dx
+        const char *this_log   = is_de ? "DE" : "DX";
+
+        // set a few more depending on wx/tz
+        time_t *other_update   = is_wx ? &wxp->next_tzupdate : &wxp->next_wxupdate;
+        int this_max_age       = is_wx ? MAX_WXINFO_AGE      : MAX_TZINFO_AGE;
+        int other_max_age      = is_wx ? MAX_TZINFO_AGE      : MAX_WXINFO_AGE;
+        const char *this_info  = is_wx ? "WXInfo" : "TZInfo";
+        const char *other_info = is_wx ? "TZInfo" : "WXInfo";
+
+        // get fresh, schedule retry if fail
+        if (!retrieveCurrentWX (ll, is_de, &wxp->info, ynot)) {
+            char retry_msg[50];
+            snprintf (retry_msg, sizeof(retry_msg), "%s %s", this_log, this_info);
+            *this_update = nextWiFiRetry (retry_msg);
+            return (NULL);
         }
-        return (&dx_cache.info);
+
+        // ok! update location and next expiration
+        wxp->lat_d = ll.lat_d;
+        wxp->lng_d = ll.lng_d;
+        *this_update = myNow() + this_max_age;
+
+        // we've updated the other metric too with its own expiration
+        *other_update = myNow() + other_max_age;
+
+        // nice log msgs
+        int this_at = millis()/1000 + this_max_age;
+        Serial.printf ("WX: %s %s expires in %d sec at %d\n",
+                                this_log, this_info, this_max_age, this_at);
+        int other_at = millis()/1000 + other_max_age;
+        Serial.printf ("WX: %s %s expires in %d sec at %d\n",
+                                this_log, other_info, other_max_age, other_at);
     }
+
+    // return requested info
+    return (&wxp->info);
 }
+
+/* return current WXInfo with weather at de or dx.
+ */
+static const WXInfo *findWXCache (const LatLong &ll, bool is_de, char ynot[])
+{
+    return (findWXTXCache (ll, is_de, true, ynot));
+}
+
+/* return current WXInfo with timezone at de or dx.
+ */
+const WXInfo *findTZCache (const LatLong &ll, bool is_de, char ynot[])
+{
+    return (findWXTXCache (ll, is_de, false, ynot));
+}
+
+
 
 /* return closest WXInfo to ll within grid, else NULL.
  */

@@ -21,6 +21,7 @@ static float max_cpu_usage = DEF_CPU_USAGE;
 char **our_argv;                // our argv for restarting
 std::string our_dir;            // our storage directory, including trailing /
 bool rm_eeprom;                 // set by -0 to rm eeprom to restore defaults
+bool ignore_x11geom;            // set by -q to ignore startup loc and size
 
 // list of diagnostic files, newest first
 const char *diag_files[N_DIAG_FILES] = {
@@ -358,6 +359,7 @@ static void usage (const char *errfmt, ...)
                                     defaultAppDir().c_str());
             fprintf (stderr, " -p f : require passwords in file f formatted as lines of \"category password\"\n");
             fprintf (stderr, "        categories: changeUTC exit newde newdx reboot restart setup shutdown unlock upgrade\n");
+            fprintf (stderr, " -q   : ignore saved startup screen location and size\n");
             fprintf (stderr, " -r p : set read-only live web server port to p or -1 to disable; default %d\n",
                                     LIVEWEB_RO_PORT);
             fprintf (stderr, " -s d : start time as if UTC now is d formatted as YYYY-MM-DDTHH:MM:SS\n");
@@ -482,6 +484,9 @@ static void crackArgs (int ac, char *av[])
                         usage ("missing file name for -p");
                     pw_file = *++av;
                     ac--;
+                    break;
+                case 'q':
+                    ignore_x11geom = true;
                     break;
                 case 'r':
                     if (ac < 2)

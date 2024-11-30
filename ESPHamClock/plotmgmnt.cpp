@@ -14,6 +14,7 @@ const SBox plot_b[PANE_N] = {
 };
 PlotChoice plot_ch[PANE_N];
 uint32_t plot_rotset[PANE_N];
+uint32_t plot_rothold;
 
 #define X(a,b)  b,                      // expands PLOTNAMES to name and comma
 const char *plot_names[PLOT_CH_N] = {
@@ -194,7 +195,7 @@ static PlotChoice askPaneChoice (PlotPane pp)
             // set up next menu item
             mitems = (MenuItem *) realloc (mitems, (n_mitems+1)*sizeof(MenuItem));
             if (!mitems)
-                fatalError ("pane alloc: %d", n_mitems); // no _FX if alloc failing
+                fatalError ("pane alloc: %d", n_mitems);
             MenuItem &mi = mitems[n_mitems++];
             mi.type = MENU_AL1OFN;
             mi.set = (plot_rotset[pp] & (1 << pc)) ? true : false;
@@ -425,15 +426,13 @@ bool checkPlotTouch (const SCoord &s, PlotPane pp, TouchType tt)
         break;
     case PLOT_CH_SSN:
         if (!in_top) {
-            plotMap ("/ssn/ssn-history.txt", _FX("SIDC Sunspot History"), SSN_COLOR);
-            initEarthMap();
+            plotServerFile ("/ssn/ssn-history.txt", "SIDC Sunspot History", "Year");
             return(true);
         }
         break;
     case PLOT_CH_FLUX:
         if (!in_top) {
-            plotMap ("/solar-flux/solarflux-history.txt", _FX("10.7 cm Solar Flux History"),SFLUX_COLOR);
-            initEarthMap();
+            plotServerFile ("/solar-flux/solarflux-history.txt", "10.7 cm Solar Flux History", "Year");
             return(true);
         }
         break;
@@ -616,7 +615,7 @@ void savePlotOps()
     NVWriteUInt8 (NV_PLOT_3, plot_ch[PANE_3]);
 }
 
-/* flash plot and NCDXF_b borders nearly ready to change
+/* flash plot and NCDXF_b borders that are nearly ready to change
  * unless rotating pretty fast.
  */
 void showRotatingBorder ()
@@ -628,22 +627,28 @@ void showRotatingBorder ()
     uint16_t c = RA8875_WHITE;
 
     // check plot panes
-    for (int i = 0; i < PANE_N; i++) {
-        if (isPaneRotating((PlotPane)i) || isSpecialPaneRotating((PlotPane)i)) {
+    for (int pp = 0; pp < PANE_N; pp++) {
+        if (ROTHOLD_TST(plot_ch[pp])) {
+            // mark when pane rotation is holding
+            drawSBox (plot_b[pp], RA8875_RED);
+        } else if (isPaneRotating((PlotPane)pp) || isSpecialPaneRotating((PlotPane)pp)) {
             // this pane is rotating among other pane choices or SDO is rotating its images
             if (getPaneRotationPeriod() > min_rot)
-                c = ((nextPaneRotation((PlotPane)i) > t0 + PLOT_ROT_WARNING) || (t0&1) == 1)
+                c = ((nextPaneRotation((PlotPane)pp) > t0 + PLOT_ROTWARN_DT) || (t0&1) == 1)
                                 ? RA8875_WHITE : GRAY;
-            drawSBox (plot_b[i], c);
+            drawSBox (plot_b[pp], c);
+        } else {
+            drawSBox (plot_b[pp], GRAY);
         }
     }
 
     // check BRB
     if (BRBIsRotating()) {
         if (getPaneRotationPeriod() > min_rot)
-            c = ((brb_next_update > t0 + PLOT_ROT_WARNING) || (t0&1) == 1) ? RA8875_WHITE : GRAY;
+            c = ((brb_next_update > t0 + PLOT_ROTWARN_DT) || (t0&1) == 1) ? RA8875_WHITE : GRAY;
         drawSBox (NCDXF_b, c);
-    }
+    } else
+        drawSBox (NCDXF_b, GRAY);
 
 }
 
@@ -889,7 +894,14 @@ int tickmarks (float min, float max, int numdiv, float ticks[])
  */
 bool isPaneRotating (PlotPane pp)
 {
-    return ((plot_rotset[pp] & ~(1 << plot_ch[pp])) != 0);  // look for any bit on other than plot_ch
+    // beware plot choices not yet defined
+    PlotChoice pc = plot_ch[pp];
+    if (pc == PLOT_CH_N)
+        return (false);
+
+    bool on_hold = ROTHOLD_TST(pc);
+    bool just_us = (plot_rotset[pp] & ~(1 << pc)) == 0;
+    return (!on_hold && !just_us);
 }
 
 /* return whether this pane has its own special rotating ability engaged.

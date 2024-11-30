@@ -154,6 +154,8 @@ typedef struct {
 // maidenhead character arrey length, including EOS
 #define MAID_CHARLEN     7
 
+#define SPD     (3600L*24L)                             // seconds per day
+
 
 #define NV_ROTHOST_LEN          18
 #define NV_RIGHOST_LEN          18
@@ -189,6 +191,11 @@ class GenReader
             } else {
                 return (getTCPChar (my_client, bp));
             }
+        }
+
+        // return whether we are reading a file
+        bool isFile(void) {
+            return (my_fp != NULL);
         }
 
     private:
@@ -267,262 +274,325 @@ extern const char *auxtime_names[AUXT_N];
  * N.B. the entries here must match those in nv_sizes[]
  */
 typedef enum {
+    // 0
     NV_TOUCH_CAL_A,             // touch calibration coefficient
     NV_TOUCH_CAL_B,             // touch calibration coefficient
     NV_TOUCH_CAL_C,             // touch calibration coefficient
     NV_TOUCH_CAL_D,             // touch calibration coefficient
     NV_TOUCH_CAL_E,             // touch calibration coefficient
 
+    // 5
     NV_TOUCH_CAL_F,             // touch calibration coefficient
     NV_TOUCH_CAL_DIV,           // touch calibration normalization
     NV_DXMAX_N,                 // n lost dx connections since NV_DXMAX_T
     NV_DE_TIMEFMT,              // DE: 0=info; 1=analog; 2=cal; 3=analog+day; 4=dig 12hr; 5=dig 24hr
     NV_DE_LAT,                  // DE latitude, degrees N
 
+    // 10
     NV_DE_LNG,                  // DE longitude, degrees E
     NV_PANE0ROTSET,             // PlotChoice bitmask of pane 0 rotation choices
     NV_PLOT_0,                  // Pane 0 PlotChoice
     NV_DX_LAT,                  // DX latitude, degrees N
     NV_DX_LNG,                  // DX longitude, degrees E
 
+    // 15
     NV_DX_GRID_OLD,             // deprecated
     NV_CALL_FG,                 // Call foreground color as RGB 565
     NV_CALL_BG,                 // Call background color as RGB 565 unless...
     NV_CALL_RAINBOW,            // set if Call background is to be rainbow
     NV_PSK_SHOWDIST,            // Live spots shows max distance, else counts
 
+    // 20
     NV_UTC_OFFSET,              // offset from UTC, seconds
     NV_PLOT_1,                  // Pane 1 PlotChoice
     NV_PLOT_2,                  // Pane 2 PlotChoice
     NV_BRB_ROTSET_OLD,          // deprecated after it became too small
     NV_PLOT_3,                  // Pane 3 PlotChoice
 
+    // 25
     NV_RSS_ON,                  // whether to display RSS
     NV_BPWM_DIM,                // dim PWM, 0..255
     NV_PHOT_DIM,                // photo r dim value, 0 .. 1023
     NV_BPWM_BRIGHT,             // bright PWM, 0..255
     NV_PHOT_BRIGHT,             // photo r bright value, 0 .. 1023
 
+    // 30
     NV_LP,                      // whether to show DE-DX long or short path info
-    NV_METRIC_ON,               // whether to use metric or imperical values
+    NV_UNITS,                   // 0: imperial, 1: metric 2: british
     NV_LKSCRN_ON,               // whether screen lock is on
     NV_MAPPROJ,                 // 0: merc 1: azim 2: azim 1
     NV_ROTATE_SCRN_OLD,         // deprecated after removing ESP
 
+    // 35
     NV_WIFI_SSID,               // WIFI SSID
     NV_WIFI_PASSWD_OLD,         // deprecated
     NV_CALLSIGN,                // call 
     NV_SATNAME,                 // satellite name with underscore for each space
     NV_DE_SRSS,                 // whether DE pane shows sun times 0=until or 1=at
 
+    // 40
     NV_DX_SRSS,                 // whether DX pane shows sun times 0=until or 1=at or 2=DX prefix
     NV_GRIDSTYLE,               // map grid style 0=off; 1=tropics; 2=lat-lng; 3=maindenhead, 4=radial
     NV_DPYON_OLD,               // deprecated since NV_DAILYONOFF
     NV_DPYOFF_OLD,              // deprecated since NV_DAILYONOFF
     NV_DXHOST,                  // DX cluster host name, unless using WSJT
 
+    // 45
     NV_DXPORT,                  // DX cluster port number
     NV_SWHUE,                   // stopwatch color RGB 565
-    NV_TEMPCORR76,              // BME280 76 temperature correction, NV_METRIC_ON units
+    NV_TEMPCORR76,              // BME280 76 temperature correction, NV_UNITS units
     NV_GPSDHOST_OLD,            // deprecated in 4.07
     NV_KX3BAUD,                 // KX3 baud rate or 0
 
+    // 50
     NV_BCPOWER,                 // VOACAP power, watts
     NV_CD_PERIOD,               // stopwatch count down period, seconds
-    NV_PRESCORR76,              // BME280 76 pressure correction, NV_METRIC_ON units
+    NV_PRESCORR76,              // BME280 76 pressure correction, NV_UNITS units
     NV_BR_IDLE,                 // idle period, minutes
     NV_BR_MIN,                  // minimum brightness, percent of display range
 
+    // 55
     NV_BR_MAX,                  // maximum brightness, percent of display range
     NV_DE_TZ,                   // DE offset from UTC, seconds, or NVTZ_AUTO
     NV_DX_TZ,                   // DX offset from UTC, seconds, or NVTZ_AUTO
     NV_COREMAPSTYLE,            // name of core map background images (not voacap propmaps)
     NV_USEDXCLUSTER,            // whether to attempt using a DX cluster
 
+    // 60
     NV_USEGPSD,                 // bit 1: use gpsd for time, bit 2: use for location
     NV_LOGUSAGE,                // whether to phone home with clock settings
-    NV_MAPSPOTS,                // DX spot annotations: 0=none; 1=just prefix; 2=full call; |= width
+    NV_LBLSTYLE,                // DX spot annotations: 0=none; 1=just prefix; 2=full call;
     NV_WIFI_PASSWD,             // WIFI password
     NV_NTPSET,                  // whether to use NV_NTPHOST
 
+    // 65
     NV_NTPHOST_OLD,             // deprecated in 4.07
     NV_GPIOOK,                  // whether ok to use GPIO pins
     NV_SATPATHCOLOR,            // satellite path color as RGB 565
     NV_SATFOOTCOLOR,            // satellite footprint color as RGB 565
     NV_X11FLAGS,                // set if want full screen
 
+    // 70
     NV_BCFLAGS,                 // Big Clock bitmask: 1=date;2=wx;4=dig;8=12hr;16=nosec;32=UTC;64=an+dig;128=hrs;256=SpWx;512=hands;1024=sat
     NV_DAILYONOFF,              // 7 2-byte on times then 7 off times, each mins from midnight
-    NV_TEMPCORR77,              // BME280 77 temperature correction, NV_METRIC_ON units
-    NV_PRESCORR77,              // BME280 77 pressure correction, NV_METRIC_ON units
+    NV_TEMPCORR77,              // BME280 77 temperature correction, NV_UNITS units
+    NV_PRESCORR77,              // BME280 77 pressure correction, NV_UNITS units
     NV_SHORTPATHCOLOR,          // prop short path color as RGB 565
 
+    // 75
     NV_LONGPATHCOLOR,           // prop long path color as RGB 565
     NV_PLOTOPS_OLD,             // deprecated since NV_PANE_CH
     NV_NIGHT_ON,                // whether to show night on map
     NV_DE_GRID,                 // DE 6 char grid
     NV_DX_GRID,                 // DX 6 char grid
 
+    // 80
     NV_GRIDCOLOR,               // map grid color as RGB 565
     NV_CENTERLNG,               // mercator center longitude
     NV_NAMES_ON,                // whether to show roving place names
     NV_PANE1ROTSET,             // PlotChoice bitmask of pane 1 rotation choices
     NV_PANE2ROTSET,             // PlotChoice bitmask of pane 2 rotation choices
 
+    // 85
     NV_PANE3ROTSET,             // PlotChoice bitmask of pane 3 rotation choices
     NV_AUX_TIME,                // 0=date, DOY, JD, MJD, LST, UNIX
     NV_DAILYALARM,              // daily alarm time 60*hr + min, + 60*24 if armed; always DE TZ
     NV_BC_UTCTIMELINE,          // band conditions timeline labeled in UTC else DE
     NV_RSS_INTERVAL,            // RSS update interval, seconds
 
+    // 90
     NV_DATEMDY,                 // 0 = MDY 1 = see NV_DATEDMYYMD
     NV_DATEDMYYMD,              // 0 = DMY 1 = YMD
     NV_ROTUSE,                  // whether to use rotctld
     NV_ROTHOST,                 // rotctld tcp host
     NV_ROTPORT,                 // rotctld tcp port
 
+    // 95
     NV_RIGUSE,                  // whether to use rigctld
     NV_RIGHOST,                 // rigctld tcp host
     NV_RIGPORT,                 // rigctld tcp port
     NV_DXLOGIN,                 // DX cluster login
     NV_FLRIGUSE,                // whether to use flrig
 
+    // 100
     NV_FLRIGHOST,               // flrig tcp host
     NV_FLRIGPORT,               // flrig tcp port
     NV_DXCMD0_OLD,              // deprecated when lengthened in 4.08
     NV_DXCMD1_OLD,              // deprecated when lengthened in 4.08
     NV_DXCMD2_OLD,              // deprecated when lengthened in 4.08
 
+    // 105
     NV_DXCMD3_OLD,              // deprecated when lengthened in 4.08
     NV_DXCMDUSED_OLD,           // deprecated as of V3.06
     NV_PSK_MODEBITS,            // live spots mode: bit 0: on=psk off=wspr bit 1: on=bycall off=bygrid
     NV_PSK_BANDS,               // live spots bands: bit mask 0 .. 11 160 .. 2m
     NV_160M_COLOR,              // 160 m path color as RGB 565
 
+    // 110
     NV_80M_COLOR,               // 80 m path color as RGB 565
     NV_60M_COLOR,               // 60 m path color as RGB 565
     NV_40M_COLOR,               // 40 m path color as RGB 565
     NV_30M_COLOR,               // 30 m path color as RGB 565
     NV_20M_COLOR,               // 20 m path color as RGB 565
 
+    // 115
     NV_17M_COLOR,               // 17 m path color as RGB 565
     NV_15M_COLOR,               // 15 m path color as RGB 565
     NV_12M_COLOR,               // 12 m path color as RGB 565
     NV_10M_COLOR,               // 10 m path color as RGB 565
     NV_6M_COLOR,                // 6 m path color as RGB 565
 
+    // 120
     NV_2M_COLOR,                // 2 m path color as RGB 565
-    NV_DASHED,                  // ColorSelection bitmask set for dashed
+    NV_CSELDASHED,              // current ColorSelection bitmask set for dashed
     NV_BEAR_MAG,                // show magnetic bearings, else true
     NV_WSJT_SETSDX_OLD,         // deprecated
     NV_WSJT_DX,                 // whether dx cluster is WSJT-X
 
+    // 125
     NV_PSK_MAXAGE,              // live spots max age, minutes
     NV_WEEKMON,                 // whether week starts on Monday
     NV_BCMODE,                  // CW=19 SSB=38 AM=49 WSPR=3 FT8=13 FT4=17
     NV_SDO,                     // sdo pane choice 0..6
     NV_SDOROT,                  // whether SDO pane is rotating
 
+    // 130
     NV_ONTASPOTA_OLD,           // POTA sort, deprecated in 4.09
     NV_ONTASSOTA_OLD,           // SOTA sort, deprecated at 4.09
     NV_BRB_ROTSET,              // Beacon box mode bit mask
     NV_ROTCOLOR,                // rotator map color
     NV_CONTESTS,                // bit 1 to show date, bit use DE timezone
 
+    // 135
     NV_BCTOA,                   // VOACAP take off angle, degs
     NV_ADIFFN_OLD,              // deprecated when lengthened in v4.06
     NV_I2CFN,                   // I2C device filename
     NV_I2CON,                   // whether to use I2C
     NV_DXMAX_T,                 // time when n lost dx connections exceeded max
 
+    // 140
     NV_POTAWLIST1_OLD,          // deprecated when lengthened in v4.06
     NV_SCROLLDIR,               // 0=bottom 1=top
     NV_SCROLLLEN_OLD,           // deprecated in V4.04
     NV_DXCMD4_OLD,              // deprecated when lengthened in 4.08
     NV_DXCMD5_OLD,              // deprecated when lengthened in 4.08
 
+    // 145
     NV_DXCMD6_OLD,              // deprecated when lengthened in 4.08
     NV_DXCMD7_OLD,              // deprecated when lengthened in 4.08
     NV_DXCMD8_OLD,              // deprecated when lengthened in 4.08
     NV_DXCMD9_OLD,              // deprecated when lengthened in 4.08
     NV_DXCMD10_OLD,             // deprecated when lengthened in 4.08
 
+    // 150
     NV_DXCMD11_OLD,             // deprecated when lengthened in 4.08
     NV_DXCMDMASK,               // bitmask of dx cluster commands in use
     NV_DXWLISTMASK,             // 0: off, 1: not, 2: on, 3: only
     NV_RANKSW_OLD,              // deprecated as of 4.07
     NV_NEWDXDEWX,               // whether to show new DX or DE weather
 
+    // 155
     NV_WEBFS,                   // whether to enable full screen web interface
     NV_ZOOM,                    // integral zoom factor
     NV_PANX,                    // center x from 0 center, + right, @ zoom 1
     NV_PANY,                    // center y from 0 center, + up, @ zoom 1
     NV_POTAWLISTMASK_OLD,       // deprecated 4.09
 
+    // 160
     NV_SOTAWLIST1_OLD,          // deprecated when lengthened in v4.06
     NV_ONCEALARM,               // one-time alarm time(). always in UTC
     NV_ONCEALARMMASK,           // bit 1 = armed, 2 = user wants UTC (else DE TZ)
     NV_PANEROTP,                // pane rotation period, seconds
     NV_SHOWPIP,                 // whether to show public IP
 
+    // 165
     NV_MAPROTP,                 // map rotation period, seconds
     NV_MAPROTSET,               // core_map rotation bit mask
     NV_GRAYDPY,                 // whether to use gray scale
     NV_SOTAWLISTMASK_OLD,       // deprecated 4.09
     NV_ADIFWLISTMASK,           // 0: off, 1: not, 2: on, 3: only
 
+    // 170
     NV_DXWLIST,                 // DX watch list
     NV_ADIFWLIST,               // ADIF watch list
     NV_ADIFSORT,                // 0 age 1 distance
     NV_ADIFBANDS_OLD,           // deprecated in V4.04 -- replaced by watch list 
     NV_POTAWLIST_OLD,           // deprecated 4.09
 
+    // 175
     NV_SOTAWLIST_OLD,           // deprecated V4.09
     NV_ADIFFN,                  // ADIF file name, if any
     NV_NTPHOST,                 // user defined NTP host name
     NV_GPSDHOST,                // gpsd daemon host name
     NV_NMEAFILE,                // NMEA serial file name
 
+    // 180
     NV_USENMEA,                 // bit 1: use NMEA for time, bit 2: use for location
     NV_NMEABAUD,                // NMEA connection baud rate
     NV_BCTOABAND,               // band conditions TOA map band code
     NV_BCRELBAND,               // band conditions REL map band code
     NV_AUTOMAP,                 // whether to turn on maps automatically
 
+    // 185
     NV_DXCAGE,                  // oldest dx cluster entry, minutes
     NV_ONAIR_FG,                // ON AIR text foreground color as RGB 565
     NV_ONAIR_BG,                // ON AIR text background color as RGB 565 unless...
     NV_ONAIR_RAINBOW,           // set if ON AIR background is to be rainbow
     NV_DXCMD0,                  // dx cluster command 0
 
+    // 190
     NV_DXCMD1,                  // dx cluster command 1
     NV_DXCMD2,                  // dx cluster command 2
     NV_DXCMD3,                  // dx cluster command 3
     NV_DXCMD4,                  // dx cluster command 4
     NV_DXCMD5,                  // dx cluster command 5
 
+    // 195
     NV_DXCMD6,                  // dx cluster command 6
     NV_DXCMD7,                  // dx cluster command 7
     NV_DXCMD8,                  // dx cluster command 8
     NV_DXCMD9,                  // dx cluster command 9
     NV_DXCMD10,                 // dx cluster command 10
 
+    // 200
     NV_DXCMD11,                 // dx cluster command 11
     NV_ONAIR_MSG,               // ON AIR text
     NV_SETRADIO,                // whether to issue radio commands
     NV_ONTAWLIST,               // ONTA watch list
     NV_ONTAWLISTMASK,           // 0: off, 1: not, 2: on, 3: only
 
+    // 205
     NV_ONTASORTBY,              // ONTA sort 0-3: Band Call Org Age
     NV_ONTAORG,                 // ONTA organization filter
     NV_TITLE,                   // alternate callsign title text
     NV_TITLE_FG,                // alternate callsign fg as RGB 565
     NV_TITLE_BG,                // alternate callsign bg as RGB 565
 
+    // 210
     NV_TITLE_RAINBOW,           // alternate callsign is rainbow
     NV_ONTA_MAXAGE,             // max ONTA spot age, mins
     NV_QRZID,                   // which bio source
     NV_PREFERTITLE,             // whether to show title else call sign when not PTT
+    NV_CSELONOFF,               // current ColorSelection bitmask set for on/off
+
+    // 215
+    NV_CSELTHIN,                // current ColorSelection bitmask set for thin
+    NV_CSELDASHED_A,            // set A ColorSelection bitmask set for on/off
+    NV_CSELONOFF_A,             // set A ColorSelection bitmask set for on/off
+    NV_CSELTHIN_A,              // set A ColorSelection bitmask set for thin
+    NV_CSELDASHED_B,            // set B ColorSelection bitmask set for on/off
+
+    // 220
+    NV_CSELONOFF_B,             // set B ColorSelection bitmask set for on/off
+    NV_CSELTHIN_B,              // set B ColorSelection bitmask set for thin
+    NV_ONTABIO,                 // whether clicking an ONTA spot shows biography
+    NV_DXCBIO,                  // whether clicking a DXC spot shows biography
+    NV_X11GEOM_X,               // app window x coord
+
+    // 225
+    NV_X11GEOM_Y,               // app window y coord
+    NV_X11GEOM_W,               // app window width
+    NV_X11GEOM_H,               // app window height
 
     NV_N
 
@@ -889,7 +959,6 @@ extern void getWorstMem (int *heap, int *stack);
 extern void resetWatchdog(void);
 extern void wdDelay(int ms);
 extern bool timesUp (uint32_t *prev, uint32_t dt);
-extern void setDXPathInvalid(void);
 extern const SCoord raw2appSCoord (const SCoord &s_raw);
 extern bool overMap (const SCoord &s);
 extern bool overMap (const SBox &b);
@@ -940,25 +1009,15 @@ extern void fatalError (const char *fmt, ...);
  *
  */
 
-// pack into int16_t to save almost 2 kB on ESP
-
-#define BMEPACK_T(t)            (round((t)*50))
-#define BMEPACK_P(p)            (useMetricUnits() ? round((p)*10) : round((p)*100))
-#define BMEPACK_H(h)            (round((h)*100))
-
-#define BMEUNPACK_T(t)          ((t)/50.0F)
-#define BMEUNPACK_P(p)          (useMetricUnits() ? ((p)*0.1F) : ((p)*0.01F))
-#define BMEUNPACK_H(h)          ((h)/100.0F)
-
 // measurement queues
 #define N_BME_READINGS          250     // n measurements stored for each sensor
 typedef struct {
     time_t u[N_BME_READINGS];           // circular queue of UNIX sensor read times, 0 if no data
-    int16_t t[N_BME_READINGS];          // circular queue of temperature values as per useMetricUnits()
-    int16_t p[N_BME_READINGS];          // circular queue of pressure values as per useMetricUnits()
-    int16_t h[N_BME_READINGS];          // circular queue of humidity values
-    uint8_t q_head;                     // index of next q entries to use
-    uint8_t i2c;                        // i2c addr
+    float t[N_BME_READINGS];            // circular queue of temperature values in user's units
+    float p[N_BME_READINGS];            // circular queue of pressure values in user's units
+    float h[N_BME_READINGS];            // circular queue of humidity values in percent
+    int q_head;                         // index of next q entries to use
+    int i2c;                            // i2c addr
 } BMEData;
 
 typedef enum {
@@ -1010,10 +1069,11 @@ extern bool from_set_adif;
 extern void updateADIF (const SBox &box, bool fresh);
 extern bool checkADIFTouch (const SCoord &s, const SBox &box);
 extern void drawADIFSpotsOnMap (void);
-extern void readADIFFile (GenReader &gr, long gr_len, int &n_good, int &n_bad);
+extern void loadADIFFile (GenReader &gr, long gr_len, const char *name, const SBox &box, int &n_good, int &n_bad);
 extern bool getClosestADIFSpot (const LatLong &ll, DXSpot *sp, LatLong *llp);
 extern void cleanADIF(void);
 extern bool checkADIFFilename (const char *fn, char *ynot, size_t n_ynot);
+extern bool getADIFPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll);
 
 
 
@@ -1262,6 +1322,7 @@ extern const char* getAlarmedContestTitle (time_t t);
  */
 
 extern bool getCPUTemp (float &t_C);
+extern void plotCPUTempHistory (void);
 
 
 
@@ -1307,6 +1368,7 @@ extern void drawDXClusterSpotsOnMap (void);
 extern bool isDXClusterConnected(void);
 extern bool sendDXClusterDELLGrid(void);
 extern bool getClosestDXCluster (const LatLong &ll, DXSpot *sp, LatLong *llp);
+extern bool getDXCPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll);
 extern void cleanDXCluster(void);
 
 
@@ -1412,8 +1474,6 @@ extern void propPath (bool long_path, const LatLong &from_ll, float sflat, float
         float *distp, float *bearp);
 extern bool waiting4DXPath(void);
 extern void eraseSCircle (const SCircle &c);
-extern void drawRSSBox (void);
-extern void eraseRSSBox (void);
 extern void roundLatLong (LatLong &ll);
 extern void initScreen(void);
 extern float lngDiff (float dlng);
@@ -1460,7 +1520,6 @@ extern bool checkSatMapTouch (const SCoord &s);
 extern bool checkSatNameTouch (const SCoord &s);
 extern void drawSatPass(void);
 extern bool setNewSatCircumstance (void);
-extern void drawSatPointsOnRow (uint16_t r);
 extern void drawSatNameOnRow(uint16_t y);
 extern void drawOneTimeDX(void);
 extern void drawOneTimeDE(void);
@@ -1697,7 +1756,6 @@ extern bool getMapDayPixel (uint16_t row, uint16_t col, uint16_t *dayp);
 extern bool getMapNightPixel (uint16_t row, uint16_t col, uint16_t *nightp);
 extern const char *getCoreMapStyle (CoreMaps cm, char s[NV_COREMAPSTYLE_LEN]);
 extern void drawMapScale(void);
-extern void eraseMapScale(void);
 extern bool mapScaleIsUp(void);
 extern void insureCoreMap(void);
 
@@ -1945,7 +2003,7 @@ extern void NVWriteUInt16 (NV_Name e, uint16_t u);
 extern void NVWriteInt16 (NV_Name e, int16_t u);
 extern void NVWriteUInt8 (NV_Name e, uint8_t u);
 extern void NVWriteString (NV_Name e, const char *str);
-extern void NVWriteColorTable (int tbl_i, const uint8_t r[N_CSPR], const uint8_t g[N_CSPR],
+extern void NVWriteColorTable (int tbl_AB, const uint8_t r[N_CSPR], const uint8_t g[N_CSPR],
     const uint8_t b[N_CSPR]);
 extern void NVWriteTZ (NV_Name e, const TZInfo &tz);
 extern bool NVReadFloat (NV_Name e, float *fp);
@@ -1955,7 +2013,7 @@ extern bool NVReadUInt16 (NV_Name e, uint16_t *up);
 extern bool NVReadInt16 (NV_Name e, int16_t *up);
 extern bool NVReadUInt8 (NV_Name e, uint8_t *up);
 extern bool NVReadString (NV_Name e, char *buf);
-extern bool NVReadColorTable (int tbl_i, uint8_t r[N_CSPR], uint8_t g[N_CSPR], uint8_t b[N_CSPR]);
+extern bool NVReadColorTable (int tbl_AB, uint8_t r[N_CSPR], uint8_t g[N_CSPR], uint8_t b[N_CSPR]);
 extern bool NVReadTZ (NV_Name e, TZInfo &tz);
 
 #define NVTZ_AUTO 12345                 // NV_DE_TZ or NV_DX_TZ special value to mean auto_tz
@@ -1971,16 +2029,14 @@ extern void reportEESize (uint16_t &ee_used, uint16_t &ee_size);
  *
  */
 
-#define ONTA_INTERVAL   90                              // polling interval
+#define ONTA_INTERVAL   70                              // polling interval
 
-extern bool updateOnTheAir (const SBox &box);
+extern bool updateOnTheAir (const SBox &box, bool fresh);
 extern bool checkOnTheAirTouch (const SCoord &s, const SBox &box);
 extern bool getOnTheAirSpots (DXSpot **spp, uint8_t *nspotsp);
 extern void drawOnTheAirSpotsOnMap (void);
 extern bool getClosestOnTheAirSpot (const LatLong &ll, DXSpot *sp, LatLong *llp);
-extern bool getOnTheAirPaneSpot (SCoord &ms, DXSpot *dxs, LatLong *ll);
-extern bool getDXCPaneSpot (SCoord &ms, DXSpot *dxs, LatLong *ll);
-extern bool getADIFPaneSpot (SCoord &ms, DXSpot *dxs, LatLong *ll);
+extern bool getOnTheAirPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll);
 extern bool isONTARotating (void);
 
 
@@ -2023,7 +2079,9 @@ extern void prepPlotBox (const SBox &box);
  *
  */
 
-extern void plotMap (const char *filename, const char *title, uint16_t color);
+extern void plotMapData (const char title[], const char y_label[], float x_data[], float y_data[],int n_data);
+extern void plotServerFile (const char *filename, const char title[], const char y_label[]);
+
 
 
 
@@ -2039,8 +2097,13 @@ extern void plotMap (const char *filename, const char *title, uint16_t color);
 extern const SBox plot_b[PANE_N];          // box for each pane
 extern PlotChoice plot_ch[PANE_N];         // current choice in each pane, or PLOT_CH_NONE for PANE_0
 extern const char *plot_names[PLOT_CH_N];  // must be in same order as PlotChoice
-extern uint32_t plot_rotset[PANE_N];       // bitmask of all current PlotChoice rotation choices
+extern uint32_t plot_rothold;              // bitmask of PlotChoice in rotset but temporarily holding
+extern uint32_t plot_rotset[PANE_N];       // bitmask of each pane's PlotChoice rotation choices
                                            // N.B. plot_rotset[i] must always include plot_ch[i] unless NONE
+
+#define ROTHOLD_SET(pc)         (plot_rothold |= (1<<(pc)))
+#define ROTHOLD_CLR(pc)         (plot_rothold &= ~(1<<(pc)))
+#define ROTHOLD_TST(pc)         ((plot_rothold & (1<<(pc))) != 0)
 
 #define SHOWING_PANE_0()        (plot_ch[PANE_0] != PLOT_CH_NONE)
 #define BOX_IS_PANE_0(b)        ((b).w == PLOTBOX0_W && (b).h == PLOTBOX0_H)
@@ -2055,7 +2118,7 @@ extern uint32_t plot_rotset[PANE_N];       // bitmask of all current PlotChoice 
 #define NBITS_SET(v) ((((((((v) - (((v) >> 1) & 0x55555555)) & 0x33333333) + ((((v) - (((v) >> 1) & 0x55555555)) >> 2) & 0x33333333)) + (((((v) - (((v) >> 1) & 0x55555555)) & 0x33333333) + ((((v) - (((v) >> 1) & 0x55555555)) >> 2) & 0x33333333)) >> 4)) & 0xF0F0F0F) * 0x1010101) >> 24)
 #define N_PANE_0_CH             ((int)(NBITS_SET((uint32_t)PANE_0_CH_MASK)))
 
-#define PLOT_ROT_WARNING        4          // show rotation about to occur, secs
+#define PLOT_ROTWARN_DT        4           // show rotation about to occur, secs
 
 extern void insureCountdownPaneSensible(void);
 extern bool checkPlotTouch (const SCoord &s, PlotPane pp, TouchType tt);
@@ -2144,10 +2207,13 @@ extern void savePSKState(void);
 extern void drawFarthestPSKSpots(void);
 extern bool maxPSKageOk (int m);
 extern uint16_t getBandColor (long Hz);
-extern bool getBandDashed (long Hz);
+extern bool getBandPathDashed (long Hz);
+extern int getRawBandPathWidth (long Hz);
+extern int getRawBandSpotRadius (long Hz);
 extern void drawPSKPaths (void);
-extern bool getClosestPSK (const LatLong &ll, DXSpot *sp, bool &of_de);
 extern void getPSKSpots (const DXSpot* &rp, int &n_rep);
+extern bool getClosestPSK (const LatLong &ll, DXSpot *sp, LatLong *mark_ll);
+extern bool getMaxDistPSK (const SCoord &ms, DXSpot *sp, LatLong *mark_ll);
 
 
 
@@ -2242,6 +2308,7 @@ extern const uint16_t runner[HC_RUNNER_W*HC_RUNNER_H] PROGMEM;
  */
 
 extern void drawSanta(void);
+extern void drawFireworks(void);
 extern SBox santa_b;
 
 
@@ -2269,14 +2336,18 @@ class ScrollState {
 
         void drawScrollUpControl (const SBox &box, uint16_t arrow_color, uint16_t number_color) const;
         void drawScrollDownControl (const SBox &box, uint16_t arrow_color, uint16_t number_color) const;
-
         bool checkScrollUpTouch (const SCoord &s, const SBox &b) const;
         bool checkScrollDownTouch (const SCoord &s, const SBox &b) const;
+
+        void initNewSpotsSymbol (const SBox &box, uint16_t color);
+        void drawNewSpotsSymbol (const SBox &box, bool draw, bool active) const;
+        bool checkNewSpotsTouch (const SCoord &s, const SBox &b) const;
 
         void scrollDown (void);
         void scrollUp (void);
         bool okToScrollDown (void) const;
         bool okToScrollUp (void) const;
+        bool atNewest (void) const;
 
         void scrollToNewest (void);
         bool findDataIndex (int display_row, int &array_index) const;
@@ -2293,6 +2364,8 @@ class ScrollState {
         void moveTowardsNewer();
         int nMoreAbove (void) const;
         int nMoreBeneath (void) const;
+        SBox newsym_b;
+        uint16_t newsym_color;
 };
 
 
@@ -2336,6 +2409,9 @@ typedef enum {
 } FontSize;
 
 extern void selectFontStyle (FontWeight w, FontSize s);
+extern void getFontStyle (FontWeight *wp, FontSize *sp);
+
+
 
 
 
@@ -2349,15 +2425,15 @@ extern void selectFontStyle (FontWeight w, FontSize s);
  *
  */
 
-#define LABELNAMES              \
+#define LABELSTYLES             \
     X(LBL_NONE,     "None")     \
-    X(LBL_DOT,      "Dot")      \
     X(LBL_PREFIX,   "Prefix")   \
-    X(LBL_CALL,     "Call")
+    X(LBL_CALL,     "Call")     \
+    X(LBL_DOT,      "Dot")
 
-#define X(a,b)  a,              // expands LABEL_TYPE to each enum and comma
+#define X(a,b)  a,              // expands LABELSTYLES to each enum and comma
 typedef enum {
-    LABELNAMES
+    LABELSTYLES
     LBL_N
 } LabelType;
 #undef X
@@ -2370,8 +2446,9 @@ typedef enum {
 } DateFormat;
 
 #define N_DXCLCMDS      12                      // n dx cluster user commands
-#define THINPATHSZ      (tft.SCALESZ)           // NV_MAPSPOTS thin raw path size
-#define WIDEPATHSZ      (5*THINPATHSZ/2)        // NV_MAPSPOTS wide raw path size
+
+#define RAWTHINPATHSZ   (tft.SCALESZ)           // thin raw path size
+#define RAWWIDEPATHSZ   (5*RAWTHINPATHSZ/2)     // wide raw path size
 
 #define FOLLOW_DT       (5*60*1000L)            // gpsd/nmea follow update interval, millis
 #define FOLLOW_MIND     3                       // gpsd/nmea follow min motion dist, miles
@@ -2384,7 +2461,9 @@ extern bool setCallsign (const char *cs);
 extern const char *getDXClusterHost(void);
 extern int getDXClusterPort(void);
 extern bool setDXCluster (char *host, char *port_str, char ynot[]);
-extern bool useMetricUnits(void);
+extern bool showTempC(void);
+extern bool showATMhPa(void);
+extern bool showDistKm(void);
 extern bool useGeoIP(void);
 extern bool useGPSDTime(void);
 extern bool useGPSDLoc(void);
@@ -2418,13 +2497,12 @@ extern bool getRigctld (char host[NV_RIGHOST_LEN], int *portp);
 extern bool getRotctld (char host[NV_ROTHOST_LEN], int *portp);
 extern bool getFlrig (char host[NV_FLRIGHOST_LEN], int *portp);
 extern const char *getDXClusterLogin(void);
-extern int getSpotPathWidth (void);
-extern int getPathWidth (void);
-extern int getSpotDotRadius (void);
+extern int getRawPathWidth (ColorSelection id);
+extern int getRawSpotRadius (ColorSelection id);
 extern LabelType getSpotLabelType (void);
 extern bool setMapColor (const char *name, uint16_t rgb565);
 extern void getDXClCommands(const char *cmds[N_DXCLCMDS], bool on[N_DXCLCMDS]);
-extern bool getColorDashed(ColorSelection id);
+extern bool getPathDashed(ColorSelection id);
 extern bool useMagBearing(void);
 extern bool useWSJTX(void);
 extern bool weekStartsOnMonday(void);
@@ -2441,6 +2519,8 @@ extern bool autoMap(void);
 extern int getMapRotationPeriod(void);
 extern GrayDpy_t getGrayDisplay(void);
 extern bool setRadio (void);
+extern void drawSpotDot (int16_t raw_x, int16_t raw_y, uint16_t radius, LabelOnMapEnd txrx, uint16_t color);
+
 
 
 
@@ -2760,7 +2840,7 @@ typedef enum {
 extern const BandEdge ham_bands[HAMBAND_N];
 extern HamBandSetting findHamBand (long Hz);
 
-extern bool getClosestSpot (const DXSpot *list, int n_list, const LatLong &ll,
+extern bool getClosestSpot (const DXSpot *list, int n_list, LabelOnMapEnd which_ends, const LatLong &ll,
     DXSpot *sp, LatLong *llp);
 extern void drawSpotLabelOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMapDot dot);
 extern void drawSpotPathOnMap (const DXSpot &spot);
@@ -2848,6 +2928,7 @@ extern SWDisplayState getSWDisplayState (void);
 extern void getDailyAlarmState (AlarmState &as, uint16_t &de_hr, uint16_t &de_mn, bool &utc);
 extern void setDailyAlarmState (const AlarmState &as, uint16_t de_hr, uint16_t de_mn, bool utc);
 extern void getOneTimeAlarmState (AlarmState &as, time_t &t, bool &utc, char str[], size_t str_l);
+extern void getOneTimeAlarmState (AlarmState &as, time_t &t, bool &utc);
 extern bool setOneTimeAlarmState (AlarmState as, bool utc, const char time_str[]);
 extern bool setOneTimeAlarmState (AlarmState as, bool utc, time_t t);
 extern SWBCBits getBigClockBits(void);
@@ -3049,9 +3130,8 @@ extern char *xrayLevel (char *buf, const SpaceWeather_t &xray);
 
 
 #define MIN_WIFI_RSSI (-75)                     // minimum acceptable signal strength, dBm
-// https://docs.espressif.com/projects/espressif-esp-faq/en/latest/software-framework/wifi.html#connect-how-do-wi-fi-modules-rank-signal-strength-levels-based-on-rssi-values
 
-extern int runWiFiMeter (bool warn, bool &ignore_on);
+extern void runWiFiMeter (bool warn, bool &ignore_on);
 extern bool readWiFiRSSI(int &rssi);
 
 
@@ -3067,7 +3147,7 @@ extern bool readWiFiRSSI(int &rssi);
 extern bool updateDEWX (const SBox &box);
 extern bool updateDXWX (const SBox &box);
 extern bool drawNCDXFWx (BRB_MODE m);
-extern const WXInfo *findWXCache (const LatLong &ll, bool is_de, char ynot[]);
+extern const WXInfo *findTZCache (const LatLong &ll, bool is_de, char ynot[]);
 extern const WXInfo *findWXFast (const LatLong &ll);
 extern bool getFastWx (const LatLong &ll, WXInfo &wi);
 extern bool getCurrentWX (const LatLong &ll, bool is_de, WXInfo *wip, char ynot[]);

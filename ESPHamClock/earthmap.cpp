@@ -303,17 +303,6 @@ static void drawMaidGridKey()
     }
 }
 
-/* restore map under the given box
- */
-static void restoreMap (SBox &box)
-{
-    for (uint16_t dy = 0; dy < box.h; dy++)
-        for (uint16_t dx = 0; dx < box.w; dx++)
-            drawMapCoord (box.x+dx, box.y+dy);
-    if (rss_on)
-        drawRSSBox();
-}
-
 /* check and fix pz to be sure it is legal
  */
 void normalizePanZoom (PanZoom &pz)
@@ -424,15 +413,20 @@ static void drawLLGrid (int lat_step, int lng_step)
 {
     SCoord s0, s1;                                              // end points
 
+    // thickness if any
+    int lw = getRawPathWidth (GRID_CSPR);
+    if (lw == 0)
+        return;
+
     // lines of latitude, exclude the poles
     for (float lat = -90+lat_step; lat < 90; lat += lat_step) {
-        ll2sRaw (deg2rad(lat), deg2rad(-180), s0, 0);
+        ll2sRaw (deg2rad(lat), deg2rad(-180), s0, lw);
         for (float lng = -180+lng_step; lng <= 180; lng += lng_step) {
-            ll2sRaw (deg2rad(lat), deg2rad(lng), s1, 0);
+            ll2sRaw (deg2rad(lat), deg2rad(lng), s1, lw);
             for (float lg = lng-lng_step+FINESTEP_GRID; lg <= lng; lg += FINESTEP_GRID) {
-                ll2sRaw (deg2rad(lat), deg2rad(lg), s1, 0);
-                if (segmentSpanOkRaw (s0, s1, 1))
-                    tft.drawLineRaw (s0.x, s0.y, s1.x, s1.y, 1, lat == 0 ? GRIDC00 : GRIDC);
+                ll2sRaw (deg2rad(lat), deg2rad(lg), s1, lw);
+                if (segmentSpanOkRaw (s0, s1, lw))
+                    tft.drawLineRaw (s0.x, s0.y, s1.x, s1.y, lw, lat == 0 ? GRIDC00 : GRIDC);
                 s0 = s1;
             }
             s0 = s1;
@@ -441,13 +435,13 @@ static void drawLLGrid (int lat_step, int lng_step)
 
     // lines of longitude -- pole to pole
     for (float lng = -180; lng < 180; lng += lng_step) {
-        ll2sRaw (deg2rad(-90), deg2rad(lng), s0, 0);
+        ll2sRaw (deg2rad(-90), deg2rad(lng), s0, lw);
         for (float lat = -90+lat_step; lat <= 90; lat += lat_step) {
-            ll2sRaw (deg2rad(lat), deg2rad(lng), s1, 0);
+            ll2sRaw (deg2rad(lat), deg2rad(lng), s1, lw);
             for (float lt = lat-lat_step+FINESTEP_GRID; lt <= lat; lt += FINESTEP_GRID) {
-                ll2sRaw (deg2rad(lt), deg2rad(lng), s1, 0);
-                if (segmentSpanOkRaw (s0, s1, 1))
-                    tft.drawLineRaw (s0.x, s0.y, s1.x, s1.y, 1, lng == 0 ? GRIDC00 : GRIDC);
+                ll2sRaw (deg2rad(lt), deg2rad(lng), s1, lw);
+                if (segmentSpanOkRaw (s0, s1, lw))
+                    tft.drawLineRaw (s0.x, s0.y, s1.x, s1.y, lw, lng == 0 ? GRIDC00 : GRIDC);
                 s0 = s1;
             }
             s0 = s1;
@@ -467,6 +461,11 @@ static void drawAzimGrid ()
 
     SCoord s0, s1;
 
+    // thickness if any
+    int lw = getRawPathWidth (GRID_CSPR);
+    if (lw == 0)
+        return;
+
     // radial lines
     for (int ti = 0; ti < 360/THETA_GRID; ti++) {
         float t = deg2rad (ti * THETA_GRID);
@@ -485,9 +484,9 @@ static void drawAzimGrid ()
             // avoid poles on mercator plots
             if (map_proj != MAPP_MERCATOR || (lat > min_pole_lat && lat < max_pole_lat)) {
                 float lng = de_ll.lng + B;
-                ll2sRaw (lat, lng, s1, 0);
-                if (segmentSpanOkRaw (s0, s1, 1))
-                    tft.drawLineRaw (s0.x, s0.y, s1.x, s1.y, 1, GRIDC);
+                ll2sRaw (lat, lng, s1, lw);
+                if (segmentSpanOkRaw (s0, s1, lw))
+                    tft.drawLineRaw (s0.x, s0.y, s1.x, s1.y, lw, GRIDC);
                 s0 = s1;
             } else
                 s0.x = 0;
@@ -515,9 +514,9 @@ static void drawAzimGrid ()
             // avoid poles on mercator plots
             if (map_proj != MAPP_MERCATOR || (lat > min_pole_lat && lat < max_pole_lat)) {
                 float lng = de_ll.lng + B;
-                ll2sRaw (lat, lng, s1, 0);
-                if (segmentSpanOkRaw (s0, s1, 1))
-                    tft.drawLineRaw (s0.x, s0.y, s1.x, s1.y, 1, GRIDC);
+                ll2sRaw (lat, lng, s1, lw);
+                if (segmentSpanOkRaw (s0, s1, lw))
+                    tft.drawLineRaw (s0.x, s0.y, s1.x, s1.y, lw, GRIDC);
                 s0 = s1;
             } else
                 s0.x = 0;
@@ -529,20 +528,25 @@ static void drawAzimGrid ()
  */
 static void drawTropicsGrid()
 {
+    // thickness if any
+    int lw = getRawPathWidth (GRID_CSPR);
+    if (lw == 0)
+        return;
+
     if (map_proj != MAPP_MERCATOR) {
 
         // just 2 lines at lat +- 23.5
         SCoord s00, s01, s10, s11;
-        ll2sRaw (deg2rad(-23.5F), deg2rad(-180), s00, 0);
-        ll2sRaw (deg2rad(23.5F), deg2rad(-180), s10, 0);
+        ll2sRaw (deg2rad(-23.5F), deg2rad(-180), s00, lw);
+        ll2sRaw (deg2rad(23.5F), deg2rad(-180), s10, lw);
         for (float lng = -180; lng <= 180; lng += FINESTEP_GRID) {
-            ll2sRaw (deg2rad(-23.5), deg2rad(lng), s01, 0);
-            ll2sRaw (deg2rad(23.5), deg2rad(lng), s11, 0);
-            if (segmentSpanOkRaw (s00, s01, 0))
-                tft.drawLineRaw (s00.x, s00.y, s01.x, s01.y, 1, GRIDC);
+            ll2sRaw (deg2rad(-23.5), deg2rad(lng), s01, lw);
+            ll2sRaw (deg2rad(23.5), deg2rad(lng), s11, lw);
+            if (segmentSpanOkRaw (s00, s01, lw))
+                tft.drawLineRaw (s00.x, s00.y, s01.x, s01.y, lw, GRIDC);
             s00 = s01;
-            if (segmentSpanOkRaw (s10, s11, 0))
-                tft.drawLineRaw (s10.x, s10.y, s11.x, s11.y, 1, GRIDC);
+            if (segmentSpanOkRaw (s10, s11, lw))
+                tft.drawLineRaw (s10.x, s10.y, s11.x, s11.y, lw, GRIDC);
             s10 = s11;
         }
 
@@ -550,9 +554,9 @@ static void drawTropicsGrid()
 
         // easy! just 2 straight lines
         uint16_t y = map_b.y + map_b.h/2 - 23.5F*map_b.h/180;
-        tft.drawLine (map_b.x, y, map_b.x+map_b.w-1, y, GRIDC);
+        tft.drawLine (map_b.x, y, map_b.x+map_b.w-1, y, lw, GRIDC);
         y = map_b.y + map_b.h/2 + 23.5F*map_b.h/180;
-        tft.drawLine (map_b.x, y, map_b.x+map_b.w-1, y, GRIDC);
+        tft.drawLine (map_b.x, y, map_b.x+map_b.w-1, y, lw, GRIDC);
 
     }
 }
@@ -627,7 +631,7 @@ static void drawML_DB (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
     propDEPath (show_lp, ll, &dist, &bearing);
     dist *= ERAD_M;                             // angle to miles
     bearing *= 180/M_PIF;                       // rad -> degrees
-    if (useMetricUnits())
+    if (showDistKm())
         dist *= KM_PER_MI;
 
     // get bearing from DE in desired units
@@ -645,7 +649,7 @@ static void drawML_DB (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 
     // show distance
     tft.setCursor (tx, ty += dy);
-    tft.printf (_FX("%6.0f %s"), dist, useMetricUnits() ? "km" : "mi");
+    tft.printf (_FX("%6.0f %s"), dist, showDistKm() ? "km" : "mi");
 }
 
 /* drawMouseLoc() helper to show weather at the given location,
@@ -660,9 +664,9 @@ static void drawML_WX (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
         selectFontStyle (LIGHT_FONT, FAST_FONT);
 
         // temperature in desired units
-        float tmp = useMetricUnits() ? wi.temperature_c : CEN2FAH(wi.temperature_c);
+        float tmp = showTempC() ? wi.temperature_c : CEN2FAH(wi.temperature_c);
         tft.setCursor (tx, ty += dy);
-        tft.printf ("Temp%4.0f%c", tmp, useMetricUnits() ? 'C' : 'F');
+        tft.printf ("Temp%4.0f%c", tmp, showTempC() ? 'C' : 'F');
 
         // conditions else wind
         int clen = strlen(wi.conditions);
@@ -672,8 +676,7 @@ static void drawML_WX (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
                 clen = ML_MAXCHARS;
             tft.printf ("%*s%.*s", (ML_MAXCHARS-clen)/2, "", ML_MAXCHARS, wi.conditions);
         } else {
-            // width of combination wind direction and speed varies too much for one printf
-            float spd = (useMetricUnits() ? 3.6F : 2.237F) * wi.wind_speed_mps; // kph or mph
+            float spd = (showDistKm() ? 3.6F : 2.237F) * wi.wind_speed_mps; // kph or mph
             char wbuf[30];
             snprintf (wbuf, sizeof(wbuf), "%s@%.0f", wi.wind_dir_name, spd);
             tft.setCursor (tx, ty += dy);
@@ -700,9 +703,9 @@ static void drawML_Freq (long hz, uint16_t tx, int dy, uint16_t &ty)
 {
     tft.setCursor (tx, ty += dy);
     if (hz < 99999000)
-        tft.printf ("F %7.1f", hz * 1e-3);
+        tft.printf ("f %7.1f", hz * 1e-3);
     else
-        tft.printf ("F %7.0f", hz * 1e-3);
+        tft.printf ("f %7.0f", hz * 1e-3);
 }
 
 /* drawMouseLoc() helper for looking up city.
@@ -747,9 +750,10 @@ static bool drawML_City (LatLong &ll, SCoord &ms, const SBox &info_b, uint16_t &
     return (city != NULL);
 }
 
-/* drawMouseLoc() helper to show map at the given ll, taking care to stay within map and out us
+/* drawMouseLoc() helper to show map at the given ll, taking care to stay within map and out us.
+ * option to ignore caring about minfo used for targets that do not have menus, eg, sun and moon.
  */
-static void drawML_MapMarker (const LatLong &ll, const SBox &minfo_b)
+static void drawML_MapMarker (const LatLong &ll, const SBox &minfo_b, bool ignore_minfo)
 {
     // define mark geometry
     #define MAPMARK_R 11                            // canonical outer radius, circles grow inward
@@ -763,7 +767,7 @@ static void drawML_MapMarker (const LatLong &ll, const SBox &minfo_b)
     ll2s (ll, mark_s, MAPMARK_R);
 
     // show iff over map and does not overlap with info box
-    if (overMap (mark_s) && (mark_s.x > minfo_b.x + minfo_b.w + MAPMARK_R
+    if (overMap (mark_s) && (ignore_minfo || mark_s.x > minfo_b.x + minfo_b.w + MAPMARK_R
                           || mark_s.y > minfo_b.y + minfo_b.h + MAPMARK_R)) {
 
         if (tft.SCALESZ == 1) {
@@ -804,25 +808,28 @@ static void drawMouseLoc()
     // find what needs to be shown, if any
     SCoord ms;                                          // mouse loc but may change to city loc
     LatLong ll;                                         // ll at ms
-    DXSpot dx_s;                                        // spot to show
-    LatLong dxc_ll;                                     // ll to show
-    bool of_de;                                         // which psk end
-    bool over_map = tft.getMouse (&ms.x, &ms.y) && s2ll (ms, ll);
-    bool over_psk = over_map && getClosestPSK (ll, &dx_s, of_de);
-    bool over_spot = over_map && (getClosestDXCluster (ll, &dx_s, &dxc_ll)
-                || getClosestOnTheAirSpot (ll, &dx_s, &dxc_ll) || getClosestADIFSpot (ll, &dx_s, &dxc_ll));
-    bool over_pane = !over_map && (getDXCPaneSpot (ms, &dx_s, &dxc_ll)
-                    || getOnTheAirPaneSpot (ms, &dx_s, &dxc_ll) || getADIFPaneSpot (ms, &dx_s, &dxc_ll));
-    bool draw_mouse_loc = over_map || over_psk || over_spot || over_pane;
-
-    // must draw the zones lines before erasing menu in case they fall underneath the menu
-    if (draw_mouse_loc) {
-        int cqzone_n = 0, ituzone_n = 0;
-        if (mapgrid_choice == MAPGRID_CQZONES && findZoneNumber (ZONE_CQ, ms, &cqzone_n))
-            drawZone (ZONE_CQ, GRIDC00, cqzone_n);
-        if (mapgrid_choice == MAPGRID_ITUZONES && findZoneNumber (ZONE_ITU, ms, &ituzone_n))
-            drawZone (ZONE_ITU, GRIDC00, ituzone_n);
-    }
+    DXSpot dx_s;                                        // spot info
+    LatLong dxc_ll;                                     // ll to mark
+    PlotPane pp;                                        // set if over SDO or Moon pane
+    bool over_app = tft.getMouse (&ms.x, &ms.y);
+    bool over_map = over_app && s2ll (ms, ll);
+    bool over_psk = over_map && getClosestPSK (ll, &dx_s, &dxc_ll);     // only one that sets snr
+    bool over_spot = over_map && !over_psk &&
+                    (getClosestDXCluster (ll, &dx_s, &dxc_ll)
+                        || getClosestOnTheAirSpot (ll, &dx_s, &dxc_ll)
+                        || getClosestADIFSpot (ll, &dx_s, &dxc_ll)
+                    );
+    bool over_pane = over_app && !over_map &&
+                    (getDXCPaneSpot (ms, &dx_s, &dxc_ll)
+                        || getMaxDistPSK (ms, &dx_s, &dxc_ll)
+                        || getOnTheAirPaneSpot (ms, &dx_s, &dxc_ll)
+                        || getADIFPaneSpot (ms, &dx_s, &dxc_ll)
+                    );
+    bool over_sdo = over_app && !over_map && (pp = findPaneChoiceNow(PLOT_CH_SDO)) != PANE_NONE
+                        && inBox (ms, plot_b[pp]);
+    bool over_moon = over_app && !over_map && (pp = findPaneChoiceNow(PLOT_CH_MOON)) != PANE_NONE
+                        && inBox (ms, plot_b[pp]);
+    bool draw_menu = over_map || over_psk || over_spot || over_pane;
 
     // erase any previous city then reset was_city as flag for next time
     if (was_city) {
@@ -830,24 +837,35 @@ static void drawMouseLoc()
         was_city = false;
     }
 
-    // erase menu area if going to show new data or clean up for azm not over hemispheres
-    static bool drew_mouse_loc;
-    if (draw_mouse_loc || (map_proj != MAPP_MERCATOR && drew_mouse_loc))
-        fillSBox (minfo_b, RA8875_BLACK);
-    drew_mouse_loc = draw_mouse_loc;
+    // highlight the zone containing the cursor
+    if (draw_menu) {
+        int cqzone_n = 0, ituzone_n = 0;
+        if (mapgrid_choice == MAPGRID_CQZONES && findZoneNumber (ZONE_CQ, ms, &cqzone_n))
+            drawZone (ZONE_CQ, GRIDC00, cqzone_n);
+        if (mapgrid_choice == MAPGRID_ITUZONES && findZoneNumber (ZONE_ITU, ms, &ituzone_n))
+            drawZone (ZONE_ITU, GRIDC00, ituzone_n);
+    }
 
-    // that's it if not drawing the info box
-    if (!draw_mouse_loc)
+    // erase menu area if going to show new data or clean up edges when not mercator
+    static bool drew_menu;
+    if (draw_menu || (map_proj != MAPP_MERCATOR && drew_menu))
+        fillSBox (minfo_b, RA8875_BLACK);
+    drew_menu = draw_menu;
+
+    // mark map spot if any
+    if (over_sdo)
+        drawML_MapMarker (sun_ss_ll, minfo_b, true);
+    else if (over_moon)
+        drawML_MapMarker (moon_ss_ll, minfo_b, true);
+    else if (over_psk || over_spot || over_pane)
+        drawML_MapMarker (dxc_ll, minfo_b, false);
+
+    // that's all folks if no menu
+    if (!draw_menu)
         return;
 
-    // mark spot if any
-    if (over_psk || over_spot || over_pane)
-        drawML_MapMarker (over_spot || over_pane ? dxc_ll : (of_de ? dx_s.rx_ll : dx_s.tx_ll), minfo_b);
-
-
-    // draw spot info in menu table.
+    // draw spot info in menu table, if any.
     // N.B. show city dot and name only if no spot to avoid appearance of fake association.
-
 
     // prep for text
     selectFontStyle (LIGHT_FONT, FAST_FONT);
@@ -898,10 +916,10 @@ static void drawMouseLoc()
         tft.printf ("SNR %5.0f", dx_s.snr);
 
         // show distance and bearing
-        drawML_DB (of_de ? dx_s.rx_ll : dx_s.tx_ll, tx+ML_INDENT, ML_LINEDY, ty);
+        drawML_DB (dxc_ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // show weather
-        drawML_WX (of_de ? dx_s.rx_ll : dx_s.tx_ll, tx+ML_INDENT, ML_LINEDY, ty);
+        drawML_WX (dxc_ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // border in band color
         drawSBox (minfo_b, getBandColor(1000*dx_s.kHz));
@@ -1129,47 +1147,6 @@ static void drawMapMenuButton()
     tft.print (str);
 }
 
-/* erase the RSS box
- */
-void eraseRSSBox ()
-{
-
-    // drap scale will move if up so erase where it is
-    if (mapScaleIsUp())
-        eraseMapScale();
-
-    // erase entire banner if azm mode because redrawing the map will miss the corners
-    if (map_proj != MAPP_MERCATOR)
-        fillSBox (rss_bnr_b, RA8875_BLACK);
-
-    // restore map and sat path
-    for (uint16_t y = rss_bnr_b.y; y < rss_bnr_b.y+rss_bnr_b.h; y++) {
-        updateClocks(false);
-        for (uint16_t x = rss_bnr_b.x; x < rss_bnr_b.x+rss_bnr_b.w; x++)
-            drawMapCoord (x, y);
-        drawSatPointsOnRow (y);
-    }
-
-    // draw drap in new location
-    if (mapScaleIsUp())
-        drawMapScale();
-
-    // restore maid key
-    drawMaidGridKey();
-}
-
-/* arrange to draw the RSS box after it has been off a while, including mapscale and Maid key if necessary
- */
-void drawRSSBox()
-{
-    scheduleRSSNow();
-    if (mapScaleIsUp()) {
-        eraseMapScale();       // erase where it is now
-        drawMapScale();        // draw in new location
-        drawMaidGridKey();      // tidy up
-    }
-}
-
 /* draw, perform and engage results of the map View menu
  */
 static void drawMapMenu()
@@ -1263,7 +1240,6 @@ static void drawMapMenu()
     MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 1, MI_N, mitems};
     bool menu_ok = runMenu (menu);
 
-    bool full_redraw = false;
     if (menu_ok) {
 
 
@@ -1292,10 +1268,8 @@ static void drawMapMenu()
         // check for changes and confirm core_map
         if (map_rotset != prev_rotset) {
             // pick one and do full refresh if core_map no longer selected
-            if (!IS_CMROT(core_map)) {
+            if (!IS_CMROT(core_map))
                 insureCoreMap();
-                full_redraw = true;
-            }
             saveCoreMaps();
         }
         logMapRotSet();
@@ -1304,57 +1278,45 @@ static void drawMapMenu()
         if (mitems[MI_GRD_NON].set && mapgrid_choice != MAPGRID_OFF) {
             mapgrid_choice = MAPGRID_OFF;
             NVWriteUInt8 (NV_GRIDSTYLE, mapgrid_choice);
-            full_redraw = true;
         } else if (mitems[MI_GRD_TRO].set && mapgrid_choice != MAPGRID_TROPICS) {
             mapgrid_choice = MAPGRID_TROPICS;
             NVWriteUInt8 (NV_GRIDSTYLE, mapgrid_choice);
-            full_redraw = true;
         } else if (mitems[MI_GRD_LLG].set && mapgrid_choice != MAPGRID_LATLNG) {
             mapgrid_choice = MAPGRID_LATLNG;
             NVWriteUInt8 (NV_GRIDSTYLE, mapgrid_choice);
-            full_redraw = true;
         } else if (mitems[MI_GRD_MAI].set && mapgrid_choice != MAPGRID_MAID) {
             mapgrid_choice = MAPGRID_MAID;
             NVWriteUInt8 (NV_GRIDSTYLE, mapgrid_choice);
-            full_redraw = true;
         } else if (mitems[MI_GRD_AZM].set && mapgrid_choice != MAPGRID_AZIM) {
             mapgrid_choice = MAPGRID_AZIM;
             NVWriteUInt8 (NV_GRIDSTYLE, mapgrid_choice);
-            full_redraw = true;
         } else if (mitems[MI_GRD_CQZ].set && map_proj != MAPGRID_CQZONES) {
             mapgrid_choice = MAPGRID_CQZONES;
             NVWriteUInt8 (NV_GRIDSTYLE, mapgrid_choice);
-            full_redraw = true;
         } else if (mitems[MI_GRD_ITU].set && map_proj != MAPGRID_ITUZONES) {
             mapgrid_choice = MAPGRID_ITUZONES;
             NVWriteUInt8 (NV_GRIDSTYLE, mapgrid_choice);
-            full_redraw = true;
         }
 
         // check for different map projection
         if (mitems[MI_PRJ_MER].set && map_proj != MAPP_MERCATOR) {
             map_proj = MAPP_MERCATOR;
             NVWriteUInt8 (NV_MAPPROJ, map_proj);
-            full_redraw = true;
         } else if (mitems[MI_PRJ_AZM].set && map_proj != MAPP_AZIMUTHAL) {
             map_proj = MAPP_AZIMUTHAL;
             NVWriteUInt8 (NV_MAPPROJ, map_proj);
-            full_redraw = true;
         } else if (mitems[MI_PRJ_AZ1].set && map_proj != MAPP_AZIM1) {
             map_proj = MAPP_AZIM1;
             NVWriteUInt8 (NV_MAPPROJ, map_proj);
-            full_redraw = true;
         } else if (mitems[MI_PRJ_MOL].set && map_proj != MAPP_ROB) {
             map_proj = MAPP_ROB;
             NVWriteUInt8 (NV_MAPPROJ, map_proj);
-            full_redraw = true;
         }
 
         // check for change night option
         if (mitems[MI_NON_YES].set != night_on) {
             night_on = mitems[MI_NON_YES].set;
             NVWriteUInt8 (NV_NIGHT_ON, night_on);
-            full_redraw = true;
         }
 
         // check for change of names option
@@ -1363,30 +1325,14 @@ static void drawMapMenu()
             NVWriteUInt8 (NV_NAMES_ON, names_on);
         }
 
-        // check for changed RSS -- N.B. do this last to utilize full_redraw
+        // check for changed RSS
         if (mitems[MI_RSS_YES].set != rss_on) {
             rss_on = mitems[MI_RSS_YES].set;
             NVWriteUInt8 (NV_RSS_ON, rss_on);
-
-            // do minimal restore if not restart map
-            if (!full_redraw) {
-                if (rss_on) {
-                    drawRSSBox();
-                } else {
-                    eraseRSSBox();
-                }
-            }
         }
-
-        // restart map if enough has changed
-        if (full_redraw)
-            initEarthMap();
     }
 
-    // erase the map if scene not restarted
-    if (!menu_ok || !full_redraw)
-        restoreMap (menu_b);
-
+    initEarthMap();
     tft.drawPR();
 
     // discard any extra taps
@@ -1799,10 +1745,12 @@ void drawSun ()
 
     #define      N_SUN_RAYS      8
 
-    const uint16_t raw_x = tft.SCALESZ * sun_c.s.x;
-    const uint16_t raw_y = tft.SCALESZ * sun_c.s.y;
+    SCoord sc;
     const uint16_t sun_r = tft.SCALESZ * SUN_R;
     const uint16_t body_r = sun_r/2;
+    ll2sRaw (sun_ss_ll, sc, sun_r);
+    const uint16_t raw_x = sc.x;
+    const uint16_t raw_y = sc.y;
     tft.fillCircleRaw (raw_x, raw_y, sun_r, RA8875_BLACK);
     tft.fillCircleRaw (raw_x, raw_y, body_r, RA8875_YELLOW);
     for (uint8_t i = 0; i < N_SUN_RAYS; i++) {
@@ -1832,11 +1780,13 @@ void drawMoon ()
     
     // draw at full display precision
 
-    const uint16_t raw_r = MOON_R*tft.SCALESZ;
-    const uint16_t raw_x = tft.SCALESZ * moon_c.s.x;
-    const uint16_t raw_y = tft.SCALESZ * moon_c.s.y;
-    for (int16_t dy = -raw_r; dy <= raw_r; dy++) {      // scan top to bottom
-        float Ry = sqrtf(raw_r*raw_r-dy*dy);            // half-width at y
+    SCoord mc;
+    const uint16_t moon_r = MOON_R*tft.SCALESZ;
+    ll2sRaw (moon_ss_ll, mc, moon_r);
+    const uint16_t raw_x = mc.x;
+    const uint16_t raw_y = mc.y;
+    for (int16_t dy = -moon_r; dy <= moon_r; dy++) {    // scan top to bottom
+        float Ry = sqrtf(moon_r*moon_r-dy*dy);          // half-width at y
         int16_t Ryi = roundf(Ry);                       // " as int
         for (int16_t dx = -Ryi; dx <= Ryi; dx++) {      // scan left to right at y
             float a = acosf(dx/Ry);                     // looking down from NP CW from right limb
@@ -1886,7 +1836,7 @@ void drawDXInfo ()
     propDEPath (show_lp, dx_ll, &dist, &bearing);
     dist *= ERAD_M;                             // angle to miles
     bearing *= 180/M_PIF;                       // rad -> degrees
-    if (useMetricUnits())
+    if (showDistKm())
         dist *= KM_PER_MI;
 
     // convert to magnetic if desired
@@ -1918,9 +1868,9 @@ void drawDXInfo ()
 
     // distance units
     tft.setCursor (units_x, sm_y0);
-    tft.print(useMetricUnits() ? 'k' : 'm');
+    tft.print(showDistKm() ? 'k' : 'm');
     tft.setCursor (units_x, sm_y1);
-    tft.print(useMetricUnits() ? 'm' : 'i');
+    tft.print(showDistKm() ? 'm' : 'i');
 
     // sun rise/set or prefix
     if (dxsrss == DXSRSS_PREFIX) {

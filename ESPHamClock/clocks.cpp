@@ -868,8 +868,19 @@ time_t nowWO()
  */
 time_t myNow()
 {
+    // state to detect odd behaviors
     static uint32_t m_ok;
     static time_t prev_t;
+
+    // beware recursion, eg vis nextRetry if now decides to ask for an update
+    static bool reentry;
+    if (reentry) {
+        Serial.printf ("myNow() detected recursion\n");
+        return (prev_t);
+    }
+    reentry = true;
+
+    // ok, let's see what we get
     uint32_t m = millis();
     time_t t = now();
 
@@ -909,6 +920,9 @@ time_t myNow()
 
     // history
     prev_t = t;
+
+    // reset recursion detector
+    reentry = false;
 
     return (t);
 }

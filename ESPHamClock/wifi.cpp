@@ -83,8 +83,9 @@ static NTPServer ntp_list[] = {                 // init times to 0 insures all g
 #define N_NTP NARRAY(ntp_list)                  // number of possible servers
 
 
-// web site retry interval, secs
+// web site retry interval and max, secs
 #define WIFI_RETRY      (15)
+#define WIFI_MAXRETRY   (5*60)
 
 // pane auto rotation period in seconds
 #define ROTATION_INTERVAL       (getPaneRotationPeriod())
@@ -117,17 +118,18 @@ static time_t tdiff (const time_t t1, const time_t t2)
 }
 
 /* return the next retry time_t.
- * retries are spaced out every WIFI_RETRY
+ * retries are spaced out every WIFI_RETRY but never more than WIFI_MAXRETRY
  */
 static time_t nextWiFiRetry (void)
 {
-    int interval = WIFI_RETRY;
-
     // set and save next retry time
     static time_t prev_try;
-    time_t next_t0 = myNow() + interval;                        // interval after now
-    time_t next_try = prev_try + interval;                      // interval after prev
-    prev_try = next_t0 > next_try ? next_t0 : next_try;         // use whichever is later
+    time_t now = myNow();
+    time_t next_t0 = now + WIFI_RETRY;                          // basic interval after now
+    time_t next_try = prev_try + WIFI_RETRY;                    // interval extension after prev
+    if (next_try > now + WIFI_MAXRETRY)
+        next_try = now + WIFI_MAXRETRY;                         // but clamp to WIFI_MAXRETRY
+    prev_try = next_try > next_t0 ? next_try : next_t0;         // use whichever is later
     return (prev_try);
 }
 
@@ -162,7 +164,9 @@ static time_t nextPaneUpdate (PlotChoice pc, int interval)
     time_t next = t0 + interval;
     int dt = next - t0;
     int at = millis()/1000+dt;
-    Serial.printf ("Pane %d now showing %s updates in %d sec at %d\n", pp, plot_names[pc], dt, at);
+
+    if (interval > 60)
+        Serial.printf ("Pane %d now showing %s updates in %d sec at %d\n", pp, plot_names[pc], dt, at);
 
     return (next);
 }
@@ -400,9 +404,6 @@ static void initWiFi (bool verbose)
 
         tftMsg (verbose, 0, "S/N: %u", ESP.getChipId());
     }
-
-    // log server's idea of our IP
-    Serial.printf ("Remote_Addr: %s\n", remote_addr);
 }
 
 /* call exactly once to init wifi, maps and maybe time and location.
@@ -684,7 +685,7 @@ void checkBGMap(void)
 
     // note whether BC is up
     PlotPane bc_pp = findPaneChoiceNow (PLOT_CH_BC);
-    bool bc_up = bc_pp != PANE_NONE && bc_matrix.ok;
+    bool bc_up = bc_pp != PANE_NONE && bc_matrix.ok && myNow() > revert_time;
 
     // note whether core_map is one of the BC maps and whether it's time for it to update
     bool bc_map = CM_PMACTIVE();
@@ -1223,8 +1224,7 @@ void sendUserAgent (WiFiClient &client)
         uint16_t a_hr, a_mn;
         bool alarm_utc;
         getDailyAlarmState (a_ds, a_hr, a_mn, alarm_utc);
-        char a_str[100];
-        getOneTimeAlarmState (a_os, a_utct, a_utc, a_str, sizeof(a_str));
+        getOneTimeAlarmState (a_os, a_utct, a_utc);
         int alarms = 0;
         if (a_ds != ALMS_OFF)
             alarms += 1;
@@ -1296,13 +1296,11 @@ void sendUserAgent (WiFiClient &client)
         // number of dashed colors                      // added to first LV6 in 2.90
         int n_dashed = 0;
         for (int i = 0; i < N_CSPR; i++)
-            if (getColorDashed((ColorSelection)i))
+            if (getPathDashed((ColorSelection)i))
                 n_dashed++;
 
         // path size: 0 none, 1 thin, 2 wide
-        int path = getSpotPathWidth();                  // returns 0, THINPATHSZ or WIDEPATHSZ
-        if (path)
-            path = (path == THINPATHSZ ? 1 : 2);
+        int path = 1;                                   // pointless as of 4.10
 
         // label spots: 0 no, 1 prefix, 2 call, 3 dot
         int spots = 0;
@@ -1343,6 +1341,10 @@ void sendUserAgent (WiFiClient &client)
                 wl |= (1 << i);
         }
 
+        // decide units: 0 imperial, 1 metric, 2 british
+        // was just useMetricUnits() prior to 4_09
+        int units = showDistKm() ? 1 : (showATMhPa() ? 2 : 0);  // only Brits mix miles + hPa
+
         // panzoom
         bool pz = pan_zoom.zoom != MIN_ZOOM || pan_zoom.pan_x != 0 || pan_zoom.pan_y != 0;
 
@@ -1355,7 +1357,7 @@ void sendUserAgent (WiFiClient &client)
                 "\r\n",
             platform, hc_version, ESP.getChipId(), (long long)getUptime(NULL,NULL,NULL,NULL), crc,
             map_style, main_page, mapgrid_choice, plotops[PANE_1], plotops[PANE_2], plotops[PANE_3],
-            de_time_fmt, brb, dx_info_for_sat, rss_code, useMetricUnits(),
+            de_time_fmt, brb, dx_info_for_sat, rss_code, units,
             getNBMEConnected(), gpio, io, getBMETempCorr(BME_76), getBMEPresCorr(BME_76),
             desrss, dxsrss, BUILD_W, dpy_mode,
 
@@ -2043,6 +2045,7 @@ void updateWiFi(void)
             // if a choice needs fresh_redraw when newly exposed set it here
             if (pc == PLOT_CH_DXCLUSTER) fresh_redraw[PLOT_CH_DXCLUSTER] = true;
             if (pc == PLOT_CH_ADIF)      fresh_redraw[PLOT_CH_ADIF] = true;
+            if (pc == PLOT_CH_ONTA)      fresh_redraw[PLOT_CH_ONTA] = true;
 
             // go now
             next_update[pp] = 0;
@@ -2221,9 +2224,10 @@ void updateWiFi(void)
 
         case PLOT_CH_ONTA:
             if (t0 >= next_update[pp]) {
-                if (updateOnTheAir(box))
+                if (updateOnTheAir(box, fresh_redraw[pc])) {
                     next_update[pp] = nextPaneUpdate (pc, ONTA_INTERVAL);
-                else
+                    fresh_redraw[pc] = false;
+                } else
                     next_update[pp] = nextWiFiRetry(pc);
             }
             break;
