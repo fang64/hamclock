@@ -228,15 +228,10 @@ void setup()
     char stack;
     stack_start = &stack;
 
-
-    // this just reset the soft timeout, the hard timeout is still 6 seconds
-    ESP.wdtDisable();
-
-    // start debug trace
+    // start trace and debug
     Serial.begin(115200);
-    do {
+    while (!Serial)
         wdDelay(500);
-    } while (!Serial);
     Serial.printf("HamClock version %s platform %s\n", hc_version, platform);
 
     // show config
@@ -411,7 +406,7 @@ void setup()
     cs_info.box.w = 512;
     cs_info.box.h = 50;
     initCallsignInfo();
-    drawCallsign (true);
+    updateCallsign (true);
 
     // draw version just below
     tft.setTextColor (RA8875_WHITE);
@@ -621,7 +616,7 @@ void setup()
     // log screen lock
     Serial.printf ("Screen lock is now %s\n", screenIsLocked() ? "On" : "Off");
 
-    // perform inital screen layout
+    // here we go
     initScreen();
 }
 
@@ -662,6 +657,7 @@ void loop()
         runNextDemoCommand();
         updateGPSDLoc();
         updateNMEALoc();
+        updateCallsign (false);
         pollRadio();
 
         // check for touch events
@@ -760,7 +756,7 @@ void initScreen()
 
     // us
     drawVersion(true);
-    drawCallsign(true);
+    updateCallsign(true);
 
     // draw section borders
     tft.drawLine (0, map_b.y-1, tft.width()-1, map_b.y-1, GRAY);                        // top
@@ -1361,7 +1357,7 @@ static void prepUptime()
     const uint16_t w = uptime_b.w - UPTIME_INDENT;
 
     tft.fillRect (x, y, w, CSINFO_H, RA8875_BLACK);             // Skip "Up"
-    // drawSBox (uptime_b, RA8875_GREEN);                          // RBF
+    // drawSBox (uptime_b, RA8875_GREEN);                       // RBF
 
     selectFontStyle (LIGHT_FONT, FAST_FONT);
     tft.setTextColor (GRAY);
@@ -1847,11 +1843,10 @@ static void setDXPrefixOverride (const char *ovprefix)
 
 /* return the override prefix else nearest one based on ll, if any
  */
-bool getDXPrefix (char p[MAX_PREF_LEN+1])
+bool getDXPrefix (char p[MAX_PREF_LEN])
 {
     if (dx_prefix_use_override) {
-        memcpy (p, dx_override_prefix, MAX_PREF_LEN);
-        p[MAX_PREF_LEN] = '\0';
+        quietStrncpy (p, dx_override_prefix, MAX_PREF_LEN);
         return (true);
     } else {
         return (ll2Prefix (dx_ll, p));
@@ -2112,7 +2107,7 @@ static bool postDiags (void)
     if (stat (EEPROM.getFilename(), &s) == 0)
         cl += s.st_size;
 
-    Serial.printf ("PD: %d %s\n", cl, fn);
+    Serial.printf ("Diag: %d %s\n", cl, fn);
 
     if (pd_client.connect (backend_host, backend_port)) {
 
@@ -2131,7 +2126,7 @@ static bool postDiags (void)
             std::string dp = i < N_DIAG_FILES ? our_dir + diag_files[i] : EEPROM.getFilename();
             FILE *fp = fopen (dp.c_str(), "r");
             if (fp) {
-                Serial.printf ("PD:   %s\n", dp.c_str());
+                Serial.printf ("Diag:   %s\n", dp.c_str());
                 int n_r;
                 while ((n_r = fread (buf, 1, sizeof(buf), fp)) > 0)
                     pd_client.write ((uint8_t*)buf, n_r);

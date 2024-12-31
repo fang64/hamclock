@@ -591,7 +591,7 @@ static bool getWiFiDEDXInfo_helper (WiFiClient &client, char line[], size_t line
     // report prefix and path if dx else de call
     if (want_de) {
         // show prefix
-        char prefix[MAX_PREF_LEN+1];
+        char prefix[MAX_PREF_LEN];
         if (getDXPrefix(prefix)) {
             snprintf (buf, sizeof(buf), "DX_prefix     %s\n", prefix);
             client.print(buf);
@@ -1593,6 +1593,9 @@ static bool getWiFiSys (WiFiClient &client, char *unused_line, size_t line_len)
         client.print (buf);
     }
 
+    // show debug levels
+    prDebugLevels (client, 9);
+
     // show file system info
     int n_info;
     uint64_t fs_size, fs_used;
@@ -1833,7 +1836,7 @@ static bool setWiFiTitle (WiFiClient &client, char line[], size_t line_len)
     }
 
     // engage
-    drawCallsign (true);
+    updateCallsign (true);
 
     // ack
     startPlainText (client);
@@ -2015,6 +2018,43 @@ static bool setWiFiCluster (WiFiClient &client, char line[], size_t line_len)
     client.print ("ok\n");
 
     // we tried
+    return (true);
+}
+
+/* remote command to set new debug level
+ * name=xxx&level=n"
+ */
+static bool setWiFiDebug (WiFiClient &client, char line[], size_t line_len)
+{
+    // define all possible args
+    WebArgs wa;
+    wa.nargs = 0;
+    wa.name[wa.nargs++] = "name";
+    wa.name[wa.nargs++] = "level";
+
+    // parse
+    if (!parseWebCommand (wa, line, line_len))
+        return (false);
+    if (!wa.found[0] || !wa.found[1]) {
+        strcpy (line, garbcmd);
+        return (false);
+    }
+
+    // handy
+    char *name = (char*) wa.value[0];
+    int level = atoi ((char*) wa.value[1]);
+
+    // try to set
+    if (!setDebugLevel (name, level)) {
+        strcpy (line, garbcmd);
+        return (false);
+    }
+
+    // ack
+    startPlainText (client);
+    client.print ("ok\n");
+
+    // ok
     return (true);
 }
 
@@ -2455,7 +2495,7 @@ static bool setWiFiNewDEDX_helper (WiFiClient &client, bool new_dx, char line[],
             return (false);
         }
         if (setCallsign (call)) {
-            drawCallsign (true);
+            updateCallsign (true);
         } else {
             strcpy (line, "invalid call");
             return (false);
@@ -2885,11 +2925,12 @@ static bool setWiFiADIF (WiFiClient &client, char line[], size_t line_len)
 
         // process POST content which immediately follows header
         int n_good, n_bad;
-        loadADIFFile (gr, content_length, "via set_adif", plot_b[adif_pp], n_good, n_bad);
+        loadADIFFile (gr, content_length, n_good, n_bad);
         if (n_good == 0) {
             strcpy (line, "No qualifying spots found");
             return (false);
         }
+        drawADIFPane (plot_b[adif_pp], "via set_adif");
 
         // ack count
         startPlainText (client);
@@ -3981,6 +4022,7 @@ static const CmdTble command_table[] = {
     { "set_auxtime?",       setWiFiAuxTime,        "format=[one_from_menu]" },
     { "set_bmp?",           setWiFiloadBMP,        "pane=[123][&none] (POST)" },
     { "set_cluster?",       setWiFiCluster,        "host=xxx&port=yyy" },
+    { "set_debug?",         setWiFiDebug,          "name=xxx&level=n" },
     { "set_defmt?",         setWiFiDEformat,       "fmt=[one_from_menu]&atin=RSAtAt|RSInAgo" },
     { "set_displayOnOff?",  setWiFiDisplayOnOff,   "on|off" },
     { "set_displayTimes?",  setWiFiDisplayTimes,   "on=HR:MN&off=HR:MN&day=[Sun..Sat]&idle=mins" },

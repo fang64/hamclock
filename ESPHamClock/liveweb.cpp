@@ -38,9 +38,6 @@ const int liveweb_maxmax = MAX_CLIENTS-1;               // max max for -help
 #define COMP_RGB        3                               // composition request code for RGB pixels
 
 
-// trace level
-static int live_verbose = 0;                            // more chatter if > 0
-
 
 // record client and possible URL for it to display.
 static ws_cli_conn_t *lastest_ws_touch_client;          // most recent client performing set_touch
@@ -88,9 +85,9 @@ static void wifiSTBWrite_helper (void *context, void *data, int size)
     int n_sent = ws_sendframe_bin (client, (const char *) data, size);
     if (n_sent != size)
         Serial.printf ("LIVE: client %s: wrong png write len: %d != %d\n", ws_getaddress(client), n_sent, size);
-    if (live_verbose > 1) {
+    if (debugLevel (DEBUG_WEB, 2)) {
         Serial.printf ("LIVE: sent image %d bytes\n", size);
-        if (live_verbose > 2) {
+        if (debugLevel (DEBUG_WEB, 3)) {
             FILE *fp = fopen ("/tmp/live.png", "w");
             fwrite (data, size, 1, fp);
             fclose(fp);
@@ -154,7 +151,7 @@ static void updateExistingClient (ws_cli_conn_t *client)
         bye ("getRawPix for update failed\n");
     uint8_t *img_now = pixels;                      // better name
 
-    if (live_verbose > 1) {
+    if (debugLevel (DEBUG_WEB, 2)) {
         struct timeval tv1;
         gettimeofday (&tv1, NULL);
         Serial.printf ("LIVE: client %s: copying img and reading new pixels took %ld usec\n",
@@ -289,7 +286,7 @@ static void updateExistingClient (ws_cli_conn_t *client)
     if (n_bloks != (chg0-chg_regns)/BLOK_NBYTES)        // assert
         bye ("live regions %d != %d\n", n_bloks, (int)((chg0-chg_regns)/BLOK_NBYTES));
 
-    if (live_verbose > 1) {
+    if (debugLevel (DEBUG_WEB, 2)) {
         struct timeval tv1;
         gettimeofday (&tv1, NULL);
         Serial.printf ("LIVE: client %s: built %d regions from %d blocks in %ld usec\n",
@@ -311,7 +308,7 @@ static void updateExistingClient (ws_cli_conn_t *client)
         hdr[4+3*i] = locs[i].x;
         hdr[5+3*i] = locs[i].y;
         hdr[6+3*i] = locs[i].l;
-        if (live_verbose > 2)
+        if (debugLevel (DEBUG_WEB, 3))
             Serial.printf ("   %d,%d %dx%d\n", locs[i].x*BLOK_W, locs[i].y*BLOK_H, locs[i].l*BLOK_W, BLOK_H);
     }
 
@@ -324,14 +321,14 @@ static void updateExistingClient (ws_cli_conn_t *client)
     stbi_write_png_to_func (wifiSTBWrite_helper, client, BLOK_W*n_bloks, BLOK_H,
                             COMP_RGB, chg_regns, BLOK_WBYTES*n_bloks);
 
-    if (live_verbose > 1) {
+    if (debugLevel (DEBUG_WEB, 2)) {
         struct timeval tv1;
         gettimeofday (&tv1, NULL);
         Serial.printf ("LIVE: client %s: write hdr %d bytes and update took %ld usec\n",
                         ws_getaddress(client), hdr_l, TVDELUS (tv0,tv1));
     }
 
-    if (live_verbose > 1)
+    if (debugLevel (DEBUG_WEB, 2))
         Serial.printf ("LIVE: client %s: sent update with %d regions %d blocks\n",
                         ws_getaddress(client), n_regns, n_bloks);
 
@@ -357,7 +354,7 @@ static void sendClientPNG (ws_cli_conn_t *client)
     stbi_write_png_compression_level = 2;       // faster with hardly any increase in size
     stbi_write_png_to_func (wifiSTBWrite_helper, client, BUILD_W, BUILD_H, COMP_RGB, pixels, LIVE_RBYTES);
 
-    if (live_verbose)
+    if (debugLevel (DEBUG_WEB, 1))
         Serial.printf ("LIVE: client %s: sent full PNG\n", ws_getaddress(client));
 }
 
@@ -447,7 +444,7 @@ static void setLiveChar (ws_cli_conn_t *client, char args[], size_t args_len)
 {
     // ignore if this is from the r/o port
     if (client->port == liveweb_ro_port) {
-        if (live_verbose)
+        if (debugLevel (DEBUG_WEB, 1))
             Serial.printf ("LIVE: ignoring setLiveChar on r/o port %d\n", liveweb_ro_port);
         return;
     }
@@ -520,7 +517,7 @@ static void setLiveChar (ws_cli_conn_t *client, char args[], size_t args_len)
 
             // insert into getChar queue
             tft.putChar (c, ctrl, shift);
-            if (live_verbose)
+            if (debugLevel (DEBUG_WEB, 1))
                 Serial.printf ("LIVE: set_char %d %c\n", c, c);
         }
     }
@@ -532,7 +529,7 @@ static void setLiveTouch (ws_cli_conn_t *client, char args[], size_t args_len)
 {
     // ignore if this is from the r/o port
     if (client->port == liveweb_ro_port) {
-        if (live_verbose)
+        if (debugLevel (DEBUG_WEB, 1))
             Serial.printf ("LIVE: ignoring setLiveTouch on r/o port %d\n", liveweb_ro_port);
         return;
     }
@@ -586,7 +583,7 @@ static void setLiveMouse (ws_cli_conn_t *client, char args[], size_t args_len)
 {
     // ignore if this is from the r/o port
     if (client->port == liveweb_ro_port) {
-        if (live_verbose)
+        if (debugLevel (DEBUG_WEB, 1))
             Serial.printf ("LIVE: ignoring setLiveMouse on r/o port %d\n", liveweb_ro_port);
         return;
     }
@@ -611,7 +608,7 @@ static void setLiveMouse (ws_cli_conn_t *client, char args[], size_t args_len)
         int x = atoi(wa.value[0]);
         int y = atoi(wa.value[1]);
         tft.setMouse (x, y);
-        if (live_verbose)
+        if (debugLevel (DEBUG_WEB, 1))
             Serial.printf ("LIVE: set_mouse %d %d\n", x, y);
             
     }
@@ -629,7 +626,7 @@ static void sendLiveHTML (FILE *sockfp)
     // send page
     fprintf (sockfp, "%s\r\n", live_html);
 
-    if (live_verbose)
+    if (debugLevel (DEBUG_WEB, 1))
         Serial.printf ("LIVE: sent live.html\n");
 }
 
@@ -645,7 +642,7 @@ static void sendLiveFavicon (FILE *sockfp)
     // send icon
     writeFavicon (sockfp);
 
-    if (live_verbose)
+    if (debugLevel (DEBUG_WEB, 1))
         Serial.printf ("LIVE: sent favicon\n");
 }
 
@@ -778,7 +775,7 @@ static void ws_onmessage (ws_cli_conn_t *client, const unsigned char *msg, uint6
         const char *cmd_name = commands[i].cmd_name;
         size_t cmd_name_len = strlen(cmd_name);
         if (strncmp (cmd, cmd_name, cmd_name_len) == 0) {
-            if (live_verbose > 1)
+            if (debugLevel (DEBUG_WEB, 2))
                 Serial.printf ("LIVE: running %s\n", cmd);
             char *args = cmd + cmd_name_len;
             (*commands[i].cmd_fp) (client, args, strlen(args));
@@ -803,7 +800,7 @@ static void ws_not (FILE *sockfp, const char *header)
         return;
     }
 
-    if (live_verbose)
+    if (debugLevel (DEBUG_WEB, 1))
         Serial.printf ("LIVE: ws_not GET %s\n", fn);
 
     // dispatch according to GET file
@@ -852,7 +849,7 @@ void initLiveWeb (bool verbose)
 
         // R/W service
         if (liveweb_rw_port < 0) {
-            if (live_verbose)
+            if (debugLevel (DEBUG_WEB, 1))
                 Serial.printf ("LIVE: R/W live web is disabled\n");
         } else {
             struct ws_events evs;
@@ -861,13 +858,13 @@ void initLiveWeb (bool verbose)
             evs.onmessage = ws_onmessage;
             evs.onnonws   = ws_not;
             ws_socket (&evs, liveweb_rw_port, 1, 1000);
-            if (live_verbose)
+            if (debugLevel (DEBUG_WEB, 1))
                 Serial.printf ("LIVE: started r/w server thread on port %d\n", liveweb_rw_port);
         }
 
         // R/O service
         if (liveweb_ro_port < 0) {
-            if (live_verbose)
+            if (debugLevel (DEBUG_WEB, 1))
                 Serial.printf ("LIVE: R/O live web is disabled\n");
         } else {
             struct ws_events evs;
@@ -876,7 +873,7 @@ void initLiveWeb (bool verbose)
             evs.onmessage = ws_onmessage;
             evs.onnonws   = ws_not;
             ws_socket (&evs, liveweb_ro_port, 1, 1000);
-            if (live_verbose)
+            if (debugLevel (DEBUG_WEB, 1))
                 Serial.printf ("LIVE: started r/o server thread on port %d\n", liveweb_ro_port);
         }
 

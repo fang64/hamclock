@@ -837,8 +837,8 @@ static void drawMouseLoc()
         was_city = false;
     }
 
-    // highlight the zone containing the cursor
-    if (draw_menu) {
+    // highlight the zone containing the cursor if appropriate
+    if (draw_menu && over_map) {
         int cqzone_n = 0, ituzone_n = 0;
         if (mapgrid_choice == MAPGRID_CQZONES && findZoneNumber (ZONE_CQ, ms, &cqzone_n))
             drawZone (ZONE_CQ, GRIDC00, cqzone_n);
@@ -922,9 +922,9 @@ static void drawMouseLoc()
         drawML_WX (dxc_ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // border in band color
-        drawSBox (minfo_b, getBandColor(1000*dx_s.kHz));
+        drawSBox (minfo_b, getBandColor(dx_s.kHz));
         // tft.drawRect (view_btn_b.x, view_btn_b.y + view_btn_b.h, view_btn_b.w-1, ML_LINEDY*ML_NLINES+1,
-                        // getBandColor(1000*dx_s.kHz));
+                        // getBandColor(dx_s.kHz));
 
     } else if (over_spot || over_pane) {
 
@@ -979,9 +979,9 @@ static void drawMouseLoc()
         drawML_WX (dxc_ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // border in band color
-        drawSBox (minfo_b, getBandColor(1000*dx_s.kHz));
+        drawSBox (minfo_b, getBandColor(dx_s.kHz));
         // tft.drawRect (view_btn_b.x, view_btn_b.y + view_btn_b.h, view_btn_b.w-1, ML_LINEDY*ML_NLINES+1,
-                        // getBandColor(1000*dx_s.kHz));
+                        // getBandColor(dx_s.kHz));
 
     } else if (over_map) {
 
@@ -1020,11 +1020,11 @@ static void drawMouseLoc()
         drawML_LMT (ll, tx+ML_INDENT, ML_LINEDY, ty);
 
         // prefix
-        char prefix[MAX_PREF_LEN+1];
+        char prefix[MAX_PREF_LEN];
         ty += ML_LINEDY;
         if (ll2Prefix (ll, prefix)) {
             tft.setCursor (tx+ML_INDENT, ty);
-            tft.printf ("Pfx %5s", prefix);
+            tft.printf ("Pfx %5.5s", prefix);
         }
 
         // gap
@@ -1874,9 +1874,10 @@ void drawDXInfo ()
 
     // sun rise/set or prefix
     if (dxsrss == DXSRSS_PREFIX) {
-        char prefix[MAX_PREF_LEN+1];
         fillSBox (dxsrss_b, RA8875_BLACK);
+        char prefix[MAX_PREF_LEN];
         if (getDXPrefix (prefix)) {
+            prefix[4] = '\0';   // max room
             tft.setTextColor(DX_COLOR);
             selectFontStyle (LIGHT_FONT, SMALL_FONT);
             bw = getTextWidth (prefix);

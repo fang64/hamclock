@@ -234,13 +234,13 @@ void updateGPSDLoc()
             newDE (ll, NULL);
 }
 
-/* convert YYYY-MM-DDTHH:MM:SS to unix time, or 0 if fails
+/* convert YYYY-MM-DD?HH:MM:SS to unix time, or 0 if fails
  */
 time_t crackISO8601 (const char *iso)
 {
         time_t t = 0;
         int yr, mo, dy, hr, mn, sc;
-        if (sscanf (iso, _FX("%d-%d-%dT%d:%d:%d"), &yr, &mo, &dy, &hr, &mn, &sc) == 6) {
+        if (sscanf (iso, _FX("%d-%d-%d%*c%d:%d:%d"), &yr, &mo, &dy, &hr, &mn, &sc) == 6) {
 
             // reformat
             tmElements_t tm;

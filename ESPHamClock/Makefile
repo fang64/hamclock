@@ -44,6 +44,7 @@ OBJS = \
 	adif.o \
 	asknewpos.o \
 	astro.o \
+	bands.o \
 	blinker.o \
 	brightness.o \
 	cachefile.o \
@@ -53,6 +54,7 @@ OBJS = \
 	color.o \
         contests.o \
 	cputemp.o \
+	debug.o \
 	drawextra.o \
 	dxcluster.o \
 	earthmap.o \
@@ -75,6 +77,7 @@ OBJS = \
 	nmea.o \
 	nvram.o \
 	ontheair.o \
+	parsespot.o \
 	passwd.o \
 	plot.o \
 	plotmap.o \
@@ -87,6 +90,7 @@ OBJS = \
 	rss.o \
 	runner.o \
 	santa.o \
+	sattool.o \
 	scroll.o \
 	sdo.o \
 	selectFont.o \

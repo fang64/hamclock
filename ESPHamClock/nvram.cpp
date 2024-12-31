@@ -325,7 +325,7 @@ static const uint8_t nv_sizes[NV_N] = {
     1,                          // NV_TITLE_RAINBOW
     1,                          // NV_ONTA_MAXAGE
     1,                          // NV_QRZID
-    1,                          // NV_PREFERTITLE
+    1,                          // NV_CALLPREF
     4,                          // NV_CSELONOFF
 
     // 215

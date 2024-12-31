@@ -10,13 +10,14 @@
 /* prefixes are cached with fast radix access
  */
 
-static char cty_page[] = "/cty/cty_wt_mod-ll.txt";      // web page to download
-static char cty_fn[] = "cty-ll.txt";                    // local cache copy name
+static char cty_page[] = "/cty/cty_wt_mod-ll-dxcc.txt";         // web page to download
+static char cty_fn[] = "cty-ll-dxcc.txt";                       // local cache copy name
 
 typedef struct {
     char call[MAX_SPOTCALL_LEN];                // mostly prefixes, a few calls; sorted ala strcmp
     float lat_d, lng_d;                         // +N +E degrees
     int call_len;                               // handy strlen(call)
+    int dxcc;                                   // DXCC number
 } CtyLoc;
 static CtyLoc *cty_list;                        // malloced list
 static int n_cty, n_malloc;                     // n entries used, n malloced
@@ -26,17 +27,19 @@ static char prev_radix;                         // used to detect change in radi
 static time_t next_refresh;                     // time of next download
 #define MAX_CTY_AGE     (2*24*3600)             // normally update city file this often, secs
 #define RETRY_DT        60                      // retry interval if trouble, secs
+#define MAX_DIST        12                      // max dist from target, degrees
 
 
 /* table of common prefixes and their rough center location.
  */
 
+#define SMALL_PREF_LEN 4
 typedef struct {
-    char prefix[MAX_PREF_LEN];                  // prefix, left justified, \0 padded but none if full
+    char pref[SMALL_PREF_LEN];                  // prefix, left justified, \0 padded but none if full
     int16_t lat, lng;                           // rough center, degs*100 +E +N
-} Prefix;
+} SmallPrefix;
 
-static const Prefix prefixes[] = {
+static const SmallPrefix small_prefs[] = {
      {{'1','A','\0','\0'},        4154,   1230},
      {{'1','S','\0','\0'},         839,  11129},
      {{'3','A','\0','\0'},        4345,    725},
@@ -667,58 +670,39 @@ static const Prefix prefixes[] = {
      {{'Z','S','8','\0'},        -4649,   3947},
 };
 
-#define N_PREFIXES NARRAY(prefixes)
-#define MAX_R2   (11*11)          // max radius^2, sqr degrees
+#define N_SMALLPREFS NARRAY(small_prefs)
 
 
-/* find nearest prefix to the given LL, if within allowed max
+/* find nearest small_prefs to the given LL, if within allowed max
+ * N.B. tried cty but it has way too many weird ones, eg it finds AX? instead of VK?
  */
-bool ll2Prefix (const LatLong &ll, char prefix[MAX_PREF_LEN+1])
+bool ll2Prefix (const LatLong &ll, char prefix[MAX_PREF_LEN])
 {
-    // cache
-    static LatLong prev_ll;
-    static char prev_prefix[MAX_PREF_LEN+1];
-    static bool prev_return;
-    if (memcmp (&ll, &prev_ll, sizeof(ll)) == 0) {
-        memcpy (prefix, prev_prefix, MAX_PREF_LEN+1);
-        return (prev_return);
-    }
-
-    // save query location
-    prev_ll = ll;
-
-    // scan for closest location
-    float mind2 = 1e10;
-    float coslat = cosf(ll.lat);
-    uint16_t closest_prefix = 0;
-    for (uint16_t i = 0; i < N_PREFIXES; i++) {
-        float dlat = ll.lat_d - 0.01F * (int16_t) prefixes[i].lat;
-        float dlng = lngDiff (ll.lng_d - 0.01F * (int16_t) prefixes[i].lng);
-        dlng *= coslat;
-        float d2 = dlat*dlat + dlng*dlng;
-        if (d2 < mind2) {
-            mind2 = d2;
-            closest_prefix = i;
+    // scan for closest location -- use simple linear approx
+    float mind = 1e10;                                  // min linear degree separation so far
+    float coslat = cosf(ll.lat);                        // handy
+    uint16_t closest_smpref = 0;                        // small_prefs index of closest entry
+    for (int i = 0; i < N_SMALLPREFS; i++) {
+        float dlat = fabsf (ll.lat_d - 0.01F * small_prefs[i].lat);
+        if (dlat < mind) {                              // dont bother adding dlng if already > mind
+            float dlng = coslat * fabsf (lngDiff (ll.lng_d - 0.01F * small_prefs[i].lng));
+            float d = dlat + dlng;
+            if (d < mind) {
+                mind = d;
+                closest_smpref = i;
+            }
         }
     }
 
     // fail if too far away
-    // Serial.printf ("mind2 = %g\n", mind2);
-    if (mind2 > MAX_R2) {
-        prev_return = false;
+    if (mind > MAX_DIST)
         return (false);
-    }
 
-    // create legitimate string
-    for (uint8_t i = 0; i < MAX_PREF_LEN; i++)
-        prefix[i] = (char) prefixes[closest_prefix].prefix[i];
-    prefix[MAX_PREF_LEN] = '\0';
-
-    // save result
-    memcpy (prev_prefix, prefix, MAX_PREF_LEN+1);
+    // save in prefix[] as legitimate string
+    memset (prefix, 0, MAX_PREF_LEN);
+    memcpy (prefix, small_prefs[closest_smpref].pref, SMALL_PREF_LEN);
 
     // good
-    prev_return = true;
     return (true);
 }
 
@@ -838,7 +822,7 @@ static void addCtyLine (char *line)
 
     // crack
     CtyLoc cl;
-    if (sscanf (line, "%10s %f %f", cl.call, &cl.lat_d, &cl.lng_d) != 3) {
+    if (sscanf (line, "%10s %f %f %d", cl.call, &cl.lat_d, &cl.lng_d, &cl.dxcc) != 4) {
         Serial.printf ("CTY: %s bad format: %s\n", cty_page, line);
         return;
     }
@@ -899,6 +883,36 @@ static bool loadCtyFile(void)
     return (cty_list != NULL);
 }
 
+/* search for best CtyLoc for the given prefix.
+ * return pointer else NULL
+ */
+static const CtyLoc *searchCty (const char *prefix)
+{
+    // start at radix then find longest cty_list call entry that starts with prefix.
+    const CtyLoc *candidate = NULL;
+    int radix_index = prefix[0] - '0';
+    if (radix_index >= 0 && radix_index < _N_RADIX) {
+        int start = cty_radix[radix_index];
+        int len_match = 0;
+        // printf ("********* %c start %d .. ", prefix[0], start);
+        for (int i = start; i < n_cty; i++) {
+            const CtyLoc *cp = &cty_list[i];
+            if (cp->call[0] != prefix[0]) {
+                // printf ("%d\n", i);
+                break;
+            }
+            if (strncmp (cp->call, prefix, cp->call_len) == 0) {
+                int cc_len = strlen(cp->call);
+                if (cc_len > len_match) {
+                    len_match = cc_len;
+                    candidate = cp;
+                }
+            }
+        }
+    }
+
+    return (candidate);
+}
 
 /* given a call sign or prefix find its lat/long by querying the cty table.
  * return whether successful.
@@ -914,28 +928,7 @@ bool call2LL (const char *call, LatLong &ll)
     char dx_call[NV_CALLSIGN_LEN];
     splitCallSign (call, home_call, dx_call);
 
-    // start at radix then find longest cty_list call entry that starts with dx_call.
-    const CtyLoc *candidate = NULL;
-    int radix_index = dx_call[0] - '0';
-    if (radix_index >= 0 && radix_index < _N_RADIX) {
-        int start = cty_radix[radix_index];
-        int len_match = 0;
-        // printf ("********* %c start %d .. ", dx_call[0], start);
-        for (int i = start; i < n_cty; i++) {
-            const CtyLoc *cp = &cty_list[i];
-            if (cp->call[0] != dx_call[0]) {
-                // printf ("%d\n", i);
-                break;
-            }
-            if (strncmp (cp->call, dx_call, cp->call_len) == 0) {
-                int cc_len = strlen(cp->call);
-                if (cc_len > len_match) {
-                    len_match = cc_len;
-                    candidate = cp;
-                }
-            }
-        }
-    }
+    const CtyLoc *candidate = searchCty (dx_call);
 
     if (candidate) {
         ll.lat_d = candidate->lat_d;
@@ -948,6 +941,35 @@ bool call2LL (const char *call, LatLong &ll)
             Serial.printf ("CTY: No location for %s AKA %s\n", dx_call, call);
         else
             Serial.printf ("CTY: No location for %s\n", call);
+        return (false);
+    }
+}
+
+/* given a call sign or prefix find its DXCC number by querying the cty table.
+ * return whether successful.
+ */
+bool call2DXCC (const char *call, int &dxcc)
+{
+    // check cty_list
+    if (!loadCtyFile())
+        return (false);
+
+    // use the dx end of a portable call
+    char home_call[NV_CALLSIGN_LEN];
+    char dx_call[NV_CALLSIGN_LEN];
+    splitCallSign (call, home_call, dx_call);
+
+    const CtyLoc *candidate = searchCty (dx_call);
+
+    if (candidate) {
+        dxcc = candidate->dxcc;
+        return (true);
+    } else {
+        // darn
+        if (strcmp (call, dx_call))
+            Serial.printf ("CTY: No DXCC for %s AKA %s\n", dx_call, call);
+        else
+            Serial.printf ("CTY: No DXCC for %s\n", call);
         return (false);
     }
 }

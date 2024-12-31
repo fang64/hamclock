@@ -572,7 +572,7 @@ typedef enum {
     NV_TITLE_RAINBOW,           // alternate callsign is rainbow
     NV_ONTA_MAXAGE,             // max ONTA spot age, mins
     NV_QRZID,                   // which bio source
-    NV_PREFERTITLE,             // whether to show title else call sign when not PTT
+    NV_CALLPREF,                // prefer call title or both
     NV_CSELONOFF,               // current ColorSelection bitmask set for on/off
 
     // 215
@@ -718,6 +718,7 @@ typedef struct {
 typedef enum {
     CT_CALL,                            // display real call
     CT_TITLE,                           // display title text
+    CT_BOTH,                            // alternate between call and title
     CT_ONAIR,                           // display ON AIR message
 } Call_t;
 typedef struct {
@@ -728,8 +729,9 @@ typedef struct {
     char call[NV_CALLSIGN_LEN];         // real callsign for CT_CALL, used by setup.cpp
     char onair[NV_ONAIR_LEN];           // real on-air message for CT_ONAIR, used by setup.cpp
     char title[NV_TITLE_LEN];           // CT_TITLE text if used
-    Call_t prefer;                      // CT_CALL or CT_TITLE set via menu
-    Call_t type;                        // current display state selector
+    Call_t ct_prefer;                   // CT_CALL CT_TITLE or CT_BOTH set via menu
+    Call_t now_showing;                 // displaying CT_CALL CT_TITLE or CT_ONAIR
+    time_t next_update;                 // when to rotate if ct_prefer is CT_BOTH
     CallColors_t call_col;
     CallColors_t title_col;
     CallColors_t onair_col;
@@ -881,7 +883,6 @@ extern const char *_FX_helper(const char *flash_string);
 
 extern char *stack_start;               // used to estimate stack usage
 
-#define MAX_PREF_LEN     4              // maximumm prefix length
 
 
 // touch screen actions
@@ -918,9 +919,10 @@ typedef struct {
 
 
 // DXSpot used in several places
-#define MAX_SPOTCALL_LEN                12      // including \0
-#define MAX_SPOTGRID_LEN                MAID_CHARLEN
-#define MAX_SPOTMODE_LEN                8
+#define MAX_PREF_LEN            6       // maximumm prefix length, including EOS
+#define MAX_SPOTCALL_LEN        12      // including \0
+#define MAX_SPOTGRID_LEN        MAID_CHARLEN
+#define MAX_SPOTMODE_LEN        8
 typedef struct {
 
     // adif:           "my_*" fields are considered RX
@@ -933,6 +935,9 @@ typedef struct {
     char rx_call[MAX_SPOTCALL_LEN];
     char rx_grid[MAX_SPOTGRID_LEN];
 
+    int tx_dxcc;
+    int rx_dxcc;
+
     char mode[MAX_SPOTMODE_LEN];        // operating mode
     LatLong rx_ll, tx_ll;               // locations
     float kHz;                          // freq
@@ -943,7 +948,7 @@ typedef struct {
 
 /*********************************************************************************************
  *
- * ESPHamClock.ino
+ * ESPHamClock.cpp
  *
  */
 
@@ -976,7 +981,7 @@ extern void setMapTagBox (const char *tag, const SCoord &c, uint16_t r, SBox &bo
 extern void drawMapTag (const char *tag, const SBox &box, uint16_t txt_color = RA8875_WHITE,
         uint16_t bg_color = RA8875_BLACK);
 extern void setDXPrefixOverride (char p[MAX_PREF_LEN]);
-extern bool getDXPrefix (char p[MAX_PREF_LEN+1]);
+extern bool getDXPrefix (char p[MAX_PREF_LEN]);
 extern void drawScreenLock(void);
 extern void fillSBox (const SBox &box, uint16_t color);
 extern void drawSBox (const SBox &box, uint16_t color);
@@ -1069,11 +1074,15 @@ extern bool from_set_adif;
 extern void updateADIF (const SBox &box, bool fresh);
 extern bool checkADIFTouch (const SCoord &s, const SBox &box);
 extern void drawADIFSpotsOnMap (void);
-extern void loadADIFFile (GenReader &gr, long gr_len, const char *name, const SBox &box, int &n_good, int &n_bad);
+extern void loadADIFFile (GenReader &gr, long gr_len, int &n_good, int &n_bad);
+extern void freshenADIFFile (void);
+extern void drawADIFPane (const SBox &box, const char *filename);
 extern bool getClosestADIFSpot (const LatLong &ll, DXSpot *sp, LatLong *llp);
-extern void cleanADIF(void);
 extern bool checkADIFFilename (const char *fn, char *ynot, size_t n_ynot);
 extern bool getADIFPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll);
+extern bool onADIFList (const DXSpot &spot, bool chk_dxcc, bool chk_grid, bool chk_pref, bool chk_band);
+
+
 
 
 
@@ -1089,16 +1098,6 @@ extern bool askNewPos (const SBox &b, LatLong &ll, char grid[MAID_CHARLEN]);
 
 
 
-/*********************************************************************************************
- *
- * askpasswd.cpp
- *
- */
-
-extern bool askPasswd (const char *category, bool restore);
-
-
-
 
 /*********************************************************************************************
  *
@@ -1107,12 +1106,12 @@ extern bool askPasswd (const char *category, bool restore);
  */
 
 typedef struct {
-    float az, el;               // topocentric, rads
-    float ra, dec;              // geocentric EOD, rads
-    float gha;                  // geocentric rads
-    float dist;                 // geocentric km
-    float vel;                  // topocentric m/s
-    float phase;                // rad angle from new
+    float az, el;                               // topocentric, rads
+    float ra, dec;                              // geocentric EOD, rads
+    float gha;                                  // geocentric rads
+    float dist;                                 // geocentric km
+    float vel;                                  // topocentric m/s
+    float phase;                                // rad angle from new
 } AstroCir;
 
 extern AstroCir lunar_cir, solar_cir;
@@ -1126,6 +1125,45 @@ extern void getLunarRS (const time_t t0, const LatLong &ll, time_t *riset, time_
 #define SECSPERDAY              (3600*24L)      // seconds per day
 #define MINSPERDAY              (24*60)         // minutes per day
 #define DAYSPERWEEK             7               // days per week
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * bands.cpp
+ *
+ */
+
+typedef enum {
+    HAMBAND_160M,
+    HAMBAND_80M,
+    HAMBAND_60M,
+    HAMBAND_40M,
+    HAMBAND_30M,
+    HAMBAND_20M,
+    HAMBAND_17M,
+    HAMBAND_15M,
+    HAMBAND_12M,
+    HAMBAND_10M,
+    HAMBAND_6M,
+    HAMBAND_2M,
+    HAMBAND_N
+} HamBandSetting;
+
+#define HAMBAND_NONE HAMBAND_N                  // handy impossible alias
+
+extern int findBandEdges (HamBandSetting h, const char *mode, float min_kHz[], float max_kHz[], int n_kHz);
+extern HamBandSetting findHamBand (float kHz);
+extern HamBandSetting findHamBand (int meters);
+extern ColorSelection findColSel (HamBandSetting h);
+extern const char *findBandName (HamBandSetting h);
+extern bool isValidSubBand (const char *mode);
+
+
+
+
 
 
 
@@ -1203,7 +1241,7 @@ extern FILE *openCachedFile (const char *fn, const char *url, long max_age);
  */
 extern void initCallsignInfo(void);
 extern void doCallsignTouch (const SCoord &s);
-extern void drawCallsign (bool all);
+extern void updateCallsign (bool force_draw);
 extern void setOnAirHW (bool on);
 extern void setOnAirSW (bool on);
 extern void setCallsignInfo (Call_t t, const char *text, uint16_t *fg, uint16_t *bg, uint8_t *rainbow);
@@ -1330,6 +1368,41 @@ extern void plotCPUTempHistory (void);
 
 /*********************************************************************************************
  *
+ * debug.cpp
+ *
+ */
+
+
+/* define debug subsystems 
+ */
+#define DEBUG_SUBSYS                    \
+    X(DEBUG_ADIF,   "ADIF")             \
+    X(DEBUG_BC,     "BigClock")         \
+    X(DEBUG_DXC,    "dxcluster")        \
+    X(DEBUG_GIMBAL, "gimbal")           \
+    X(DEBUG_WEB,    "live-web")         \
+    X(DEBUG_MENUS,  "menus")            \
+    X(DEBUG_NMEA,   "NMEA")             \
+    X(DEBUG_RADIO,  "radio")            \
+    X(DEBUG_WL,     "watchlist")
+
+#define X(a,b) a,               // expands DEBUG_SUBSYS to each enum and comma
+typedef enum {
+    DEBUG_SUBSYS
+    DEBUG_SUBSYS_N
+} DebugSubsys;
+#undef X
+
+extern bool setDebugLevel (const char *name, int level);
+extern void prDebugLevels (WiFiClient &client, int indent);
+extern bool debugLevel (DebugSubsys s, int level);
+
+
+
+
+
+/*********************************************************************************************
+ *
  * drawextra.cpp
  *
  */
@@ -1370,6 +1443,12 @@ extern bool sendDXClusterDELLGrid(void);
 extern bool getClosestDXCluster (const LatLong &ll, DXSpot *sp, LatLong *llp);
 extern bool getDXCPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll);
 extern void cleanDXCluster(void);
+
+#if defined(__GNUC__)
+extern void dxcLog (const char *fmt, ...) __attribute__ ((format (__printf__, 1, 2)));
+#else   
+extern void dxcLog (const char *fmt, ...);
+#endif   
 
 
 
@@ -1508,7 +1587,7 @@ typedef struct _sat_now {
     _sat_now() { name[0] = '\0'; }      // constructor to insure name properly empty
 } SatNow;
 #define SAT_NOAZ        (-999)          // error flag for raz or saz
-#define SAT_MIN_EL      0.0F            // min elevation
+#define SAT_MIN_EL      -0.4F           // min elevation, rough approx for refraction
 #define TLE_LINEL       70              // TLE line length, including EOS
 
 extern void updateSatPath(void);
@@ -1527,6 +1606,7 @@ extern bool setSatFromName (const char *new_name);
 extern bool setSatFromTLE (const char *name, const char *t1, const char *t2);
 extern bool initSatSelection(void);
 extern bool getSatNow (SatNow &satnow);
+extern bool getSatCir (Observer *snow_obs, time_t t0, SatNow &sat_at_t0);
 extern bool isNewPass(void);
 extern bool isSatMoon(void);
 extern const char **getAllSatNames(void);
@@ -1815,7 +1895,6 @@ typedef struct _menu_text {
     size_t t_mem;               // total text[] memory (string may be shorter)
     char *label;                // mutable "label" memory replaces const MenuItem label, must include EOS
     size_t l_mem;               // total label[] memory (string may be shorter)
-    unsigned w_len;             // n character positions in menu window
     bool to_upper;              // whether to always shift entries to upper case
     unsigned c_pos;             // text[] cursor position index
     unsigned w_pos;             // text[] left window position index
@@ -2042,6 +2121,35 @@ extern bool isONTARotating (void);
 
 
 
+/*********************************************************************************************
+ *
+ * parsespot.cpp
+ *
+ */
+
+extern bool crackClusterSpot (char line[], DXSpot &spot);
+extern bool wsjtxIsStatusMsg (uint8_t **bpp);
+extern bool wsjtxParseStatusMsg (uint8_t *msg, DXSpot &spot);
+extern bool crackN1MMSpot (const char xml[], DXSpot &spot);
+extern bool crackDXLogSpot (const char xml[], DXSpot &spot);
+
+
+
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * passwd.cpp
+ *
+ */
+
+extern bool askPasswd (const char *category, bool restore);
+
+
+
 
 
 /*********************************************************************************************
@@ -2153,8 +2261,9 @@ extern void restoreNormPANE0(void);
  *
  */
 
-extern bool ll2Prefix (const LatLong &ll, char prefix[MAX_PREF_LEN+1]);
+extern bool ll2Prefix (const LatLong &ll, char prefix[MAX_PREF_LEN]);
 extern bool call2LL (const char *call, LatLong &ll);
+extern bool call2DXCC (const char *call, int &dxcc);
 extern void findCallPrefix (const char *call, char prefix[MAX_PREF_LEN]);
 extern void splitCallSign (const char *call, char home_call[NV_CALLSIGN_LEN], char dx_call[NV_CALLSIGN_LEN]);
 
@@ -2206,10 +2315,10 @@ extern void initPSKState(void);
 extern void savePSKState(void);
 extern void drawFarthestPSKSpots(void);
 extern bool maxPSKageOk (int m);
-extern uint16_t getBandColor (long Hz);
-extern bool getBandPathDashed (long Hz);
-extern int getRawBandPathWidth (long Hz);
-extern int getRawBandSpotRadius (long Hz);
+extern uint16_t getBandColor (float kHz);
+extern bool getBandPathDashed (float kHz);
+extern int getRawBandPathWidth (float kHz);
+extern int getRawBandSpotRadius (float kHz);
 extern void drawPSKPaths (void);
 extern void getPSKSpots (const DXSpot* &rp, int &n_rep);
 extern bool getClosestPSK (const LatLong &ll, DXSpot *sp, LatLong *mark_ll);
@@ -2311,6 +2420,17 @@ extern void drawSanta(void);
 extern void drawFireworks(void);
 extern SBox santa_b;
 
+
+
+
+
+/*********************************************************************************************
+ *
+ * sattool.cpp
+ *
+ */
+
+extern void drawSatTool (void);
 
 
 
@@ -2805,40 +2925,7 @@ extern float simpleSphereDist (const LatLong &ll1, const LatLong &ll2);
  */
 
 #define MAXDUP_DT       (5*60)                  // 2 spots are dups if this close in time, secs
-
-/* band edges, name and color setup reference
- */
-typedef struct {
-    int min_kHz, max_kHz;                       // band edges
-    const char *name;                           // common name
-    ColorSelection cid;                         // get color from setup
-} BandEdge;
-
-#define _HAM_BANDS                                                \
-    X(HAMBAND_160M,  1800,   2000,  "160",  BAND160_CSPR)         \
-    X(HAMBAND_80M,   3500,   4000,  "80",   BAND80_CSPR)          \
-    X(HAMBAND_60M,   5330,   5410,  "60",   BAND60_CSPR)          \
-    X(HAMBAND_40M,   7000,   7300,  "40",   BAND40_CSPR)          \
-    X(HAMBAND_30M,  10100,  10150,  "30",   BAND30_CSPR)          \
-    X(HAMBAND_20M,  14000,  14350,  "20",   BAND20_CSPR)          \
-    X(HAMBAND_17M,  18068,  18168,  "17",   BAND17_CSPR)          \
-    X(HAMBAND_15M,  21000,  21450,  "15",   BAND15_CSPR)          \
-    X(HAMBAND_12M,  24890,  24990,  "12",   BAND12_CSPR)          \
-    X(HAMBAND_10M,  28000,  29700,  "10",   BAND10_CSPR)          \
-    X(HAMBAND_6M,   50000,  54000,  "6",    BAND6_CSPR)           \
-    X(HAMBAND_2M,  144000, 148000,  "2",    BAND2_CSPR)
-
-#define X(a,b,c,d,e) a,                         // expands _HAM_BANDS to each enum and comma
-typedef enum {
-    _HAM_BANDS
-    HAMBAND_N
-} HamBandSetting;
-#undef X
-
-#define HAMBAND_NONE HAMBAND_N                  // handy alias
-
-extern const BandEdge ham_bands[HAMBAND_N];
-extern HamBandSetting findHamBand (long Hz);
+#define MAXDUP_DF       (0.1F)                  // 2 spots are dups if this close in frequency, kHz
 
 extern bool getClosestSpot (const DXSpot *list, int n_list, LabelOnMapEnd which_ends, const LatLong &ll,
     DXSpot *sp, LatLong *llp);
@@ -2853,14 +2940,12 @@ extern void drawVisibleSpots (WatchListId wl_id, const DXSpot *spots, const Scro
 typedef int (*PQSF)(const void *, const void *);        // pointer to qsort-style compare function
 
 extern int qsDXCFreq (const void *v1, const void *v2);
-extern int qsDXCRXCall (const void *v1, const void *v2);
 extern int qsDXCRXGrid (const void *v1, const void *v2);
 extern int qsDXCTXCall (const void *v1, const void *v2);
 extern int qsDXCSpotted (const void *v1, const void *v2);
 extern int qsDXCDist (const void *v1, const void *v2);
 
 extern bool getPSKBandStats (PSKBandStats stats[HAMBAND_N], const char *names[HAMBAND_N]);
-extern bool checkDXDup (const DXSpot &s1, const DXSpot &s2);
 
 
 
@@ -3008,9 +3093,13 @@ extern void setTZAuto (TZInfo &tz);
  *
  */
 
+extern char NOTADIFDXCC_KW[];
+extern char NOTADIFPREF_KW[];
+extern char NOTADIFBAND_KW[];
+extern char NOTADIFPREF_KW[];
+
 extern WatchListShow checkWatchListSpot (WatchListId wl_id, const DXSpot &dxsp);
 extern bool compileWatchList (WatchListId wl_id, const char *new_wlstr, char ynot[], size_t n_ynot);
-extern bool compileTestWatchList (const char *new_wlstr, char ynot[], size_t n_ynot);
 extern void setupWLMenuText (WatchListId wl_id, MenuText &mt, const SBox &box, char state[WLA_MAXLEN]);
 extern char *wlCompress (char *spec);
 extern bool wlIdOk (WatchListId wl_id);
@@ -3060,6 +3149,8 @@ extern bool bypass_pw;
 #define DEWX_INTERVAL           (1700)                  // polling interval, secs
 #define DXWX_INTERVAL           (1600)                  // polling interval, secs
 #define OTHER_MAPS_INTERVAL     (1800)                  // polling interval, secs
+#define ROTATION_INTERVAL       (getPaneRotationPeriod()) // handy pane auto rotation period in seconds
+
 
 
 

@@ -192,6 +192,9 @@ static void drawONTAVisSpots (const SBox &box)
 {
     // can't quite use drawVisibleSpots() because of unique formatting :-(
 
+    // update ADIF in case our WL uses it
+    freshenADIFFile();
+
     // init and reset to black
     uint16_t x = box.x + 1;
     uint16_t y0 = box.y + LISTING_Y0;
@@ -225,7 +228,7 @@ static void drawONTAVisSpots (const SBox &box)
                     tft.fillRect (x, y-LISTING_OS, box.w-2, LISTING_DY-2, RA8875_RED);
 
                 // show freq with proper band map color background
-                uint16_t bg_col = getBandColor ((long)(spot.kHz*1000));           // wants Hz
+                uint16_t bg_col = getBandColor (spot.kHz);
                 uint16_t txt_col = getGoodTextColor (bg_col);
                 tft.setTextColor(txt_col);
                 tft.fillRect (x, y-LISTING_OS, freq_len*6, LISTING_DY-2, bg_col);
@@ -336,6 +339,9 @@ static void engageONTARow (DXSpot &s)
  */
 static void rebuildONTAWatchList(void)
 {
+    // update ADIF in case our WL uses it
+    freshenADIFFile();
+
     // extract qualifying spots from onta_spots into ontawl_spots
     time_t oldest = myNow() - 60*onta_age;               // minutes to seconds
     onta_ss.n_data = 0;                                  // reset count, don't bother to resize ontawl_spots
@@ -397,7 +403,6 @@ static void runONTASortMenu (const SBox &box)
     org_mt.label = org_label;
     org_mt.l_mem = sizeof(org_label);                           // including EOS
     org_mt.c_pos = org_mt.w_pos = 0;                            // start at left
-    org_mt.w_len = wl_mt.w_len;                                 // same as wl
     org_mt.to_upper = true;
 
     // build the possible age labels
@@ -443,7 +448,7 @@ static void runONTASortMenu (const SBox &box)
     SBox menu_b = box;                          // copy, not ref!
     menu_b.x = box.x + 5;
     menu_b.y = box.y + SUBTITLE_Y0;
-    menu_b.w = 0;                               // shrink to fit
+    menu_b.w = box.w - 10;                      // pretty much full widt:
     SBox ok_b;
     MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 3, ONTAMENU_N, mitems};
     if (runMenu (menu)) {
@@ -542,8 +547,13 @@ static bool retrieveONTA (void)
         while (fgets (line, sizeof(line), fp)) {
 
             // skip comments
-            if (line[0] == '#')
+            if (line[0] == '#' || line[0] == '\0')
                 continue;
+
+            // rm trailing \n
+            char *nl = strchr (line, '\n');
+            if (nl)
+                *nl = '\0';
 
             // prep next spot but don't count until known good
             onta_spots = (DXSpot*) realloc (onta_spots, (n_ontaspots+1)*sizeof(DXSpot));
@@ -578,9 +588,16 @@ static bool retrieveONTA (void)
                 continue;
             }
 
-            // ignore GHz spots because they are too wide to print ;-)
-            if (hz >= 1000000000U) {
-                Serial.printf ("ONTA: ignoring freq >= 1 GHz: %s\n", line);
+            // check valid freq
+            float kHz = hz * 1e-3F;
+            if (findHamBand (kHz) == HAMBAND_NONE) {
+                Serial.printf ("ONTA: ignoring freq: %s\n", line);
+                continue;
+            }
+
+            // DXCC
+            if (!call2DXCC (dxcall, new_sp.tx_dxcc)) {
+                Serial.printf ("ONTA: no DXCC for %s\n", dxcall);
                 continue;
             }
 
@@ -594,7 +611,7 @@ static bool retrieveONTA (void)
             new_sp.tx_ll.lat_d = lat_d;
             new_sp.tx_ll.lng_d = lng_d;
             normalizeLL (new_sp.tx_ll);
-            new_sp.kHz = hz * 1e-3F;
+            new_sp.kHz = kHz;
             new_sp.spotted = unx;
 
             // ok! append to spots[]

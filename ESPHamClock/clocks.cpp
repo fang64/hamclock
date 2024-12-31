@@ -951,8 +951,6 @@ int utcOffset()
  */
 void updateClocks(bool all)
 {
-    char buf[32];
-
     // ignore if disabled
     if (hide_clocks)
         return;
@@ -961,6 +959,14 @@ void updateClocks(bool all)
     time_t t_wo = nowWO();
     if ((t_wo%60) == prev_sc && !all)
         return;
+
+    // preserve caller's font
+    FontWeight fw;
+    FontSize fs;
+    getFontStyle (&fw, &fs);
+
+    // misc
+    char buf[32];
 
     // break into components
     tmElements_t tm_wo;
@@ -1112,6 +1118,9 @@ void updateClocks(bool all)
     // flash UTC if not current
     if (utc_offset != 0 || !clockTimeOk())
         drawUTCButton();
+
+    // restore caller's font
+    selectFontStyle (fw, fs);
 }
 
 /* draw DE sun rise and set info

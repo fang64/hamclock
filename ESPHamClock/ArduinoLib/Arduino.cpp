@@ -276,6 +276,14 @@ static void logSys()
         for (int i = 0; i < n_env; i++)
             printf ("  %s\n", env_sort[i]);
         free (env_sort);
+
+        // host time
+        if (system ("date -u"))
+            printf ("can not run date??\n");
+
+        // disk
+        if (system ("df -h ."))
+            printf ("can not run df??\n");
 }
 
 /* log easy OS info
@@ -341,7 +349,6 @@ static void usage (const char *errfmt, ...)
             fprintf (stderr, "Built as %s\n", our_make);
             fprintf (stderr, "Options:\n");
             fprintf (stderr, " -0   : remove eeprom file to restore all default values\n");
-            fprintf (stderr, " -a l : set debug level\n");
             fprintf (stderr, " -b h : set backend host:port to h; default is %s:%d\n", backend_host,
                                     backend_port);
             fprintf (stderr, " -d d : set working directory to d; default is %s\n", defaultAppDir().c_str());
@@ -392,12 +399,6 @@ static void crackArgs (int ac, char *av[])
                 switch (*s) {
                 case '0':
                     rm_eeprom = true;
-                    break;
-                case 'a':
-                    if (ac < 2)
-                        usage ("missing trace level for -a");
-                    gimbal_trace_level = atoi(*++av);
-                    ac--;
                     break;
                 case 'b': {
                         if (ac < 2)

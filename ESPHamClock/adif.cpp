@@ -1,30 +1,37 @@
 /* support for the ADIF file pane and mapping.
  * based on https://www.adif.org/314/ADIF_314.htm
  * pane layout and operations are similar to dxcluster.
+ * 
+ * debug guidelines:
+ *   level 1: log each successful spot, no errors
+ *   level 2: 1+ errors in final check
+ *   level 3: 2+ all else
  */
 
 #include "HamClock.h"
 
-static bool verbose = false;                            // debug info -- RBF
 
 #define ADIF_COLOR      RGB565 (255,228,225)            // misty rose
 
 
 // tables of sort enum ids and corresponding qsort compare functions -- use X trick to insure in sync
 
-#define _ADIF_SORTS             \
+#define ADIF_SORTS              \
     X(ADS_AGE, qsDXCSpotted)    \
     X(ADS_DIST, qsDXCDist)      \
+    X(ADS_CALL, qsDXCTXCall)    \
+    X(ADS_BAND, qsDXCFreq)
 
 #define X(a,b) a,                                       // expands X to each enum value and comma
 typedef enum {
-    _ADIF_SORTS
+    ADIF_SORTS
+    ADIF_SORTS_N
 } ADIFSorts;                                            // enum of each sort function
 #undef X
 
 #define X(a,b) b,                                       // expands X to each function pointer and comma
-static PQSF adif_pqsf[] = {                             // sort functions, in order of ADIFSorts
-    _ADIF_SORTS
+static PQSF adif_pqsf[ADIF_SORTS_N] = {                 // sort functions, in order of ADIFSorts
+    ADIF_SORTS
 };
 #undef X
 
@@ -59,8 +66,10 @@ class FileSignature
                 changed = fn_mtime != mtime || fn_len != len;
                 mtime = fn_mtime;
                 len = fn_len;
-            } else
+            } else {
+                Serial.printf ("ADIF: stat(%s): %s\n", fn, strerror(errno));
                 reset();
+            }
             return (changed);
         }
 
@@ -81,7 +90,6 @@ static bool showing_set_adif;                           // set when not checking
 static bool newfile_pending;                            // set when find new file while scrolled away
 static FileSignature fsig;                              // used to decide whether to read file again
 static int n_adif_bad;                                  // n bad spots found, global to maintain context
-
 
 
 /***********************************************************************************************************
@@ -107,6 +115,7 @@ typedef enum {
 typedef enum {
     AFB_BAND,
     AFB_CALL,
+    AFB_DXCC,
     AFB_CONTACTED_OP,
     AFB_FREQ,
     AFB_GRIDSQUARE,
@@ -116,6 +125,7 @@ typedef enum {
     AFB_MY_GRIDSQUARE,
     AFB_MY_LAT,
     AFB_MY_LON,
+    AFB_MY_DXCC,
     AFB_OPERATOR,
     AFB_QSO_DATE,
     AFB_STATION_CALLSIGN,
@@ -149,8 +159,8 @@ static bool parseDT2UNIX (const char *date, const char *tim, time_t &unix)
 {
     int yr, mo, dd, hh, mm, ss = 0;
     if (sscanf (date, "%4d%2d%2d", &yr, &mo, &dd) != 3 || sscanf (tim, "%2d%2d%2d", &hh, &mm, &ss) < 2) {
-        if (verbose)
-            Serial.printf ("ADIF trace: parseDT2UNIX(%s, %s) failed\n", date, tim);
+        if (debugLevel (DEBUG_ADIF, 2))
+            Serial.printf ("ADIF: parseDT2UNIX(%s, %s) failed\n", date, tim);
         return (false);
     }
 
@@ -163,8 +173,8 @@ static bool parseDT2UNIX (const char *date, const char *tim, time_t &unix)
     tm.Second = ss;
     unix = makeTime(tm);
 
-    if (verbose)
-        Serial.printf ("ADIF trace: spotted %s %s -> %ld\n", date, tim, (long)unix);
+    if (debugLevel (DEBUG_ADIF, 3))
+        Serial.printf ("ADIF: spotted %s %s -> %ld\n", date, tim, (long)unix);
 
     return (true);
 }
@@ -265,7 +275,8 @@ static bool addADIFFIeld (ADIFParser &adif, DXSpot &spot)
 
     } else if (!strcasecmp (adif.name, "MY_GRIDSQUARE")) {
         if (!maidenhead2ll (spot.rx_ll, adif.value)) {
-            Serial.printf ("ADIF: line %d bogus MY_GRIDSQUARE %s\n", adif.line_n, adif.value);
+            if (debugLevel (DEBUG_ADIF, 3))
+                Serial.printf ("ADIF: line %d bogus MY_GRIDSQUARE %s\n", adif.line_n, adif.value);
             return (false);
         }
         ADD_AFB (adif, AFB_MY_GRIDSQUARE);
@@ -275,7 +286,8 @@ static bool addADIFFIeld (ADIFParser &adif, DXSpot &spot)
     } else if (!strcasecmp (adif.name, "MY_LAT")) {
         if (!parseADIFLocation (adif.value, spot.rx_ll.lat_d)
                                         || spot.rx_ll.lat_d < -90 || spot.rx_ll.lat_d > 90) {
-            Serial.printf ("ADIF: line %d bogus MY_LAT %s\n", adif.line_n, adif.value);
+            if (debugLevel (DEBUG_ADIF, 3))
+                Serial.printf ("ADIF: line %d bogus MY_LAT %s\n", adif.line_n, adif.value);
             return (false);
         }
         ADD_AFB (adif, AFB_MY_LAT);
@@ -283,10 +295,19 @@ static bool addADIFFIeld (ADIFParser &adif, DXSpot &spot)
     } else if (!strcasecmp (adif.name, "MY_LON")) {
         if (!parseADIFLocation (adif.value, spot.rx_ll.lng_d)
                                         || spot.rx_ll.lng_d < -180 || spot.rx_ll.lng_d > 180) {
-            Serial.printf ("ADIF: line %d bogus MY_LON %s\n", adif.line_n, adif.value);
+            if (debugLevel (DEBUG_ADIF, 3))
+                Serial.printf ("ADIF: line %d bogus MY_LON %s\n", adif.line_n, adif.value);
             return (false);
         }
         ADD_AFB (adif, AFB_MY_LON);
+
+    } else if (!strcasecmp (adif.name, "MY_DXCC")) {
+        ADD_AFB (adif, AFB_MY_DXCC);
+        spot.rx_dxcc = atoi (adif.value);
+
+    } else if (!strcasecmp (adif.name, "DXCC")) {
+        ADD_AFB (adif, AFB_DXCC);
+        spot.tx_dxcc = atoi (adif.value);
 
     } else if (!strcasecmp (adif.name, "CALL")) {
         ADD_AFB (adif, AFB_CALL);
@@ -301,7 +322,8 @@ static bool addADIFFIeld (ADIFParser &adif, DXSpot &spot)
     } else if (!strcasecmp (adif.name, "QSO_DATE")) {
         if (CHECK_AFB (adif, AFB_TIME_ON)) {
             if (!parseDT2UNIX (adif.value, adif.time_on, spot.spotted)) {
-                Serial.printf ("ADIF: line %d bogus QSO_DATE %s or TIME_ON %s\n", adif.line_n,
+                if (debugLevel (DEBUG_ADIF, 3))
+                    Serial.printf ("ADIF: line %d bogus QSO_DATE %s or TIME_ON %s\n", adif.line_n,
                                                 adif.value, adif.time_on);
                 return (false);
             }
@@ -313,7 +335,8 @@ static bool addADIFFIeld (ADIFParser &adif, DXSpot &spot)
     } else if (!strcasecmp (adif.name, "TIME_ON")) {
         if (CHECK_AFB (adif, AFB_QSO_DATE)) {
             if (!parseDT2UNIX (adif.qso_date, adif.value, spot.spotted)) {
-                Serial.printf ("ADIF: line %d bogus TIME_ON %s or QSO_DATE %s\n", adif.line_n,
+                if (debugLevel (DEBUG_ADIF, 3))
+                    Serial.printf ("ADIF: line %d bogus TIME_ON %s or QSO_DATE %s\n", adif.line_n,
                                                 adif.value, adif.qso_date);
                 return (false);
             }
@@ -325,7 +348,8 @@ static bool addADIFFIeld (ADIFParser &adif, DXSpot &spot)
     } else if (!strcasecmp (adif.name, "BAND")) {
         // don't use BAND if FREQ already set
         if (!CHECK_AFB (adif, AFB_FREQ) && !parseADIFBand (adif.value, spot.kHz)) {
-            Serial.printf ("ADIF: line %d unknown band %s\n", adif.line_n, adif.value);
+            if (debugLevel (DEBUG_ADIF, 3))
+                Serial.printf ("ADIF: line %d unknown band %s\n", adif.line_n, adif.value);
             return (false);
         }
         ADD_AFB (adif, AFB_BAND);
@@ -333,8 +357,9 @@ static bool addADIFFIeld (ADIFParser &adif, DXSpot &spot)
 
     } else if (!strcasecmp (adif.name, "FREQ")) {
         spot.kHz = 1e3 * atof(adif.value); // ADIF stores MHz
-        if (spot.kHz <= 0) {
-            Serial.printf ("ADIF: line %d bogus FREQ %s\n", adif.line_n, adif.value);
+        if (findHamBand (spot.kHz) == HAMBAND_NONE) {
+            if (debugLevel (DEBUG_ADIF, 3))
+                Serial.printf ("ADIF: line %d bogus FREQ %s\n", adif.line_n, adif.value);
             return (false);
         }
         ADD_AFB (adif, AFB_FREQ);
@@ -347,7 +372,8 @@ static bool addADIFFIeld (ADIFParser &adif, DXSpot &spot)
 
     } else if (!strcasecmp (adif.name, "GRIDSQUARE")) {
         if (!maidenhead2ll (spot.tx_ll, adif.value)) {
-            Serial.printf ("ADIF: line %d bogus GRIDSQUARE %s\n", adif.line_n, adif.value);
+            if (debugLevel (DEBUG_ADIF, 3))
+                Serial.printf ("ADIF: line %d bogus GRIDSQUARE %s\n", adif.line_n, adif.value);
             return (false);
         }
         ADD_AFB (adif, AFB_GRIDSQUARE);
@@ -358,7 +384,8 @@ static bool addADIFFIeld (ADIFParser &adif, DXSpot &spot)
     } else if (!strcasecmp (adif.name, "LAT")) {
         if (!parseADIFLocation (adif.value, spot.tx_ll.lat_d)
                                         || spot.tx_ll.lat_d < -90 || spot.tx_ll.lat_d > 90) {
-            Serial.printf ("ADIF: line %d bogus LAT %s\n", adif.line_n, adif.value);
+            if (debugLevel (DEBUG_ADIF, 3))
+                Serial.printf ("ADIF: line %d bogus LAT %s\n", adif.line_n, adif.value);
             return (false);
         }
         ADD_AFB (adif, AFB_LAT);
@@ -367,7 +394,8 @@ static bool addADIFFIeld (ADIFParser &adif, DXSpot &spot)
     } else if (!strcasecmp (adif.name, "LON")) {
         if (!parseADIFLocation (adif.value, spot.tx_ll.lng_d)
                                         || spot.tx_ll.lng_d < -180 || spot.tx_ll.lng_d > 180) {
-            Serial.printf ("ADIF: line %d bogus LON %s\n", adif.line_n, adif.value);
+            if (debugLevel (DEBUG_ADIF, 3))
+                Serial.printf ("ADIF: line %d bogus LON %s\n", adif.line_n, adif.value);
             return (false);
         }
         ADD_AFB (adif, AFB_LON);
@@ -375,11 +403,11 @@ static bool addADIFFIeld (ADIFParser &adif, DXSpot &spot)
     } else 
         useful_field = false;
 
-    if (verbose) {
+    if (debugLevel (DEBUG_ADIF, 3)) {
         if (useful_field)
-            Serial.printf ("ADIF trace: added <%s:%d>%s\n", adif.name, adif.value_seen, adif.value);
+            Serial.printf ("ADIF: added <%s:%d>%s\n", adif.name, adif.value_seen, adif.value);
         else
-            Serial.printf ("ADIF trace: unused field <%s:%d>%s\n", adif.name, adif.value_seen, adif.value);
+            Serial.printf ("ADIF: unused field <%s:%d>%s\n", adif.name, adif.value_seen, adif.value);
     }
 
     // keep going
@@ -392,22 +420,26 @@ static bool addADIFFIeld (ADIFParser &adif, DXSpot &spot)
 static bool spotLooksGood (ADIFParser &adif, DXSpot &spot)
 {
     if (! (CHECK_AFB(adif, AFB_CALL) || CHECK_AFB(adif, AFB_CONTACTED_OP)) ) {
-        Serial.printf ("ADIF: line %d No CALL or CONTACTED_OP\n", adif.line_n);
+        if (debugLevel (DEBUG_ADIF, 2))
+            Serial.printf ("ADIF: line %d No CALL or CONTACTED_OP\n", adif.line_n);
         return (false);
     }
 
     if (! (CHECK_AFB(adif, AFB_FREQ) || CHECK_AFB(adif, AFB_BAND)) ) {
-        Serial.printf ("ADIF: line %d No FREQ or BAND\n", adif.line_n);
+        if (debugLevel (DEBUG_ADIF, 2))
+            Serial.printf ("ADIF: line %d No FREQ or BAND\n", adif.line_n);
         return (false);
     }
 
     if (! (CHECK_AFB(adif, AFB_QSO_DATE)) ) {
-        Serial.printf ("ADIF: line %d No QSO_DATE\n", adif.line_n);
+        if (debugLevel (DEBUG_ADIF, 2))
+            Serial.printf ("ADIF: line %d No QSO_DATE\n", adif.line_n);
         return (false);
     }
 
     if (! (CHECK_AFB(adif, AFB_TIME_ON)) ) {
-        Serial.printf ("ADIF: line %d No TIME_ON\n", adif.line_n);
+        if (debugLevel (DEBUG_ADIF, 2))
+            Serial.printf ("ADIF: line %d No TIME_ON\n", adif.line_n);
         return (false);
     }
 
@@ -415,68 +447,98 @@ static bool spotLooksGood (ADIFParser &adif, DXSpot &spot)
     if (!CHECK_AFB(adif,AFB_LAT) || !CHECK_AFB(adif,AFB_LON)) {
         if (CHECK_AFB(adif,AFB_GRIDSQUARE)) {
             if (!maidenhead2ll (spot.tx_ll, spot.tx_grid)) {
-                Serial.printf ("ADIF: line %d bogus grid %s for %s\n", adif.line_n,spot.tx_grid,spot.tx_call);
+                if (debugLevel (DEBUG_ADIF, 2))
+                    Serial.printf ("ADIF: line %d bogus grid %s for %s\n", adif.line_n,spot.tx_grid,spot.tx_call);
                 return (false);
             }
-            if (verbose)
-                Serial.printf ("ADIF: trace line %d: add ll for %s from grid %s\n", adif.line_n, spot.tx_call,
+            if (debugLevel (DEBUG_ADIF, 3))
+                Serial.printf ("ADIF: line %d: add ll for %s from grid %s\n", adif.line_n, spot.tx_call,
                                             spot.tx_grid);
         } else {
             if (!call2LL (spot.tx_call, spot.tx_ll)) {
-                Serial.printf ("ADIF: line %d No GRIDSQUARE LAT or LON and cty lookup for %s failed\n",
+                if (debugLevel (DEBUG_ADIF, 2))
+                    Serial.printf ("ADIF: line %d No GRIDSQUARE LAT or LON and cty lookup for %s failed\n",
                                     adif.line_n, spot.tx_call);
                 return (false);
             }
-            if (verbose)
-                Serial.printf ("ADIF: trace line %d: add ll for %s from cty\n", adif.line_n, spot.tx_call);
+            if (debugLevel (DEBUG_ADIF, 3))
+                Serial.printf ("ADIF: line %d: add ll for %s from cty\n", adif.line_n, spot.tx_call);
         }
     }
 
     // at this point we know we have tx_ll so might as well add tx_grid if not already
     if (!CHECK_AFB(adif,AFB_GRIDSQUARE)) {
         ll2maidenhead (spot.tx_grid, spot.tx_ll);
-        if (verbose)
-            Serial.printf ("ADIF: trace line %d: add grid %s for %s from ll\n", adif.line_n, spot.tx_grid,
+        if (debugLevel (DEBUG_ADIF, 3))
+            Serial.printf ("ADIF: line %d: add grid %s for %s from ll\n", adif.line_n, spot.tx_grid,
                                             spot.tx_call);
     }
 
     if (!CHECK_AFB(adif, AFB_MODE)) {
-        Serial.printf ("ADIF: line %d No MODE\n", adif.line_n);
+        if (debugLevel (DEBUG_ADIF, 2))
+            Serial.printf ("ADIF: line %d No MODE\n", adif.line_n);
         return (false);
     }
 
 
-    if (! (CHECK_AFB(adif, AFB_OPERATOR) || CHECK_AFB(adif, AFB_STATION_CALLSIGN)) )
+    if (! (CHECK_AFB(adif, AFB_OPERATOR) || CHECK_AFB(adif, AFB_STATION_CALLSIGN)) ) {
+        // assume us?
+        if (debugLevel (DEBUG_ADIF, 3))
+            Serial.printf ("ADIF: assuming RX is %s\n", getCallsign());
         quietStrncpy (spot.rx_call, getCallsign(), sizeof(spot.rx_call));
+        spot.rx_ll = de_ll;
+        ll2maidenhead (spot.rx_grid, spot.rx_ll);
+        ADD_AFB (adif, AFB_MY_LAT);
+        ADD_AFB (adif, AFB_MY_LON);
+        ADD_AFB (adif, AFB_MY_GRIDSQUARE);
+    }
 
 
     // must have rx location for plotting
     if (!CHECK_AFB(adif,AFB_MY_LAT) || !CHECK_AFB(adif,AFB_MY_LON)) {
         if (CHECK_AFB(adif,AFB_MY_GRIDSQUARE)) {
             if (!maidenhead2ll (spot.rx_ll, spot.rx_grid)) {
-                Serial.printf ("ADIF: line %d bogus grid %s for %s\n", adif.line_n,spot.rx_grid,spot.rx_call);
+                if (debugLevel (DEBUG_ADIF, 2))
+                    Serial.printf ("ADIF: line %d bogus grid %s for %s\n", adif.line_n,spot.rx_grid,spot.rx_call);
                 return (false);
             }
-            if (verbose)
-                Serial.printf ("ADIF: trace line %d: add ll for %s from grid %s\n", adif.line_n, spot.rx_call,
+            if (debugLevel (DEBUG_ADIF, 3))
+                Serial.printf ("ADIF: line %d: add ll for %s from grid %s\n", adif.line_n, spot.rx_call,
                                             spot.rx_grid);
         } else {
             if (!call2LL (spot.rx_call, spot.rx_ll)) {
-                Serial.printf ("ADIF: line %d No GRIDSQUARE LAT or LON and cty lookup for %s failed\n",
+                if (debugLevel (DEBUG_ADIF, 2))
+                    Serial.printf ("ADIF: line %d No GRIDSQUARE LAT or LON and cty lookup for %s failed\n",
                                     adif.line_n, spot.rx_call);
                 return (false);
             }
-            if (verbose)
-                Serial.printf ("ADIF: trace line %d: add ll for %s from cty\n", adif.line_n, spot.rx_call);
+            if (debugLevel (DEBUG_ADIF, 3))
+                Serial.printf ("ADIF: line %d: add ll for %s from cty\n", adif.line_n, spot.rx_call);
         }
     }
 
     // at this point we know we have rx_ll so might as well add rx_grid if not already
     if (!CHECK_AFB(adif,AFB_MY_GRIDSQUARE)) {
         ll2maidenhead (spot.rx_grid, spot.rx_ll);
-        if (verbose)
-            Serial.printf ("ADIF: trace line %d: add grid %s for %s from ll\n", adif.line_n, spot.rx_grid,
+        if (debugLevel (DEBUG_ADIF, 3))
+            Serial.printf ("ADIF: line %d: add grid %s for %s from ll\n", adif.line_n, spot.rx_grid,
                                             spot.rx_call);
+    }
+
+    // check rx and tx dxcc
+    if (!CHECK_AFB(adif,AFB_MY_DXCC)) {
+        if (!call2DXCC (spot.rx_call, spot.rx_dxcc)) {
+            if (debugLevel (DEBUG_ADIF, 2))
+                Serial.printf ("ADIF: line %d no DXCC for %s\n", adif.line_n, spot.rx_call);
+            return (false);
+        }
+    }
+    if (!CHECK_AFB(adif,AFB_DXCC)) {
+        if (!call2DXCC (spot.tx_call, spot.tx_dxcc)) {
+            if (debugLevel (DEBUG_ADIF, 2))
+                Serial.printf ("ADIF: line %d no DXCC for %s\n", adif.line_n, spot.tx_call);
+            return (false);
+        }
     }
 
     // all good, just tidy up a bit
@@ -517,8 +579,8 @@ static bool parseADIF (char c, ADIFParser &adif, DXSpot &spot)
 
     case ADIFPS_STARTSPOT:
         // init spot
-        if (verbose)
-            Serial.printf ("ADIF trace: starting new spot search\n");
+        if (debugLevel (DEBUG_ADIF, 3))
+            Serial.printf ("ADIF: starting new spot scan\n");
         memset (&spot, 0, sizeof(spot));
 
         // init per-spot fields in parser
@@ -553,20 +615,21 @@ static bool parseADIF (char c, ADIFParser &adif, DXSpot &spot)
         } else if (c == '>') {
             // bogus unless EOH or EOF
             if (!strcasecmp (adif.name, "EOH")) {
-                if (verbose)
-                    Serial.printf ("ADIF trace: found EOH\n");
+                if (debugLevel (DEBUG_ADIF, 3))
+                    Serial.printf ("ADIF: found EOH\n");
                 adif.ps = ADIFPS_STARTSPOT;
             } else if (!strcasecmp (adif.name, "EOR")) {
                 // yah!
                 adif.ps = ADIFPS_FINISHED;
             } else {
-                Serial.printf ("ADIF: line %d no length with field %s", adif.line_n, adif.name);
+                if (debugLevel (DEBUG_ADIF, 3))
+                    Serial.printf ("ADIF: line %d no length with field %s", adif.line_n, adif.name);
                 adif.ps = ADIFPS_SKIPTOEOR;
             }
         } else if (adif.name_seen > sizeof(adif.name)-1) {
             // too long for name[] but none of the field names we care about will overflow so just skip it
-            if (verbose)
-                Serial.printf ("ADIF trace line %d: ignoring long name %.*s %d > %d\n", adif.line_n,
+            if (debugLevel (DEBUG_ADIF, 3))
+                Serial.printf ("ADIF: line %d: ignoring long name %.*s %d > %d\n", adif.line_n,
                                 adif.name_seen, adif.name, adif.name_seen, (int)(sizeof(adif.name)-1));
             adif.ps = ADIFPS_STARTFIELD;
         } else {
@@ -579,8 +642,8 @@ static bool parseADIF (char c, ADIFParser &adif, DXSpot &spot)
     case ADIFPS_INLENGTH:
         if (c == ':') {
             // finish value length, start skipping optional data type. TODO?
-            if (verbose)
-                Serial.printf ("ADIF trace line %d: in type for %s\n", adif.line_n, adif.name);
+            if (debugLevel (DEBUG_ADIF, 3))
+                Serial.printf ("ADIF: line %d: in type for %s\n", adif.line_n, adif.name);
             adif.ps = ADIFPS_INTYPE;
         } else if (c == '>') {
             // finish value length, start collecting value_len chars for field value unless 0
@@ -588,18 +651,19 @@ static bool parseADIF (char c, ADIFParser &adif, DXSpot &spot)
             adif.value_seen = 0;
             if (adif.value_len == 0) {
                 adif.ps = ADIFPS_STARTFIELD;
-                if (verbose)
-                    Serial.printf ("ADIF trace line %d: 0 length data field %s\n", adif.line_n, adif.name);
+                if (debugLevel (DEBUG_ADIF, 3))
+                    Serial.printf ("ADIF: line %d: 0 length data field %s\n", adif.line_n, adif.name);
             } else
                 adif.ps = ADIFPS_INVALUE;
         } else if (isdigit(c)) {
             // fold c as int into value_len
             adif.value_len = 10*adif.value_len + (c - '0');
-            if (verbose && adif.value_len == 0)
-                Serial.printf ("ADIF trace line %d: 0 in length field %s now %d\n", adif.line_n, adif.name,
+            if (debugLevel (DEBUG_ADIF, 3) && adif.value_len == 0)
+                Serial.printf ("ADIF: line %d: 0 in length field %s now %d\n", adif.line_n, adif.name,
                                         adif.value_len);
         } else {
-            Serial.printf ("ADIF line %d: non-digit %c in field %s length\n", adif.line_n, c, adif.name);
+            if (debugLevel (DEBUG_ADIF, 3))
+                Serial.printf ("ADIF line %d: non-digit %c in field %s length\n", adif.line_n, c, adif.name);
             adif.ps = ADIFPS_SKIPTOEOR;
         }
         break;
@@ -630,8 +694,8 @@ static bool parseADIF (char c, ADIFParser &adif, DXSpot &spot)
             // install if we had room to store it al
             if (adif.value_seen < sizeof(adif.value)) {
                 (void) addADIFFIeld (adif, spot);       // rely on spotLooksGood() for final qualification
-            } else if (verbose) {
-                Serial.printf ("ADIF trace: ignoring long value <%s:%d>%.*s %d > %d\n",
+            } else if (debugLevel (DEBUG_ADIF, 3)) {
+                Serial.printf ("ADIF: ignoring long value <%s:%d>%.*s %d > %d\n",
                                 adif.name, adif.value_len, adif.value_seen, adif.value,
                                 adif.value_len, (int)(sizeof(adif.value)-1));
             }
@@ -665,7 +729,6 @@ static bool parseADIF (char c, ADIFParser &adif, DXSpot &spot)
 
 
 
-
 /***********************************************************************************************************
  *
  * ADIF pane and mapping control
@@ -729,7 +792,7 @@ static void resetADIFMem(void)
  * also indicate if any were removed from the list based on n_adif_bad.
  * if only want to show new spots, such as when scrolling, just call drawAllVisADIFSpots()
  */
-static void drawADIFPane (const SBox &box, const char *filename)
+void drawADIFPane (const SBox &box, const char *filename)
 {
     // prep
     prepPlotBox(box);
@@ -774,13 +837,8 @@ static void drawADIFPane (const SBox &box, const char *filename)
  */
 static void addADIFSpot (DXSpot &spot)
 {
-    // more likely to make a seprate location on the map
+    // more likely to make a separate location on the map
     ditherLL (spot.tx_ll);
-
-    if (verbose)
-        Serial.printf ("ADIF trace: new spot: %s %s %s %s %g %g %s %g %ld\n", 
-            spot.rx_call, spot.rx_grid, spot.tx_call, spot.tx_grid, spot.tx_ll.lat_d,
-            spot.tx_ll.lng_d, spot.mode, spot.kHz, (long)spot.spotted);
 
     // insure room
     adif_spots = (DXSpot *) realloc (adif_spots, (adif_ss.n_data + 1) * sizeof(DXSpot));
@@ -795,6 +853,11 @@ static void addADIFSpot (DXSpot &spot)
  */
 bool checkADIFFilename (const char *fn, char *ynot, size_t n_ynot)
 {
+    // at all?
+    if (!fn) {
+        snprintf (ynot, n_ynot, "no file");
+        return (false);
+    }
     // edge tests
     if (strchr (fn, ' ')) {
         snprintf (ynot, n_ynot, "no blanks");
@@ -851,42 +914,49 @@ static void runADIFMenu (const SBox &box)
     fn_mt.l_mem = strlen(fn_mt.label) + 1;                      // max label len
     fn_mt.text_fp = testADIFFilename;                           // file name test
     fn_mt.c_pos = fn_mt.w_pos = 0;                              // start at left
-    fn_mt.w_len = box.w/6 - WLA_MAXLEN - 2;                     // n chars to display, use most of the box
 
     // fill column-wise
 
-    #define AM_INDENT  4
+    #define AM_INDENT  1
 
-    MenuItem mitems[5] = {
+    // fill column-wise
+    MenuItem mitems[] = {
         {MENU_LABEL,                false, 0, AM_INDENT, "Sort:"},                      // 0
-        {MENU_1OFN, adif_sort == ADS_AGE,  1, AM_INDENT, "Age"},                        // 1
-        {MENU_1OFN, adif_sort == ADS_DIST, 1, AM_INDENT, "Dist"},                       // 2
-        {MENU_TEXT,   false,               3, AM_INDENT, wl_state, &wl_mt},             // 3
-        {MENU_TEXT,   false,               4, AM_INDENT, fn_mt.label, &fn_mt},          // 4
+        {MENU_BLANK,                false, 0, AM_INDENT, NULL },                        // 1
+        {MENU_1OFN, adif_sort == ADS_AGE,  1, AM_INDENT, "Age"},                        // 2
+        {MENU_1OFN, adif_sort == ADS_BAND, 1, AM_INDENT, "Band"},                       // 3
+        {MENU_1OFN, adif_sort == ADS_CALL, 1, AM_INDENT, "Call"},                       // 4
+        {MENU_1OFN, adif_sort == ADS_DIST, 1, AM_INDENT, "Dist"},                       // 5
+        {MENU_TEXT,                 false, 3, AM_INDENT, wl_state, &wl_mt},             // 6
+        {MENU_TEXT,                 false, 4, AM_INDENT, fn_mt.label, &fn_mt},          // 7
     };
     #define MI_N NARRAY(mitems)
 
     SBox menu_b;
-    menu_b.x = box.x + 5;
+    menu_b.x = box.x + 3;
     menu_b.y = box.y + 40;
-    menu_b.w = 0;
+    menu_b.w = box.w - 6;
 
     SBox ok_b;
     MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 3, MI_N, mitems};
     if (runMenu (menu)) {
 
         // new sort
-        if (mitems[1].set)
+        if (mitems[2].set)
             adif_sort = ADS_AGE;
-        else if (mitems[2].set)
+        else if (mitems[5].set)
             adif_sort = ADS_DIST;
+        else if (mitems[4].set)
+            adif_sort = ADS_CALL;
+        else if (mitems[3].set)
+            adif_sort = ADS_BAND;
         else
             fatalError ("runADIFMenu no sort set");
 
         // must recompile to update WL but runMenu already insured wl compiles ok
         char ynot[100];
         if (lookupWatchListState (wl_mt.label) != WLA_OFF
-                                && !compileWatchList (WLID_ADIF, wl_mt.text, ynot, sizeof(ynot)))
+                                        && !compileWatchList (WLID_ADIF, wl_mt.text, ynot, sizeof(ynot)))
             fatalError ("ADIF failed recompling wl %s: %s", wl_mt.text, ynot);
         setWatchList (WLID_ADIF, wl_mt.label, wl_mt.text);
         Serial.printf ("ADIF: set WL to %s %s\n", wl_mt.label, wl_mt.text);
@@ -909,13 +979,63 @@ static void runADIFMenu (const SBox &box)
 
 }
 
-/* replace adif_spots with those found in the given GenReader then list in the given box with name.
+/* freshen the ADIF file if used and necessary then update pane if in use.
+ * io errors are shown in pane else map
+ * leave with newfile_pending set if file changed but not in a position to show new entries.
+ */
+void freshenADIFFile (void)
+{
+    // web files just sit until menu is run again
+    if (showing_set_adif)
+        return;
+
+    // check for new/changed file
+    const char *fn = getADIFilename();          // file name -- can't be NULL see plotChoiceIsAvailable()
+    if (!fn)
+        return;
+    char *fn_exp = expandENV (fn);              // malloced expanded file name -- N.B. mustfree
+    if (fsig.fileChanged (fn_exp))              // latch if flag file changes
+        newfile_pending = true;
+
+    // read file is newer and not scrolled away
+    if (newfile_pending && adif_ss.atNewest()) {
+        PlotPane pp = findPaneChoiceNow (PLOT_CH_ADIF);
+        FILE *fp = fopen (fn_exp, "r");
+        if (!fp) {
+            char errmsg[100];
+            snprintf (errmsg, sizeof(errmsg), "%s: %s", fn_exp, strerror(errno));
+            if (pp == PANE_NONE)
+                mapMsg (4000, "%s", errmsg);
+            else
+                plotMessage (plot_b[pp], RA8875_RED, errmsg);
+        } else {
+            GenReader gr(fp);
+            int n_good;
+            loadADIFFile (gr, 0, n_good, n_adif_bad);
+            fclose (fp);
+
+            // update list if showing
+            if (pp != PANE_NONE)
+                drawADIFPane (plot_b[pp], getADIFilename());
+
+            // caught up
+            newfile_pending = false;
+        }
+        showing_set_adif = false;
+    }
+
+    // clean up our malloc
+    free (fn_exp);
+}
+
+/* replace adif_spots with those found in the given GenReader.
  * read gr_len bytes else until EOF if 0.
  * pass back number of qualifying spots and bad spots found.
  * N.B. caller must close gr
- * N.B. also set n_adif_bad
+ * N.B. we set n_adif_bad for drawADIFPane()
+ * N.B. unless loading directly from the web, you probably want freshenADIFFile().
  */
-void loadADIFFile (GenReader &gr, long gr_len, const char *name, const SBox &box, int &n_good, int &n_bad)
+void loadADIFFile (GenReader &gr, long gr_len, int &n_good, int &n_bad)
 {
     // restart list and insure settings are laoded
     resetADIFMem();
@@ -935,19 +1055,25 @@ void loadADIFFile (GenReader &gr, long gr_len, const char *name, const SBox &box
     char c;
     long bytes_read = 0;
     int n_tot = 0;
+    if (debugLevel (DEBUG_ADIF, 1))
+        Serial.printf ("ADIF: WL DE_Call   Grid   DXCC  DX_Call   Grid   DXCC    Lat   Long Mode      kHz\n");
     while ((!gr_len || bytes_read++ < gr_len) && gr.getChar(&c)) {
         if (parseADIF (c, adif, spot)) {
             // spot parsing complete
             if (spotLooksGood (adif, spot)) {
-                // spot fields are complete but may not qualify
-                if (checkWatchListSpot(WLID_ADIF, spot) != WLS_NO)
+                // at this point all spot fields are complete but may not qualify WL
+                bool wl_ok = checkWatchListSpot(WLID_ADIF, spot) != WLS_NO;
+                if (wl_ok)
                     addADIFSpot (spot);
-                else if (verbose)
-                    Serial.printf ("ADIF trace line %d: no watch: %s %s %s %s %g %g %s %g %ld\n", 
-                            adif.line_n, spot.rx_call, spot.rx_grid, spot.tx_call, spot.tx_grid,
-                            spot.tx_ll.lat_d, spot.tx_ll.lng_d, spot.mode, spot.kHz, (long)spot.spotted);
+                if ((wl_ok && debugLevel (DEBUG_ADIF, 1)) || (!wl_ok && debugLevel (DEBUG_ADIF, 2))) {
+                    Serial.printf("ADIF: %s %-9.9s %-6.6s %4d  %-9.9s %-6.6s %4d  %5.1f %6.1f %4.4s %8.1f\n", 
+                        wl_ok ? "OK" : "NO",
+                        spot.rx_call, spot.rx_grid, spot.rx_dxcc,
+                        spot.tx_call, spot.tx_grid, spot.tx_dxcc,
+                        spot.tx_ll.lat_d, spot.tx_ll.lng_d, spot.mode, spot.kHz);
+                }
             } else
-                n_bad++;
+                n_bad++;        // count actual broken spots, not ones that just aren't selected by WL
 
             // count and look alive
             if ((++n_tot%100) == 0)
@@ -955,7 +1081,7 @@ void loadADIFFile (GenReader &gr, long gr_len, const char *name, const SBox &box
         }
     }
 
-    if (verbose) {
+    if (debugLevel (DEBUG_ADIF, 1)) {
         struct timeval t1;
         gettimeofday (&t1, NULL);
         Serial.printf ("ADIF: read %d spots in %ld usec\n", n_tot, TVDELUS (t0, t1));
@@ -964,12 +1090,12 @@ void loadADIFFile (GenReader &gr, long gr_len, const char *name, const SBox &box
     // report
     n_good = adif_ss.n_data;
     n_adif_bad = n_bad;
-    Serial.printf ("ADIF: %s contained %d total %d qualifying %d busted spots\n", name, n_tot, n_good, n_bad);
+    Serial.printf ("ADIF: %s contained %d total %d qualifying %d busted spots\n",
+                                    gr.isFile() ? getADIFilename() : "set_adif", n_tot, n_good, n_bad);
 
-    // sort and display
+    // sort and prep for display
     qsort (adif_spots, adif_ss.n_data, sizeof(DXSpot), adif_pqsf[adif_sort]);
     adif_ss.scrollToNewest();
-    drawADIFPane (box, name);
 
     // note new source type ready
     showing_set_adif = !gr.isFile();
@@ -985,48 +1111,20 @@ void updateADIF (const SBox &box, bool refresh)
         resetADIFMem();
         adif_ss.init ((box.h - LISTING_Y0)/LISTING_DY, 0, 0);
         adif_ss.initNewSpotsSymbol (box, ADIF_COLOR);
+        adif_ss.scrollToNewest();
         showing_set_adif = false;
         newfile_pending = true;
     }
 
-    // web files just sit until menu is run again
-    if (showing_set_adif)
-        return;
+    // check for changed file
+    freshenADIFFile();
 
-    // check for new/changed file
-    const char *fn = getADIFilename();          // file name from Setup -- can't be NULL plotChoiceIsAvailable
-    char *fn_exp = expandENV (fn);              // malloced expanded file name -- N.B. mustfree
-    if (fsig.fileChanged (fn_exp))              // latch if flag file changes
-        newfile_pending = true;
-
-    // handle new IF at front
-    if (adif_ss.atNewest()) {
-        if (newfile_pending) {
-            FILE *fp = fopen (fn_exp, "r");
-            if (!fp) {
-                char errmsg[100];
-                snprintf (errmsg, sizeof(errmsg), "%s: %s", fn_exp, strerror(errno));
-                plotMessage (box, RA8875_RED, errmsg);
-            } else {
-                GenReader gr(fp);
-                int n_good;
-                loadADIFFile (gr, 0, fn_exp, box, n_good, n_adif_bad);
-                fclose (fp);
-            }
-            showing_set_adif = false;
-            newfile_pending = false;
-        }
-    }
-
-    // always update symbol and hold
+    // update symbol and hold
     adif_ss.drawNewSpotsSymbol (box, newfile_pending, false);
     if (adif_ss.atNewest())
         ROTHOLD_CLR(PLOT_CH_ADIF);
     else
         ROTHOLD_SET(PLOT_CH_ADIF);
-
-    // clean up our malloc
-    free (fn_exp);
 }
 
 /* draw each entry, if enabled
@@ -1113,13 +1211,6 @@ bool getClosestADIFSpot (const LatLong &ll, DXSpot *sp, LatLong *llp)
                 && getClosestSpot (adif_spots, adif_ss.n_data, LOME_BOTH, ll, sp, llp));
 }
 
-/* call to clean up memory if not in use, get out fast if nothing to do.
- */
-void cleanADIF()
-{
-    if (adif_spots && findPaneForChoice(PLOT_CH_ADIF) == PANE_NONE)
-        resetADIFMem();
-}
 
 /* return spot in our pane if under ms 
  */
@@ -1154,5 +1245,36 @@ bool getADIFPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll)
     }
 
     // none
+    return (false);
+}
+
+/* return whether the given spot matches all the given tests for any ADIF spot.
+ * N.B. check is limited to spots on ADIF watchlist if any.
+ * N.B. if no tests are specified we always return true.
+ * N.B. do NOT call freshenADIFFile() here -- it causes an inf loop
+ */
+bool onADIFList (const DXSpot &spot, bool chk_dxcc, bool chk_grid, bool chk_pref, bool chk_band)
+{
+    // prep spot
+    HamBandSetting spot_band = findHamBand (spot.kHz);
+    char spot_pref[MAX_PREF_LEN];
+    findCallPrefix (spot.tx_call, spot_pref);
+
+    // compare with each 
+    for (int i = 0; i < adif_ss.n_data; i++) {
+        DXSpot &adif_spot = adif_spots[i];
+        bool pref_match = false;
+        if (chk_pref) {
+            char adif_pref[MAX_PREF_LEN];
+            findCallPrefix (adif_spot.tx_call, adif_pref);
+            pref_match = strcasecmp (spot_pref, adif_pref) == 0;
+        }
+        if (       (!chk_pref || pref_match)
+                && (!chk_dxcc || spot.tx_dxcc == adif_spot.tx_dxcc)
+                && (!chk_band || spot_band == findHamBand (adif_spot.kHz))
+                && (!chk_grid || strncasecmp (spot.tx_grid, adif_spot.tx_grid, 4) == 0))
+            return (true);
+    }
+
     return (false);
 }

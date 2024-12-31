@@ -562,7 +562,7 @@ static BoolPrompt bool_pr[N_BPR] = {
     // "page 2" -- index 1
 
     {1, {10,  R2Y(0),  90, PR_H}, {100, R2Y(0), 50,  PR_H}, false, "Cluster?", "No", "Yes", NOMATE},
-    {1, {200, R2Y(0),  90, PR_H}, {290, R2Y(0), 50,  PR_H}, false, "WSJT-X?", "No", "Yes", NOMATE},
+    {1, {200, R2Y(0),  90, PR_H}, {290, R2Y(0), 50,  PR_H}, false, "UDP?", "No", "Yes", NOMATE},
 
 
     {1, {15, R2Y(1),  55, PR_H},  {85, R2Y(1), 55, PR_H}, false, "watch:",
@@ -3320,7 +3320,7 @@ static bool validateStringPrompts (bool show_errors)
         }
     }
 
-    // ADIF watch list must compile successfully if being used
+    // ADIF watch list must compile successfully
     if (getWatchListState (WLID_ADIF, NULL) != WLA_OFF) {
         strtrim (adif_wlist);
         if (!compileWatchList (WLID_ADIF, adif_wlist, err_buf, sizeof(err_buf))) {
@@ -3620,6 +3620,7 @@ static void initSetup()
     // init call sign, no default
 
     NVReadString(NV_CALLSIGN, cs_info.call);
+    strtoupper (cs_info.call);
 
 
     // init gpsd host and option
@@ -4222,6 +4223,16 @@ static void initSetup()
         NVWriteUInt8 (NV_QRZID, qrz_id);
     }
     setEntangledValue (QRZBIOA_BPR, QRZBIOB_BPR, qrz_urltable[qrz_id].label);
+
+    // insure default DX
+    char dx_grid[MAID_CHARLEN];
+    if (!NVReadString (NV_DX_GRID, dx_grid)) {
+        // presume none have been set
+        NVWriteString (NV_DX_GRID, "JJ00aa");
+        NVWriteFloat (NV_DX_LAT, 0.0F);
+        NVWriteFloat (NV_DX_LNG, 0.0F);
+        NVWriteInt32 (NV_DX_TZ, 0);
+    }
 }
 
 
@@ -4515,6 +4526,10 @@ static void runSetup()
             // received a new char for inserting into string with focus
 
             StringPrompt *sp = cur_focus[cur_page].sp;
+
+            // enforce call sign upper case
+            if (sp == &string_pr[CALL_SPR])
+                c = toupper(c);
 
             // insert c at v_ci if room, else ignore
             size_t vl = strlen (sp->v_str);
@@ -4812,6 +4827,7 @@ static void saveParams2NV()
     NVWriteString(NV_WIFI_PASSWD, wifi_pw);
 #endif
 
+    strtoupper (cs_info.call);
     NVWriteString(NV_CALLSIGN, cs_info.call);
     NVWriteUInt8 (NV_UNITS, getEntangledIndex (UNITSA_BPR, UNITSB_BPR));
     NVWriteUInt8 (NV_WEEKMON, bool_pr[WEEKDAY1MON_BPR].state);

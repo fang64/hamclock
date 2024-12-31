@@ -108,8 +108,8 @@ static void eraseSantaBox(const SBox &s)
  */
 void drawSanta()
 {
-    // skip unless Christmas eve day
-    time_t t = nowWO();
+    // skip unless DE Christmas eve day
+    time_t t = nowWO() + getTZ (de_tz);
     if (month(t) != 12 || day(t) != 24) {
         santa_b.x = santa_b.y = 0;
         return;
@@ -219,6 +219,17 @@ void drawSanta()
         santa_b.x = 0;
 }
 
+
+/* return a random color
+ */
+static uint16_t rcolor(void)
+{
+    uint8_t h = random(256);
+    uint8_t r, g, b;
+    hsvtorgb (&r, &g, &b, h, 255, 255);
+    return (RGB565(r,g,b));
+}
+
 /* take over the screen to show some fireworks at local midnight new year's day
  */
 void drawFireworks()
@@ -239,10 +250,11 @@ void drawFireworks()
     #define FW_MAX_RAYS    30                   // max n rays in each shot
     #define FW_N_KEEP      6                    // n shots to keep then erase
     #define FW_GRAV        (0.2*tft.SCALESZ)    // gravity vel change each iteration, pixels/FLOW_DT/FLOW_DT
-    #define FW_VEL         (4*tft.SCALESZ)      // velocity, pixels/FLOW_DT
+    #define FW_VEL         (4*tft.SCALESZ)      // fw velocity, pixels/FLOW_DT
     #define FW_FLOW_DT     2                    // one ray drawing iteration, msec
     #define FW_SHOW_DT     (60*1000)            // show duration, millis()
-    #define FW_SHOT_DT     (1000)               // max time between shots, msec
+    #define FW_SHOT_DT     (300)                // max time between shots, msec
+    #define FW_SHOOT_COL   DKGRAY               // shoot color
 
     // counting for FW_N_KEEP
     int n_show = 0;
@@ -253,14 +265,34 @@ void drawFireworks()
     while (millis() - start_m < FW_SHOW_DT
                         && readCalTouch(tap) == TT_NONE && tft.getChar(&ctrl, &shift) == CHAR_NONE) {
 
+        // shoot upwards from random ground point at random angle and speed
+        float shoot_px = 100*tft.SCALESZ + random(600*tft.SCALESZ);     // previous ground x
+        float shoot_py = 9*BUILD_H/10;                                  // previous ground y
+        float shoot_a = deg2rad (80 + random(20));                      // angle CCW from right
+        float shoot_v0 = ((7*tft.SCALESZ) + random(3*tft.SCALESZ))*0.5; // velocity
+        float shoot_vx = shoot_v0 * cosf(shoot_a);                      // Vx
+        float shoot_vy = -shoot_v0 * sinf(shoot_a);                     // Vy upwards
+        while (shoot_vy < 0 && shoot_py > 30) {                         // peak but insure well below top
+            shoot_vy += FW_GRAV/7;                                      // slower looks much better
+            float x = shoot_px + shoot_vx;
+            float y = shoot_py + shoot_vy;
+            if (x >= 0 && x < BUILD_W && y >= 0 && y < BUILD_H) {
+                tft.drawLineRaw (roundf(shoot_px), roundf(shoot_py), roundf(x), roundf(y), 1, FW_SHOOT_COL);
+                shoot_px = x;
+                shoot_py = y;
+                wdDelay(4);                                             // again, slower looks better
+            } else
+                break;
+        }
+
         // draw rays outward from center, keep each previous point to connect the dots
         float px[FW_MAX_RAYS];
         float py[FW_MAX_RAYS];
         int n_rays = FW_MAX_RAYS/2 + random(FW_MAX_RAYS/2);
 
-        // set random starting posiiton of each ray
-        float x = 100*tft.SCALESZ+random(600*tft.SCALESZ);
-        float y = 150*tft.SCALESZ-random(100*tft.SCALESZ);
+        // starting posiiton of each ray is where shot exploded
+        float x = shoot_px;
+        float y = shoot_py;
         for (int i = 0; i < n_rays; i++) {
             px[i] = x;
             py[i] = y;
@@ -274,17 +306,20 @@ void drawFireworks()
         float vg = 0;
 
         // point size
-        int pr = (random(4) * tft.SCALESZ) == 0;
+        int pr = random(4) == 0 ? tft.SCALESZ : 0;
 
-        // pick a random color
-        uint8_t h = random(256);
-        uint8_t r, g, b;
-        hsvtorgb (&r, &g, &b, h, 255, 255);
-        uint16_t c = RGB565(r,g,b);
+        // random segment color or whole rays?
+        bool rand_seg_col = random(10) < 3;
+        bool rand_ray_col = random(10) < 3;
+        uint16_t hue0 = rcolor();
+        uint16_t cols[FW_MAX_RAYS];
+        for (int i = 0; i < n_rays; i++)
+            cols[i] = rand_ray_col ? rcolor() : hue0;
 
         // repeat until hit edge or max radius
         bool done = false;
         while(!done) {
+            // add next expanding segment to each ray
             for (int i = 0; i < n_rays; i++) {
                 float a = i*2*M_PIF/n_rays;
                 float vx = FW_VEL * cosf(a);
@@ -293,12 +328,13 @@ void drawFireworks()
                 y = py[i] + vy;
                 if (x >= 0 && x < BUILD_W && y >= 0 && y < BUILD_H
                                         && (x-px[0])*(x-px[0]) + (y-py[0])*(y-py[0]) < maxr2) {
-                    tft.drawLineRaw (roundf(px[i]), roundf(py[i]), roundf(x), roundf(y), 1, c);
+                    uint16_t col = rand_seg_col ? rcolor() : cols[i];
+                    tft.drawLineRaw (roundf(px[i]), roundf(py[i]), roundf(x), roundf(y), 1, col);
                     if (pr > 0)
                         tft.fillCircleRaw (roundf(x), roundf(y), pr, RA8875_WHITE);
                     px[i] = x;
                     py[i] = y;
-                    wdDelay(2);
+                    wdDelay(FW_FLOW_DT);
                 } else
                     done = true;
             }

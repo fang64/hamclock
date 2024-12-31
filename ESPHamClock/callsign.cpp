@@ -172,15 +172,93 @@ static void setCallColors (CallColors_t &cu, uint16_t *fg, uint16_t *bg, uint8_t
 static void setOnAir(void)
 {
     if (onair_hw || onair_sw) {
-        if (cs_info.type != CT_ONAIR) {
-            cs_info.type = CT_ONAIR;
-            drawCallsign (true);
-            Serial.printf ("CALL: on\n");
+        // set on-air if not already
+        if (cs_info.now_showing != CT_ONAIR) {
+            cs_info.now_showing = CT_ONAIR;
+            updateCallsign (true);
+            Serial.printf ("CALL: on-air\n");
         }
-    } else if (cs_info.type == CT_ONAIR) {
-        cs_info.type = cs_info.prefer;
-        drawCallsign (true);
-        Serial.printf ("CALL: back to %s\n", cs_info.type == CT_CALL ? "call" : "title");
+    } else if (cs_info.now_showing == CT_ONAIR) {
+        // restore preferred call/title 
+        cs_info.now_showing = cs_info.ct_prefer;                // updateCallsign fixes if CT_BOTH
+        updateCallsign (true);
+        Serial.printf ("CALL: back to %s\n", cs_info.now_showing == CT_CALL ? "call" : "title");
+    }
+}
+
+/* draw callsign using cs_info.
+ * draw everything if all, else just fg text as when just changing text color.
+ */
+static void drawCallsign (bool all)
+{
+    uint16_t fg_c = 0, bg_c = 0;
+    bool rainbow = false;
+    const char *text = NULL;
+    switch (cs_info.now_showing) {
+    case CT_CALL:
+        fg_c = cs_info.call_col.fg;
+        bg_c = cs_info.call_col.bg;
+        rainbow = cs_info.call_col.rainbow != 0;
+        text = cs_info.call;
+        break;
+    case CT_TITLE:
+        fg_c = cs_info.title_col.fg;
+        bg_c = cs_info.title_col.bg;
+        rainbow = cs_info.title_col.rainbow != 0;
+        text = cs_info.title;
+        break;
+    case CT_ONAIR:
+        fg_c = cs_info.onair_col.fg;
+        bg_c = cs_info.onair_col.bg;
+        rainbow = cs_info.onair_col.rainbow != 0;
+        text = cs_info.onair;
+        break;
+    default:
+        fatalError ("Bug! drawCallsign(%d) %d\n", all, (int)cs_info.now_showing);
+        break;  // lint
+    }
+
+    // start with background iff all
+    if (all) {
+        if (rainbow)
+            drawRainbow (cs_info.box);
+        else
+            fillSBox (cs_info.box, bg_c);
+    }
+
+    // set text color
+    tft.setTextColor(fg_c);
+
+    // copy text to slash0 with each '0' replaced with DEL to use slashed-0 hacked into BOLD/LARGE
+    StackMalloc call_slash0(text);
+    char *slash0 = (char *) call_slash0.getMem();
+    for (char *z = slash0; *z != '\0' ; z++) {
+        if (*z == '0')
+            *z = 127;   // del
+    }
+
+    // start with largest font and keep shrinking and trying 2 lines until fits
+    const SBox &box = cs_info.box;              // handy
+    selectFontStyle (BOLD_FONT, LARGE_FONT);
+    if (!drawBoxText (false, box, slash0, fg_c, box.h/2+20, 0, 0, rainbow)) {
+        // try smaller font
+        selectFontStyle (BOLD_FONT, SMALL_FONT);
+        if (!drawBoxText (false, box, text, fg_c, box.h/2+10, 0, 0, rainbow)) {
+            // try smaller font
+            selectFontStyle (LIGHT_FONT, SMALL_FONT);
+            if (!drawBoxText (false, box, text, fg_c, box.h/2+10, 0, 0, rainbow)) {
+                // try all upper case to allow 2 lines without regard to descenders
+                StackMalloc call_uc(text);
+                char *uc = (char *) call_uc.getMem();
+                for (char *z = uc; *z != '\0' ; z++)
+                    *z = toupper(*z);
+                if (!drawBoxText (false, box, uc, fg_c, box.h/2+10, box.h/2-2, box.h-3, rainbow)) {
+                    // try smallest font
+                    selectFontStyle (LIGHT_FONT, FAST_FONT);
+                    (void) drawBoxText (true, box, text, fg_c, box.h/2-10, box.h/2-14, box.h/2+4, rainbow);
+                }
+            }
+        }
     }
 }
 
@@ -201,7 +279,6 @@ static void runCallsignMenu (void)
     onair_mt.t_mem = sizeof(new_onair);
     onair_mt.label = ptt_label;
     onair_mt.l_mem = sizeof(ptt_label);
-    onair_mt.w_len = cs_info.box.w/6 - 16;              // window width, chars
     onair_mt.to_upper = false;
     onair_mt.c_pos = 0;
     onair_mt.w_pos = 0;
@@ -218,7 +295,6 @@ static void runCallsignMenu (void)
     title_mt.t_mem = sizeof(new_title);
     title_mt.label = title_label;
     title_mt.l_mem = sizeof(title_label);
-    title_mt.w_len = onair_mt.w_len;                    // same
     title_mt.to_upper = false;
     title_mt.c_pos = 0;
     title_mt.w_pos = 0;
@@ -226,11 +302,12 @@ static void runCallsignMenu (void)
     title_mt.label_fp = NULL;
 
     MenuItem mitems[] = {
-        {MENU_LABEL,                     false, 0, 2, "Show: "},                  // 0
-        {MENU_1OFN, cs_info.prefer == CT_CALL,  1, 2, "call"},                    // 1
-        {MENU_1OFN, cs_info.prefer == CT_TITLE, 1, 2, "title"},                   // 2
-        {MENU_TEXT,                      false, 2, 2, title_mt.label, &title_mt}, // 3
-        {ptt ? MENU_TEXT : MENU_IGNORE,  false, 3, 2, onair_mt.label, &onair_mt}, // 4
+        {MENU_LABEL,                        false, 0, 2, "Show: "},                  // 0
+        {MENU_1OFN, cs_info.ct_prefer == CT_CALL,  1, 2, "call"},                    // 1
+        {MENU_1OFN, cs_info.ct_prefer == CT_TITLE, 1, 2, "title"},                   // 2
+        {MENU_1OFN, cs_info.ct_prefer == CT_BOTH,  1, 2, "rotate"},                  // 3
+        {MENU_TEXT,                         false, 2, 2, title_mt.label, &title_mt}, // 4
+        {ptt ? MENU_TEXT : MENU_IGNORE,     false, 3, 2, onair_mt.label, &onair_mt}, // 5
     };
 
     SBox menu_b = cs_info.box;                          // copy, not ref!
@@ -240,7 +317,7 @@ static void runCallsignMenu (void)
     menu_b.h = 0;
 
     SBox ok_b;
-    MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 3, NARRAY(mitems), mitems};
+    MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 4, NARRAY(mitems), mitems};
     if (runMenu (menu)) {
 
         // save new messages
@@ -257,18 +334,53 @@ static void runCallsignMenu (void)
             NVWriteString (NV_TITLE, cs_info.title);
         }
 
-        // always set preferred type but only set current type if not showing PTT
+        // set preferred type
         if (mitems[1].set)
-            cs_info.prefer = CT_CALL;
+            cs_info.ct_prefer = CT_CALL;
         else if (mitems[2].set)
-            cs_info.prefer = CT_TITLE;
-        NVWriteUInt8 (NV_PREFERTITLE, cs_info.prefer == CT_TITLE);
-        if (cs_info.type != CT_ONAIR)
-            cs_info.type = cs_info.prefer;
+            cs_info.ct_prefer = CT_TITLE;
+        else
+            cs_info.ct_prefer = CT_BOTH;
+        NVWriteUInt8 (NV_CALLPREF, (uint8_t)cs_info.ct_prefer);
+
+        // update what's now showing unless showing PTT
+        if (cs_info.now_showing != CT_ONAIR) {
+            // set to prefer or let updateCallsign rotate if BOTH
+            if (cs_info.ct_prefer != CT_BOTH)
+                cs_info.now_showing = cs_info.ct_prefer;
+        }
+
     }
 
-    // redraw either way to remove menu
-    drawCallsign (true);    // fg and bg
+    // full redraw if for no other reason than to erase menu
+    updateCallsign (true);
+}
+
+/* called periodically to update callsign.
+ */
+void updateCallsign (bool force_draw)
+{
+    // always insure now_showing is CALL or TITLE (e.g. it could be BOTH if set from ct_prefer)
+    if (cs_info.now_showing != CT_CALL && cs_info.now_showing != CT_TITLE) {
+        if (cs_info.ct_prefer == CT_CALL || cs_info.ct_prefer == CT_TITLE)
+            cs_info.now_showing = cs_info.ct_prefer;
+        else
+            cs_info.now_showing = CT_CALL;
+    }
+
+    // check for call/title rotation unless on-air
+    if (cs_info.ct_prefer == CT_BOTH && cs_info.now_showing != CT_ONAIR) {
+        time_t now = myNow();
+        if (now > cs_info.next_update || force_draw) {
+            cs_info.now_showing = cs_info.now_showing == CT_CALL ? CT_TITLE : CT_CALL;  // toggle
+            cs_info.next_update = now + ROTATION_INTERVAL;                              // same rate as panes
+            force_draw = true;
+        }
+    }
+
+    // draw if desired
+    if (force_draw)
+        drawCallsign (true);
 }
 
 /* load cs_info color settings from NV and set default ON AIR text
@@ -328,86 +440,17 @@ void initCallsignInfo()
     }
 
 
-    // get preferred display when not PTT
-    uint8_t preftitle;
-    if (!NVReadUInt8 (NV_PREFERTITLE, &preftitle)) {
-        preftitle = 0;                  // initial default is CT_CALL
-        NVWriteUInt8 (NV_PREFERTITLE, preftitle);
+    // get preferred and current display when not PTT
+    uint8_t pref;
+    if (!NVReadUInt8 (NV_CALLPREF, &pref)) {
+        pref = CT_CALL;
+        NVWriteUInt8 (NV_CALLPREF, pref);
     }
-    cs_info.type = cs_info.prefer = preftitle ? CT_TITLE : CT_CALL;
-}
-
-/* draw callsign using cs_info.
- * draw everything if all, else just fg text as when just changing text color.
- */
-void drawCallsign (bool all)
-{
-    uint16_t fg_c = 0, bg_c = 0;
-    bool rainbow = false;
-    const char *text = NULL;
-    switch (cs_info.type) {
-    case CT_CALL:
-        fg_c = cs_info.call_col.fg;
-        bg_c = cs_info.call_col.bg;
-        rainbow = cs_info.call_col.rainbow != 0;
-        text = cs_info.call;
-        break;
-    case CT_TITLE:
-        fg_c = cs_info.title_col.fg;
-        bg_c = cs_info.title_col.bg;
-        rainbow = cs_info.title_col.rainbow != 0;
-        text = cs_info.title;
-        break;
-    case CT_ONAIR:
-        fg_c = cs_info.onair_col.fg;
-        bg_c = cs_info.onair_col.bg;
-        rainbow = cs_info.onair_col.rainbow != 0;
-        text = cs_info.onair;
-        break;
-    }
-
-    // start with background iff all
-    if (all) {
-        if (rainbow)
-            drawRainbow (cs_info.box);
-        else
-            fillSBox (cs_info.box, bg_c);
-    }
-
-    // set text color
-    tft.setTextColor(fg_c);
-
-    // copy text to slash0 with each '0' replaced with DEL to use slashed-0 hacked into BOLD/LARGE
-    StackMalloc call_slash0(text);
-    char *slash0 = (char *) call_slash0.getMem();
-    for (char *z = slash0; *z != '\0' ; z++) {
-        if (*z == '0')
-            *z = 127;   // del
-    }
-
-    // start with largest font and keep shrinking and trying 2 lines until fits
-    const SBox &box = cs_info.box;              // handy
-    selectFontStyle (BOLD_FONT, LARGE_FONT);
-    if (!drawBoxText (false, box, slash0, fg_c, box.h/2+20, 0, 0, rainbow)) {
-        // try smaller font
-        selectFontStyle (BOLD_FONT, SMALL_FONT);
-        if (!drawBoxText (false, box, text, fg_c, box.h/2+10, 0, 0, rainbow)) {
-            // try smaller font
-            selectFontStyle (LIGHT_FONT, SMALL_FONT);
-            if (!drawBoxText (false, box, text, fg_c, box.h/2+10, 0, 0, rainbow)) {
-                // try all upper case to allow 2 lines without regard to descenders
-                StackMalloc call_uc(text);
-                char *uc = (char *) call_uc.getMem();
-                for (char *z = uc; *z != '\0' ; z++)
-                    *z = toupper(*z);
-                if (!drawBoxText (false, box, uc, fg_c, box.h/2+10, box.h/2-2, box.h-3, rainbow)) {
-                    // try smallest font
-                    selectFontStyle (LIGHT_FONT, FAST_FONT);
-                    (void) drawBoxText (true, box, text, fg_c, box.h/2-10, box.h/2-14, box.h/2+4, rainbow);
-                }
-            }
-        }
-    }
+    cs_info.ct_prefer = (Call_t)pref;
+    if (cs_info.ct_prefer == CT_CALL || cs_info.ct_prefer == CT_TITLE)
+        cs_info.now_showing = cs_info.ct_prefer;
+    else
+        cs_info.now_showing = CT_CALL;
 }
 
 /* set and save the given callsign usage info.
@@ -426,11 +469,11 @@ void setCallsignInfo (Call_t t, const char *text, uint16_t *fg, uint16_t *bg, ui
         NVWriteUInt8 (NV_CALL_RAINBOW, cs_info.call_col.rainbow);
 
         // change to call view unless showing ONAIR
-        if (cs_info.type != CT_ONAIR)
-            cs_info.type = CT_CALL;
+        if (cs_info.now_showing != CT_ONAIR)
+            cs_info.now_showing = CT_CALL;
 
         // save as preferred display
-        cs_info.prefer = CT_CALL;
+        cs_info.ct_prefer = CT_CALL;
 
         break;
 
@@ -448,11 +491,11 @@ void setCallsignInfo (Call_t t, const char *text, uint16_t *fg, uint16_t *bg, ui
         NVWriteUInt8 (NV_TITLE_RAINBOW, cs_info.title_col.rainbow);
 
         // change to title view unless showing ONAIR
-        if (cs_info.type != CT_ONAIR)
-            cs_info.type = CT_TITLE;
+        if (cs_info.now_showing != CT_ONAIR)
+            cs_info.now_showing = CT_TITLE;
 
         // save as preferred display
-        cs_info.prefer = CT_TITLE;
+        cs_info.ct_prefer = CT_TITLE;
 
         break;
 
@@ -472,6 +515,10 @@ void setCallsignInfo (Call_t t, const char *text, uint16_t *fg, uint16_t *bg, ui
         // just make changes without forcing type, still only shows when really PTT
 
         break;
+
+    default:
+        fatalError ("Bug! setCallsignInfo(%d)", (int)t);
+
     }
 }
 
@@ -537,7 +584,7 @@ void doCallsignTouch (const SCoord &s)
 
         // left third: fg
 
-        switch (cs_info.type) {
+        switch (cs_info.now_showing) {
         case CT_CALL:
             cycleFGColor (NV_CALL_FG, cs_info.call_col);
             break;
@@ -547,6 +594,8 @@ void doCallsignTouch (const SCoord &s)
         case CT_ONAIR:
             cycleFGColor (NV_ONAIR_FG, cs_info.onair_col);
             break;
+        default:
+            fatalError ("Bug! doCallsignTouch() left %d", cs_info.now_showing);
         }
         drawCallsign (false);   // just foreground
 
@@ -560,7 +609,7 @@ void doCallsignTouch (const SCoord &s)
 
         // right third: background
 
-        switch (cs_info.type) {
+        switch (cs_info.now_showing) {
         case CT_CALL:
             cycleBGColor (NV_CALL_BG, NV_CALL_RAINBOW, cs_info.call_col);
             break;
@@ -570,6 +619,8 @@ void doCallsignTouch (const SCoord &s)
         case CT_ONAIR:
             cycleBGColor (NV_ONAIR_BG, NV_ONAIR_RAINBOW, cs_info.onair_col);
             break;
+        default:
+            fatalError ("Bug! doCallsignTouch() right %d", cs_info.now_showing);
         }
         drawCallsign (true);    // fg and bg
 

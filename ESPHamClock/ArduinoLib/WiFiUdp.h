@@ -38,7 +38,7 @@ class WiFiUDP {
 	struct sockaddr_in remoteip;
 
 	int sockfd;
-	uint8_t r_buf[1024];
+	uint8_t r_buf[2000];
 	int r_n, w_n;
 	int sendto_n;
 };

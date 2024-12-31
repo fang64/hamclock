@@ -24,12 +24,6 @@
 #include "HamClock.h"
 
 
-// set desired trace level: 0 is none, higher is more. global so can be set from command line.
-// x must be complete printf including ()
-int gimbal_trace_level = 0;
-#define GIMBAL_TRACE(l,x)  do {if((l)<=gimbal_trace_level) Serial.printf x; } while(0)
-
-
 
 // GUI configuration
 #define CHAR_H          25                              // large character height
@@ -162,13 +156,14 @@ static bool askHamlib (const char *cmd, char rsp[], size_t rsp_len)
     // insure cmd starts with +\ and ends with \n
     int cmd_l = strlen (cmd);
     if (strncmp (cmd, "+\\", 2) != 0 || cmd[cmd_l-1] != '\n')
-        fatalError (_FX("malformed askHamlib cmd: '%s'"), cmd);
+        fatalError ("malformed askHamlib cmd: '%s'", cmd);
 
-    GIMBAL_TRACE (2, (_FX("GBL: ask %s"), cmd));       // includes \n
+    if (debugLevel (DEBUG_GIMBAL, 2))
+        Serial.printf ("GBL: ask %s", cmd);       // includes \n
 
     // insure connected
     if (!connectionOk()) {
-        snprintf (rsp, rsp_len, _FX("No connection"));
+        snprintf (rsp, rsp_len, "No connection");
         return (false);
     }
 
@@ -181,8 +176,9 @@ static bool askHamlib (const char *cmd, char rsp[], size_t rsp_len)
     int RPRT = -1;
     uint16_t ll;
     while (!found_RPRT && rsp_n < rsp_len && getTCPLine (hamlib_client, rsp+rsp_n, rsp_len-rsp_n, &ll)) {
-        GIMBAL_TRACE (2, (_FX("GBL: reply %s\n"), rsp+rsp_n));
-        if (sscanf (rsp+rsp_n, _FX("RPRT %d"), &RPRT) == 1)
+        if (debugLevel (DEBUG_GIMBAL, 2))
+            Serial.printf ("GBL: reply %s\n", rsp+rsp_n);
+        if (sscanf (rsp+rsp_n, "RPRT %d", &RPRT) == 1)
             found_RPRT = true;
         rsp_n += ll;
     }
@@ -191,9 +187,9 @@ static bool askHamlib (const char *cmd, char rsp[], size_t rsp_len)
     if (found_RPRT && RPRT == 0)
         return (true);
     if (found_RPRT)
-        snprintf (rsp, rsp_len, _FX("Hamlib err: %.*s: %d"), cmd_l-1, cmd, RPRT);       // discard \n
+        snprintf (rsp, rsp_len, "Hamlib err: %.*s: %d", cmd_l-1, cmd, RPRT);       // discard \n
     else
-        snprintf (rsp, rsp_len, _FX("Hamlib err: no RPRT from %.*s"), cmd_l-1, cmd);
+        snprintf (rsp, rsp_len, "Hamlib err: no RPRT from %.*s", cmd_l-1, cmd);
     return (false);
 }
 
@@ -206,7 +202,7 @@ static bool getAzEl(const SBox &box)
     char rsp[100];
 
     // query position
-    if (!askHamlib (_FX("+\\get_pos\n"), rsp, sizeof(rsp))) {
+    if (!askHamlib ("+\\get_pos\n", rsp, sizeof(rsp))) {
         plotMessage (box, RA8875_RED, rsp);
         wdDelay (ERR_DWELL);
         initGimbalGUI (box);
@@ -215,9 +211,9 @@ static bool getAzEl(const SBox &box)
 
     // crack
     float new_az, new_el;
-    if (!findHamlibRspValue (rsp, _FX("Azimuth"), &new_az) || !findHamlibRspValue (rsp, _FX("Elevation"), &new_el)) {
-        Serial.printf (_FX("GBL: no az or el from get_pos: %s\n"), rsp);
-        plotMessage (box, RA8875_RED, _FX("unexpected get_pos response"));
+    if (!findHamlibRspValue (rsp, "Azimuth", &new_az) || !findHamlibRspValue (rsp, "Elevation", &new_el)) {
+        Serial.printf ("GBL: no az or el from get_pos: %s\n", rsp);
+        plotMessage (box, RA8875_RED, "unexpected get_pos response");
         wdDelay (ERR_DWELL);
         initGimbalGUI (box);
         return (false);
@@ -269,20 +265,20 @@ static void getAzElAux()
     StackMalloc rsp_mem(2000);
     char *rsp = (char *) rsp_mem.getMem();
 
-    if (!askHamlib (_FX("+\\dump_caps\n"), rsp, rsp_mem.getSize()))
+    if (!askHamlib ("+\\dump_caps\n", rsp, rsp_mem.getSize()))
         return;
 
-    (void) findHamlibRspValue (rsp, _FX("Min Azimuth"), &az_min);
-    (void) findHamlibRspValue (rsp, _FX("Max Azimuth"), &az_max);
-    (void) findHamlibRspValue (rsp, _FX("Min Elevation"), &el_min);
-    (void) findHamlibRspValue (rsp, _FX("Max Elevation"), &el_max);
+    (void) findHamlibRspValue (rsp, "Min Azimuth", &az_min);
+    (void) findHamlibRspValue (rsp, "Max Azimuth", &az_max);
+    (void) findHamlibRspValue (rsp, "Min Elevation", &el_min);
+    (void) findHamlibRspValue (rsp, "Max Elevation", &el_max);
 
     if (el_max == 0)
         el_state = ELS_NONE;
     else
         el_state = ELS_STOPPED;
 
-    Serial.printf (_FX("GBL: Az %g .. %g EL %g .. %g\n"), az_min, az_max, el_min, el_max);
+    Serial.printf ("GBL: Az %g .. %g EL %g .. %g\n", az_min, az_max, el_min, el_max);
 }
 
 /* send target az and el
@@ -292,9 +288,9 @@ static bool setAzEl()
     char cmd[50];
     char rsp[50];
 
-    snprintf (cmd, sizeof(cmd), _FX("+\\set_pos %g %g\n"), az_target, el_target);
+    snprintf (cmd, sizeof(cmd), "+\\set_pos %g %g\n", az_target, el_target);
     if (!askHamlib (cmd, rsp, sizeof(rsp))) {
-        Serial.printf (_FX("GBL: %s\n"), rsp);
+        Serial.printf ("GBL: %s\n", rsp);
         return (false);
     }
 
@@ -314,11 +310,12 @@ static bool connectHamlib (const SBox &box)
     if (connectionOk())
         return (true);
 
-    GIMBAL_TRACE (1, (_FX("GBL: starting connection attempt\n")));
+    if (debugLevel (DEBUG_GIMBAL, 1))
+        Serial.printf ("GBL: starting connection attempt\n");
 
     // pointless going further if no wifi
     if (!wifiOk()) {
-        plotMessage (box, RA8875_RED, _FX("No network"));
+        plotMessage (box, RA8875_RED, "No network");
         return (false);
     }
 
@@ -326,27 +323,27 @@ static bool connectHamlib (const SBox &box)
     char host[NV_ROTHOST_LEN];
     int port;
     if (!getRotctld (host, &port)) {
-        plotMessage (box, RA8875_RED, _FX("Setup info disappeared"));
+        plotMessage (box, RA8875_RED, "Setup info disappeared");
         return (false);
     }
 
     // connect
-    Serial.printf (_FX("GBL: %s:%d\n"), host, port);
+    Serial.printf ("GBL: %s:%d\n", host, port);
     resetWatchdog();
     if (!hamlib_client.connect (host, port)) {
         char msg[NV_ROTHOST_LEN+30];
-        snprintf (msg, sizeof(msg), _FX("%s:%d connection failed"), host, port);
+        snprintf (msg, sizeof(msg), "%s:%d connection failed", host, port);
         plotMessage (box, RA8875_RED, msg);
         return (false);
     }
 
     // get model if possible
-    if (!askHamlib (_FX("+\\get_info\n"), buf, sizeof(buf)))
-        strcpy (buf, _FX("Unknown"));
+    if (!askHamlib ("+\\get_info\n", buf, sizeof(buf)))
+        strcpy (buf, "Unknown");
     char *name;
-    if (!findHamlibRspKey (buf, _FX("Info"), &name)) 
+    if (!findHamlibRspKey (buf, "Info", &name)) 
         name = (char*) "Unknown";
-    snprintf (title, sizeof(title), _FX("%.*s"), (int)(sizeof(title)-1), name);
+    snprintf (title, sizeof(title), "%.*s", (int)(sizeof(title)-1), name);
 
     // init target to current position
     if (!getAzEl(box)) {
@@ -451,7 +448,7 @@ static void drawAxisInfo (const SBox &box, float target_value, float value_now, 
 
     // show value now
     char buf[10];
-    snprintf (buf, sizeof(buf), _FX("%4.0f"), value_now);
+    snprintf (buf, sizeof(buf), "%4.0f", value_now);
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
     tft.setTextColor (RA8875_WHITE);
     tft.setCursor (box.x+VALU_INDENT, y0+CHAR_H);
@@ -482,7 +479,7 @@ static void drawAxisInfo (const SBox &box, float target_value, float value_now, 
     tft.fillRect (x_l, lbox.y, gap, lbox.h, RA8875_BLACK);
     selectFontStyle (LIGHT_FONT, FAST_FONT);
     tft.setTextColor (RA8875_WHITE);
-    snprintf (buf, sizeof(buf), _FX("%.0f"), target_value);
+    snprintf (buf, sizeof(buf), "%.0f", target_value);
     uint16_t b_w = getTextWidth(buf);
     tft.setCursor (x_l + (gap-b_w)/2, lbox.y+1);
     tft.print (buf);
@@ -699,22 +696,25 @@ static void initUpOver()
             // sat not up so determine upover using next rise/set locations
             sat_upover = satnow.saz == SAT_NOAZ ? false : passesThruEOT (satnow.raz, satnow.saz, isSatMoon());
             upover_pending = false;
-            GIMBAL_TRACE (1, (_FX("GBL: UPOVER %d el %g raz %g saz %g\n"), sat_upover, satnow.el, satnow.raz,
-                                                                                        satnow.saz));
+            if (debugLevel (DEBUG_GIMBAL, 1))
+                Serial.printf ("GBL: UPOVER %d el %g raz %g saz %g\n", sat_upover, satnow.el, satnow.raz,
+                                                                                        satnow.saz);
 
         } else if (satnow.el < SAT_MIN_EL + SAT_EL_RSERR) {
 
             // defer until out of abiguous range
             upover_pending = true;
-            GIMBAL_TRACE (1, (_FX("GBL: UPOVER pending el %g\n"), satnow.el));
+            if (debugLevel (DEBUG_GIMBAL, 1))
+                Serial.printf ("GBL: UPOVER pending el %g\n", satnow.el);
 
         } else {
 
             // sat is up now so determine upover using az now and set az at end of pass
             sat_upover = satnow.saz == SAT_NOAZ ? false : passesThruEOT (satnow.az, satnow.saz, isSatMoon());
             upover_pending = false;
-            GIMBAL_TRACE (1, (_FX("GBL: UPOVER %d el %g az %g saz %g\n"), sat_upover, satnow.el, satnow.az,
-                                                                                        satnow.saz));
+            if (debugLevel (DEBUG_GIMBAL, 1))
+                Serial.printf ("GBL: UPOVER %d el %g az %g saz %g\n", sat_upover, satnow.el, satnow.az,
+                                                                                        satnow.saz);
         }
     }
 }
@@ -878,8 +878,8 @@ void stopGimbalNow()
 {
     if (connectionOk()) {
         char buf[100];
-        if (!askHamlib (_FX("+\\stop\n"), buf, sizeof(buf)))
-            Serial.printf (_FX("GBL: %s\n"), buf);
+        if (!askHamlib ("+\\stop\n", buf, sizeof(buf)))
+            Serial.printf ("GBL: %s\n", buf);
     }
 
     az_target = az_now;
@@ -895,7 +895,7 @@ void stopGimbalNow()
 void closeGimbal()
 {
     if (connectionOk()) {
-        Serial.print (_FX("GBL: disconnected\n"));
+        Serial.print ("GBL: disconnected\n");
         hamlib_client.stop();
     }
 }
@@ -949,7 +949,7 @@ void updateGimbal (const SBox &box)
 
                     auto_track = false;
                     stopGimbalNow();
-                    drawTrackButton(false, _FX("Not UTC"));
+                    drawTrackButton(false, "Not UTC");
 
                 } else {
 
@@ -964,7 +964,7 @@ void updateGimbal (const SBox &box)
                         if (satnow.el < SAT_MIN_EL && satnow.raz == SAT_NOAZ) {
                             // down now and doesn't rise
                             stopGimbalNow();
-                            drawTrackButton(false, _FX("No Rise"));
+                            drawTrackButton(false, "No Rise");
                             return;
                         }
 
@@ -1123,7 +1123,8 @@ bool checkGimbalTouch (const SCoord &s, const SBox &box)
         }
     }
 
-    GIMBAL_TRACE (1, (_FX("GBL: target after touch %g %g\n"), az_target, el_target));
+    if (debugLevel (DEBUG_GIMBAL, 1))
+        Serial.printf ("GBL: target after touch %g %g\n", az_target, el_target);
 
     // ours
     return (true);
@@ -1156,29 +1157,29 @@ float &az, float &el)
 bool commandRotator (const char *new_state, const char *new_az, const char *new_el, char ynot[])
 {
     if (!haveGimbal()) {
-        strcpy (ynot, _FX("Rotator not enabled"));
+        strcpy (ynot, "Rotator not enabled");
         return (false);
     }
     if (!connectionOk()) {
-        strcpy (ynot, _FX("Rotator not connected"));
+        strcpy (ynot, "Rotator not connected");
         return (false);
     }
 
     if (new_state) {
-        if (strcmp (new_state, _FX("auto")) == 0) {
+        if (strcmp (new_state, "auto") == 0) {
             if (!auto_track)
                 toggleAutoTrack();
-        } else if (strcmp (new_state, _FX("unauto")) == 0) {
+        } else if (strcmp (new_state, "unauto") == 0) {
             if (auto_track)
                 toggleAutoTrack();
-        } else if (strcmp (new_state, _FX("stop")) == 0) {
+        } else if (strcmp (new_state, "stop") == 0) {
             if (!user_stop)
                 toggleStop();
-        } else if (strcmp (new_state, _FX("unstop")) == 0) {
+        } else if (strcmp (new_state, "unstop") == 0) {
             if (user_stop)
                 toggleStop();
         } else {
-            strcpy (ynot, _FX("state must be stop, unstop, auto or unauto"));
+            strcpy (ynot, "state must be stop, unstop, auto or unauto");
             return (false);
         }
     }
@@ -1186,7 +1187,7 @@ bool commandRotator (const char *new_state, const char *new_az, const char *new_
     if (new_az) {
         float cmd_az = atof (new_az);
         if (cmd_az < az_min || cmd_az > az_max) {
-            snprintf (ynot, 100, _FX("az must be %g .. %g\n"), az_min, az_max);
+            snprintf (ynot, 100, "az must be %g .. %g\n", az_min, az_max);
             return (false);
         }
         az_target = cmd_az;
@@ -1195,7 +1196,7 @@ bool commandRotator (const char *new_state, const char *new_az, const char *new_
     if (new_el) {
         float cmd_el = atof (new_el);
         if (cmd_el < el_min || cmd_el > el_max) {
-            snprintf (ynot, 100, _FX("el must be %g .. %g\n"), el_min, el_max);
+            snprintf (ynot, 100, "el must be %g .. %g\n", el_min, el_max);
             return (false);
         }
         el_target = cmd_el;

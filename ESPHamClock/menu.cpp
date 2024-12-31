@@ -5,7 +5,7 @@
 
 /* MENU_TEXT editing is a bear. These sketches help:
  *
- *   w_len = 8
+ *   window len = 8
  *                          l  c  w  action                                 l  c  w
  *     -----------------                               -----------------
  *   |a|b|c|d|e|f|g|h| |    8  8  1  CHAR_LEFT         |a|b|c|d|e|f|g|h|    8  7  0
@@ -31,11 +31,6 @@
  */
 
 
-// #define _SHOW_BB                      // RBF
-#if defined(_SHOW_BB)
-#warning _SHOW_BB is set
-#endif 
-
 // basic parameters
 // allow setting some/all these in Menu?
 #define MENU_TBM        2               // top and bottom margin
@@ -54,6 +49,20 @@
 #define MENU_BSYC       RA8875_YELLOW   // busy color
 #define MENU_FOCC       RA8875_GREEN    // focus color
 
+/* pick box for a Menutext is partitioned as follows:
+ *             | label             | text field |
+ * | mi.indent | (l_mem-1)*MENU_FW | text_width | MENU_RM |
+ *             <- pb.x
+ *             <- pb.w ------------------------->
+ *
+ * N.B. must agree with pb's created in runMenu()
+ */
+#define MENU_LX(pb)     (pb.x)                                          // MenuText label x, pixels
+#define MENU_LW(mi)     ((uint16_t)((mi.textf->l_mem-1)*MENU_FW))       // MenuText label width, pixels
+#define MENU_TX(pb,mi)  (MENU_LX(pb) + MENU_LW(mi))                     // MenuText text x, pixels
+#define MENU_TW(pb,mi)  (pb.w - MENU_LW(mi))                            // MenuText text width, pixels
+
+
 static const char ok_label[] = "Ok";
 static const char cancel_label[] = "Cancel";
 
@@ -68,53 +77,45 @@ static void drawMenuText (const MenuItem &mi, const SBox &pb, bool draw_label, b
 
     // handy
     MenuText *tfp = mi.textf;
-
-    // beware clock can change these!
-    selectFontStyle (LIGHT_FONT, FAST_FONT);
-
-    // start of visible text
-    uint16_t text_x = pb.x + mi.indent + MENU_FW*(tfp->l_mem-1);        // not EOS
+    const size_t t_len = strlen(tfp->text);
 
     // draw fresh label if desired
     if (draw_label) {
-        tft.fillRect (pb.x, pb.y, text_x - pb.x, pb.h, MENU_BGC);
+        tft.fillRect (MENU_LX(pb), pb.y, MENU_LW(mi), pb.h, MENU_BGC);
 
-        #if defined(_SHOW_BB)
-            tft.drawRect (pb.x, pb.y, text_x - pb.x, pb.h, RA8875_GREEN);
-        #endif // _SHOW_BB
+        if (debugLevel (DEBUG_MENUS, 1))
+            tft.drawRect (MENU_LX(pb), pb.y, MENU_LW(mi), pb.h, RA8875_GREEN);
 
-        tft.setCursor (pb.x + mi.indent, pb.y+2);
+        tft.setCursor (MENU_LX(pb), pb.y+2);
         tft.print (tfp->label);
     }
 
     // erase all text, including cursor
-    tft.fillRect (text_x, pb.y, pb.w - (text_x - pb.x), pb.h, MENU_BGC);
+    tft.fillRect (MENU_TX(pb,mi), pb.y, MENU_TW(pb,mi), pb.h, MENU_BGC);
 
-    #if defined(_SHOW_BB)
+    if (debugLevel (DEBUG_MENUS, 1)) {
         drawSBox (pb, RA8875_GREEN);
-        tft.drawRect (text_x, pb.y, pb.w - (text_x - pb.x), pb.h, RA8875_RED);
-    #endif // _SHOW_BB
+        tft.drawRect (MENU_TX(pb,mi), pb.y, MENU_TW(pb,mi), pb.h, RA8875_RED);
+    }
 
     // check left end
-    size_t t_len = strlen(tfp->text);
-    if (tfp->c_pos > t_len)
-        tfp->c_pos = t_len;
     if (tfp->c_pos < tfp->w_pos)
         tfp->w_pos = tfp->c_pos;
 
     // check right end: insure cursor is both within the string and within the text window
+    int t_n = MENU_TW(pb,mi)/MENU_FW;
     if (tfp->c_pos > t_len)
         tfp->c_pos = t_len;
-    if (tfp->c_pos > tfp->w_pos + tfp->w_len - 1)
-        tfp->w_pos = tfp->c_pos - tfp->w_len + 1;
+    if (tfp->c_pos > tfp->w_pos + t_n - 1)
+        tfp->w_pos = tfp->c_pos - t_n + 1;
 
     // print starting at w_pos
-    tft.setCursor (text_x, pb.y+2);
-    tft.printf ("%.*s", tfp->w_len, tfp->text + tfp->w_pos);
+    tft.setCursor (MENU_TX(pb,mi), pb.y+2);
+    tft.printf ("%.*s", t_n, tfp->text + tfp->w_pos);
 
     // draw cursor if desired (already erased above)
     if (draw_cursor) {
-        uint16_t c_x = text_x + MENU_FW*(tfp->c_pos-tfp->w_pos);
+        uint16_t c_x = MENU_TX(pb,mi) + MENU_FW*(tfp->c_pos-tfp->w_pos);
         uint16_t c_y = pb.y + pb.h - MENU_CD;
         tft.drawLine (c_x, c_y, c_x + MENU_FW, c_y, MENU_FOCC);
     }
@@ -125,9 +126,8 @@ static void drawMenuText (const MenuItem &mi, const SBox &pb, bool draw_label, b
 static void drawMenuTextMsg (const MenuItem &mi, const SBox &pb, const char *msg)
 {
     // overlay the given msg
-    uint16_t text_x = pb.x + mi.indent + MENU_FW*(mi.textf->l_mem-1);        // not EOS
-    tft.fillRect (text_x, pb.y, pb.w - (text_x - pb.x), pb.h, MENU_BGC);
-    tft.setCursor (text_x, pb.y+2);
+    tft.fillRect (MENU_TX(pb,mi), pb.y, MENU_TW(pb,mi), pb.h, MENU_BGC);
+    tft.setCursor (MENU_TX(pb,mi), pb.y+2);
     selectFontStyle (LIGHT_FONT, FAST_FONT);
     tft.setTextColor(MENU_ERRC);
     tft.print (msg);
@@ -212,9 +212,8 @@ static void menuDrawItem (const MenuItem &mi, const SBox &pb, bool draw_label, b
     // clean up
     free ((void*)no__copy);
 
-    #if defined(_SHOW_BB)
+    if (debugLevel (DEBUG_MENUS, 1))
         drawSBox (pb, RA8875_RED);
-    #endif
 
     // draw now if menu is over map_b
     if (!draw_label && boxesOverlap (pb, map_b))
@@ -439,9 +438,8 @@ static int textFieldEdit (MenuInfo &menu, SBox *pick_boxes, int textf_i, const c
     MenuText *tfp = mi.textf;
     size_t t_len = strlen (tfp->text);
 
-    bool debug = false;                                 // RBD
-    if (debug)
-        printf ("TFE l= %2d c= %2d w= %2d %2d='%-*s' ... ",  tfp->w_len, tfp->c_pos, tfp->w_pos,
+    if (debugLevel (DEBUG_MENUS, 2))
+        printf ("TFE l= %2d c= %2d w= %2d %2d='%-*s' ... ",  MENU_TW(pb,mi)/MENU_FW, tfp->c_pos, tfp->w_pos,
                                 (int)t_len, (int)tfp->t_mem, tfp->text);
 
     switch (kb_char) {
@@ -450,7 +448,7 @@ static int textFieldEdit (MenuInfo &menu, SBox *pick_boxes, int textf_i, const c
         return (kbNavigation (menu, pick_boxes, textf_i, kb_char));
 
     case CHAR_LEFT:
-        if (debug)
+        if (debugLevel (DEBUG_MENUS, 2))
             printf (" LEFT ");
         if (tfp->c_pos > 0) {
             tfp->c_pos -= 1;
@@ -459,7 +457,7 @@ static int textFieldEdit (MenuInfo &menu, SBox *pick_boxes, int textf_i, const c
         break;
 
     case CHAR_RIGHT:
-        if (debug)
+        if (debugLevel (DEBUG_MENUS, 2))
             printf (" RIGT ");
         tfp->c_pos += 1;
         menuDrawItem (mi, pb, false, true);
@@ -467,7 +465,7 @@ static int textFieldEdit (MenuInfo &menu, SBox *pick_boxes, int textf_i, const c
 
     case CHAR_BS:
     case CHAR_DEL:
-        if (debug)
+        if (debugLevel (DEBUG_MENUS, 2))
             printf (" DEL  ");
         // delete char left of cursor, if any
         if (tfp->c_pos > 0) {
@@ -481,14 +479,14 @@ static int textFieldEdit (MenuInfo &menu, SBox *pick_boxes, int textf_i, const c
         // insert kb_char at cursor pos if printable and more room left
         if (isprint(kb_char)) {
             if (t_len < tfp->t_mem-1) {
-                if (debug)
+                if (debugLevel (DEBUG_MENUS, 2))
                     printf (" IN %c ", kb_char);
                 memmove (&tfp->text[tfp->c_pos+1], &tfp->text[tfp->c_pos], t_len - tfp->c_pos + 1); // w/EOS
                 tfp->text[tfp->c_pos] = tfp->to_upper ? toupper(kb_char) : kb_char;
                 tfp->c_pos += 1;
                 menuDrawItem (mi, pb, false, true);
             } else {
-                if (debug)
+                if (debugLevel (DEBUG_MENUS, 2))
                     printf (" FULL ");
                 drawMenuTextMsg (mi, pb, "full");
             }
@@ -501,8 +499,8 @@ static int textFieldEdit (MenuInfo &menu, SBox *pick_boxes, int textf_i, const c
     if (t_len > tfp->t_mem - 1)
         fatalError ("textFieldEdit t_len %d > t_mem-1 %d", (int)t_len, (int)tfp->t_mem-1);
 
-    if (debug)
-        printf ("  %2d %2d %2d='%-*s'\n", tfp->c_pos, tfp->w_pos, (int)strlen(tfp->text), 
+    if (debugLevel (DEBUG_MENUS, 2))
+        printf ("  %2d %2d %2d='%-*s'\n", tfp->c_pos, tfp->w_pos, (int)strlen(tfp->text),
                                 (int)tfp->t_mem, tfp->text);
 
     return (textf_i);
@@ -526,23 +524,17 @@ static int tapNavigation (MenuInfo &menu, SBox *pick_boxes, int m_index, const S
                 MenuText *tfp = mi.textf;
 
                 // get start of text area -- N.B. must match menuDrawItem() position
-                uint16_t text_x = pb.x + mi.indent + MENU_FW*(tfp->l_mem-1);    // not EOS
-
+                uint16_t text_x = MENU_TX(pb,mi);
 
                 if (tap.x < text_x) {
                     // call label updater, if any
                     if (tfp->label_fp)
                         (*tfp->label_fp) (tfp);
                 } else {
-                    // set cursor at tap location
+                    // set cursor at tap location but not passed end
                     unsigned c_pos = tfp->w_pos + (tap.x - text_x)/MENU_FW;
-                    if (c_pos < tfp->w_pos)
-                        c_pos = tfp->w_pos;
                     if (c_pos > strlen(tfp->text))
                         c_pos = strlen(tfp->text);
-                    if (tfp->w_pos - c_pos >= tfp->w_len)
-                    if (c_pos - tfp->w_pos > tfp->w_len)
-                        c_pos = tfp->w_len + tfp->w_pos;
                     tfp->c_pos = c_pos;
                 }
             }
@@ -580,24 +572,21 @@ bool runMenu (MenuInfo &menu)
     int n_table = 0;                                    // n menu.items not including MENU_TEXT
     int n_mt = 0;                                       // n MENU_TEXT
     int widest = 0;                                     // widest item, not including MENU_TEXT
-    int widest_mt = 0;                                  // widest MENU_TEXT item
     for (int i = 0; i < menu.n_items; i++) {
         MenuItem &mi = menu.items[i];
         if (mi.type == MENU_IGNORE)
             continue;
         if (mi.type == MENU_TEXT) {
+            // enforce being at the bottom -- width is always full width
             if (i < menu.n_items-1) {
                 MenuFieldType next_mft = menu.items[i+1].type;
                 if (next_mft != MENU_TEXT && next_mft != MENU_IGNORE)
                 fatalError ("all MENU_TEXT must be last");
             }
-            MenuText *mtp = mi.textf;
-            int w = mi.indent + MENU_FW * (mtp->l_mem-1 + mtp->w_len) + MENU_RM;
-            if (w > widest_mt)
-                widest_mt = w;
             n_mt++;
         } else {
-            int w = mi.label ? getTextWidth(mi.label) + mi.indent + MENU_IS + MENU_IS/2 : 0;
+            // set width in accord with how menuDrawItem() draws the item
+            int w = mi.label ? getTextWidth(mi.label) + mi.indent + 3*MENU_IS/2 : 0;
             if (w > widest)
                 widest = w;
             n_table++;                                  // MENU_TEXT is not part of table
@@ -631,10 +620,6 @@ bool runMenu (MenuInfo &menu)
         if (menu.menu_b.w < MENU_BB + menu.ok_b.w + MENU_BB + cancel_b.w + MENU_BB)
             menu.menu_b.w = MENU_BB + menu.ok_b.w + MENU_BB + cancel_b.w + MENU_BB;
     }
-
-    // insure menu width accommodates all MENU_TEXT, if any
-    if (menu.menu_b.w < widest_mt + 2)
-        menu.menu_b.w = widest_mt + 2;
 
 
     // now we know the size of menu_b
@@ -675,7 +660,7 @@ bool runMenu (MenuInfo &menu)
         tft.print (cancel_label);
     }
 
-    // display each table item in its own pick box, all MENU_TEXT will be last and not within table proper
+    // display each table item in its own "pick box", all MENU_TEXT will be last and not within table proper
     StackMalloc pbox_mem(menu.n_items*sizeof(SBox));
     SBox *pick_boxes = (SBox *) pbox_mem.getMem();
     uint16_t col_w = (menu.menu_b.w - MENU_RM)/menu.n_cols;
@@ -688,11 +673,11 @@ bool runMenu (MenuInfo &menu)
 
         // assign item next location and draw unless to be ignored
         if (mi.type == MENU_TEXT) {
-            // N.B. this assumes all MENU_TEXT are below the table
-            MenuText *mtp = mi.textf;
-            pb.x = menu.menu_b.x + 1;
+            // N.B. this assumes all MENU_TEXT are full width below the table
+            // N.B. see MENU_T* and MENU_L* macros
+            pb.x = menu.menu_b.x + mi.indent;
             pb.y = menu.menu_b.y + MENU_TBM + (n_tblrows + mt_i)*MENU_RH;
-            pb.w = mi.indent + MENU_FW * (mtp->l_mem-1 + mtp->w_len) + MENU_RM;
+            pb.w = menu.menu_b.w - (mi.indent + MENU_RM);
             pb.h = MENU_RH;
             menuDrawItem (mi, pb, true, false);
             mt_i++;

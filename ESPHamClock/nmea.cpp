@@ -106,7 +106,7 @@ static bool crackRMC (const char *rmc)
             Serial.printf ("NMEA: missing field comma\n");
             goto out;
         }
-        if (gimbal_trace_level > 1)
+        if (debugLevel (DEBUG_NMEA, 2))
             Serial.printf ("NMEA: field %d %s\n", i, field);
 
         // crack depending on field
@@ -251,7 +251,7 @@ static bool setNMEAtty (int fd, char *ynot, size_t n_ynot)
         return(false);
     }
 
-    if (gimbal_trace_level)
+    if (debugLevel (DEBUG_NMEA, 1))
         Serial.printf ("NMEA: %s set to %s\n", getNMEAFile(), baud_str);
 
     return (true);
@@ -311,14 +311,14 @@ static void *theNMEAThread (void *unused)
                 unsigned msg_dt = (1000U*msg_l)/tty_cps;        // time to send the last message, millis
                 msec0 = m1 - msg_dt - MSGGAP_DT;                // go back by msg time and gap time
             }
-            if (gimbal_trace_level) {
+            if (debugLevel (DEBUG_NMEA, 1)) {
                 unsigned cps = fgets_ms > 0 ? (1000U*msg_l)/fgets_ms : 0;
                 Serial.printf ("NMEA: fgets %4u ms, %4u cps: %s\n", fgets_ms, cps, msg);
             }
         } else {
             if (fgets_ms > MSGGAP_DT)                           // long time implies this is first of group
                 msec0 = m1 - MSGGAP_DT;                         // can only guess correction
-            if (gimbal_trace_level)
+            if (debugLevel (DEBUG_NMEA, 1))
                 Serial.printf ("NMEA: fgets %4u ms: %s\n", fgets_ms, msg);
         }
 
@@ -440,7 +440,7 @@ time_t getNMEAUTC (void)
         if (ms_late > 0) {
             int us_sleep = 1000000 - 1000*ms_late;
             usleep (us_sleep);
-            if (gimbal_trace_level)
+            if (debugLevel (DEBUG_NMEA, 1))
                 Serial.printf ("NMEA: sync sleep %d ms\n", us_sleep/1000);
             t += 1;
         }

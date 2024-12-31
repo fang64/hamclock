@@ -12,7 +12,7 @@ bool dx_info_for_sat;                   // global to indicate whether dx_info_b 
 
 // path drawing
 #define MAX_PATH        512             // N.B. MAX_PATH must be a power of 2 for dashed lines to work right
-#define FOOT_ALT0       200
+#define FOOT_ALT0       250
 #define FOOT_ALT30      100
 #define FOOT_ALT60      75
 #define N_FOOT          3               // number of footprint altitude loci
@@ -1328,41 +1328,47 @@ bool setNewSatCircumstance()
     return (ok);
 }
 
-/* if a satellite is currently in play, return its name, current az, el, range, rate, az of next rise and set,
- *    and hours until next rise and set.
- * even if return true, rise and set az may be SAT_NOAZ, for example geostationary, in which case rdt
- *    and sdt are undefined.
- * N.B. if sat is currently up, rdt could be either < 0 to indicate time since previous rise or > sdt
- *    to indicate time until rise after set
+/* like getSatNow() but for our obs now.
  */
 bool getSatNow (SatNow &satnow)
 {
+    return (getSatCir (obs, nowWO(), satnow));
+}
+
+/* if a satellite is currently in play, return its name, az, el, range, rate, az of next rise and set,
+ *    and hours until next rise and set at time t0.
+ * even if return true, rise and set az may be SAT_NOAZ, for example geostationary, in which case rdt
+ *    and sdt are undefined.
+ * N.B. if sat is up at t0, rdt could be either < 0 to indicate time since previous rise or > sdt
+ *    to indicate time until rise after set
+ */
+bool getSatCir (Observer *snow_obs, time_t t0, SatNow &sat_at_t0)
+{
     // get out fast if nothing to do or no info
-    if (!obs || !sat || !SAT_NAME_IS_SET())
+    if (!snow_obs || !sat || !SAT_NAME_IS_SET())
         return (false);
 
     // public name
-    strncpySubChar (satnow.name, sat_name, ' ', '_', NV_SATNAME_LEN);
+    strncpySubChar (sat_at_t0.name, sat_name, ' ', '_', NV_SATNAME_LEN);
 
     // compute location now
-    DateTime t_now = userDateTime(nowWO());
+    DateTime t_now = userDateTime(t0);
     sat->predict (t_now);
-    sat->topo (obs, satnow.el, satnow.az, satnow.range, satnow.rate);       // expects refs, not pointers
+    sat->topo (snow_obs, sat_at_t0.el, sat_at_t0.az, sat_at_t0.range, sat_at_t0.rate);
 
     // horizon info, if available
-    satnow.raz = sat_rs.rise_ok ? sat_rs.rise_az : SAT_NOAZ;
-    satnow.saz = sat_rs.set_ok  ? sat_rs.set_az  : SAT_NOAZ;
+    sat_at_t0.raz = sat_rs.rise_ok ? sat_rs.rise_az : SAT_NOAZ;
+    sat_at_t0.saz = sat_rs.set_ok  ? sat_rs.set_az  : SAT_NOAZ;
 
     // times
     if (sat_rs.rise_ok)
-        satnow.rdt = (sat_rs.rise_time - t_now)*24;
+        sat_at_t0.rdt = (sat_rs.rise_time - t_now)*24;
     if (sat_rs.set_ok)
-        satnow.sdt = (sat_rs.set_time - t_now)*24;
+        sat_at_t0.sdt = (sat_rs.set_time - t_now)*24;
 
     // ok
     return (true);
 }
-
 
 /* called by main loop() to update _pass_ info so get out fast if nothing to do.
  * the _path_ is updated much less often in updateSatPath().
@@ -1511,13 +1517,12 @@ void drawSatPathAndFoot()
     }
 }
 
-/* draw sat name and next event time in map_name_b if it contains row y0 unless already showing in dx_info.
- * also draw if y0 == 0 as a way to draw regardless.
+/* draw sat name and next event time in map_name_b if all conditions are met.
  */
 void drawSatNameOnRow(uint16_t y0)
 {
-    // done if nothing to do or name is not using row y0 or name is off the map
-    if (dx_info_for_sat || !sat || !obs || !SAT_NAME_IS_SET() || map_name_b.x == 0)
+    // check a myriad of conditions (!)
+    if (dx_info_for_sat || !sat || !obs || !SAT_NAME_IS_SET() || map_name_b.x == 0 || SHOWING_PANE_0())
         return;
     if (y0 != 0 && (y0 < map_name_b.y || y0 >= map_name_b.y + map_name_b.h))
         return;
@@ -2028,25 +2033,26 @@ static void showNextSatEvents ()
 }
 
 /* called when tap within dx_info_b while showing a sat to show menu of choices.
- * s is known to be withing dx_info_b.
+ * s is known to be within dx_info_b.
  */
 void drawDXSatMenu (const SCoord &s)
 {
     // list menu items. N.B. enum and mitems[] must be in same order
     enum {
-        _DXS_CHGSAT, _DXS_SATRST, _DXS_SATOFF, _DXS_SHOWDX, _DXS_N
+        _DXS_CHGSAT, _DXS_SATRST, _DXS_SATOFF, _DXS_SHOWTOOL, _DXS_SHOWDX, _DXS_N
     };
     #define _DXS_INDENT 5
     MenuItem mitems[_DXS_N] = {
         {MENU_1OFN, true,  1, _DXS_INDENT, "Change sat"},
         {MENU_1OFN, false, 1, _DXS_INDENT, "Rise/set table"},
         {MENU_1OFN, false, 1, _DXS_INDENT, "Turn off sat"},
+        {MENU_1OFN, false, 1, _DXS_INDENT, "Show planning tool"},
         {MENU_1OFN, false, 1, _DXS_INDENT, "Show DX Info"},
     };
 
     // box for menu
     SBox menu_b;
-    menu_b.x = fminf (s.x, dx_info_b.x + dx_info_b.w - 100);
+    menu_b.x = fminf (s.x, dx_info_b.x + dx_info_b.w - 130);
     menu_b.y = fminf (s.y, dx_info_b.y + dx_info_b.h - (_DXS_N+1)*14);
     menu_b.w = 0;                               // shrink to fit
 
@@ -2075,6 +2081,12 @@ void drawDXSatMenu (const SCoord &s)
             // uses entire screen
             showNextSatEvents();
             initScreen();
+
+        } else if (mitems[_DXS_SHOWTOOL].set) {
+            // restore DX pane, show tool then restore normal map
+            drawSatPass();
+            drawSatTool();
+            initEarthMap();
 
         } else {
             fatalError (_FX("no dx sat menu"));

@@ -255,7 +255,7 @@ char *formatAge (time_t age, char *line, int line_l, int cols)
 {
     // eh?
     if (age < 0) {
-        Serial.printf ("formatAge(%ld,%d) resetting negative age to zero\n", age, cols);
+        Serial.printf ("formatAge(%ld,%d) resetting negative age to zero\n", (long)age, cols);
         age = 0;
     }
 

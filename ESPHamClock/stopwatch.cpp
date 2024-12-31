@@ -10,13 +10,6 @@
 #include "HamClock.h"
 
 
-// set to show all boxes for debugging
-// #define _SHOW_ALL                    // RBF
-#if defined(_SHOW_ALL)
-#warning stopwatch _SHOW_ALL is set
-#endif
-
-
 
 // countdown ranges, including flashing states
 typedef enum {
@@ -972,14 +965,14 @@ static void drawBCSpaceWxInfo (bool all)
  */
 static void drawBCShowAll()
 {
-    #if defined(_SHOW_ALL)
+    if (debugLevel (DEBUG_BC, 1)) {
         drawSBox (bc_cd_b, RA8875_RED);
         drawSBox (alarm_daily.bc_alarm_b, RA8875_RED);
         drawSBox (alarm_once.bc_alarm_b, RA8875_RED);
         drawSBox (bc_date_b, RA8875_RED);
         tft.drawRect (BC_BAD_X, BC_BAD_Y, BC_BAD_W, BC_BAD_H, RA8875_RED);
         tft.drawRect (BC_SAT_X, BC_SAT_Y, BC_SAT_W, BC_SAT_H, RA8875_RED);
-    #endif
+    }
 }
 
 /* draw the digital Big Clock 
@@ -1192,9 +1185,8 @@ static void drawAnalogDigital (bool all, int hr, int mn, int sc)
     if (all || hr != prev_hr || mn != prev_mn) {
 
         tft.fillRect (x0, BACD_DY-45, 140, 50, RA8875_BLACK);
-        #if defined(_SHOW_ALL)
+        if (debugLevel (DEBUG_BC, 1))
             tft.drawRect (x0, BACD_DY-45, 140, 50, RA8875_RED);
-        #endif
 
         // convert to 12 hours, don't print leading zero
         int hr12 = hr%12;
@@ -1218,17 +1210,15 @@ static void drawAnalogDigital (bool all, int hr, int mn, int sc)
         bool new_tens = (sc/10) != (prev_sc/10);
         if (all || new_tens) {
             tft.fillRect (prev_stx, BACD_DY-45, 60, 50, RA8875_BLACK);
-            #if defined(_SHOW_ALL)
+            if (debugLevel (DEBUG_BC, 1))
                 tft.drawRect (prev_stx, BACD_DY-45, 60, 50, RA8875_RED);
-            #endif
             tft.setCursor (prev_stx, BACD_DY);
             tft.print (sc/10);
             prev_sux = tft.getCursorX();
         } else {
             tft.fillRect (prev_sux, BACD_DY-45, 30, 50, RA8875_BLACK);
-            #if defined(_SHOW_ALL)
+            if (debugLevel (DEBUG_BC, 1))
                 tft.drawRect (prev_sux, BACD_DY-45, 30, 50, RA8875_RED);
-            #endif
         }
 
         // always draw unit digit
@@ -2356,9 +2346,8 @@ void drawMainPageStopwatch (bool force)
 
         // erase
         fillSBox (stopwatch_b, RA8875_BLACK);
-        #if defined(_SHOW_ALL)
+        if (debugLevel (DEBUG_BC, 1))
             drawSBox (stopwatch_b, RA8875_WHITE);
-        #endif
 
         // body radius and step for stems
         uint16_t br = 3*stopwatch_b.h/8;

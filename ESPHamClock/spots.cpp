@@ -3,37 +3,6 @@
 
 #include "HamClock.h"
 
-#define X(a,b,c,d,e) {b,c,d,e},                 // expands _HAM_BANDS to each BandEdge entry
-const BandEdge ham_bands[HAMBAND_N] = {
-    _HAM_BANDS
-};
-#undef X
-
-/* return index of ham_bands[] containing Hz, else HAMBAND_NONE
- */
-HamBandSetting findHamBand (long Hz)
-{
-    int kHz = (int)(Hz/1000);
-
-    // quick binary search
-
-    int min_i = 0;
-    int max_i = HAMBAND_N-1;
-    while (min_i <= max_i) {
-        int mid = (min_i + max_i)/2;
-        if (ham_bands[mid].max_kHz < kHz)
-            min_i = mid+1;
-        else if (ham_bands[mid].min_kHz > kHz)
-            max_i = mid-1;
-        else
-            return ((HamBandSetting)mid);
-    }
-
-    // Serial.printf (_FX("%ld Hz unsupported band\n"), Hz);
-    return (HAMBAND_NONE);
-}
-
-
 
 /* find closest location from ll to the given end(s) of paths defined in the given list of spots.
  * return whether found one within MAX_CSR_DIST.
@@ -101,13 +70,13 @@ static void drawSpotTXRXOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMa
     bool just_dot = dot == LOMD_JUSTDOT;
 
     // get dot size
-    int dot_r = getRawBandSpotRadius (spot.kHz * 1000);                 // wants Hz
+    int dot_r = getRawBandSpotRadius (spot.kHz);
 
     // handy ll of desired end
     const LatLong &ll = tx_end ? spot.tx_ll : spot.rx_ll;
 
     // color depends on band
-    uint16_t b_color = getBandColor ((long)(spot.kHz*1000));            // wants Hz
+    uint16_t b_color = getBandColor (spot.kHz);
 
     // get screen coord, insure over map
     SCoord s;
@@ -161,13 +130,13 @@ void drawSpotLabelOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMapDot d
 void drawSpotPathOnMap (const DXSpot &spot)
 {
     // raw line size, unless none
-    int raw_pw = getRawBandPathWidth(spot.kHz * 1000);                  // wants Hz
+    int raw_pw = getRawBandPathWidth(spot.kHz);
     if (raw_pw == 0)
         return;
 
     // printf ("******** pw %d\n", raw_pw);        // RBF
 
-    const uint16_t color = getBandColor(spot.kHz * 1000);               // wants Hz
+    const uint16_t color = getBandColor(spot.kHz);
 
     // draw from rx to tx
     float slat = sinf (spot.rx_ll.lat);
@@ -176,7 +145,7 @@ void drawSpotPathOnMap (const DXSpot &spot)
     propPath (false, spot.rx_ll, slat, clat, spot.tx_ll, &dist, &bear);
     const int n_step = ((int)ceilf(dist/deg2rad(PATH_SEGLEN))) | 1;     // always odd so both ends are drawn
     const float step = dist/n_step;
-    const bool dashed = getBandPathDashed (spot.kHz * 1000);            // wants Hz
+    const bool dashed = getBandPathDashed (spot.kHz);
     SCoord prev_s = {0, 0};                                             // .x == 0 means don't show
 
 
@@ -213,7 +182,7 @@ void drawSpotOnList (const SBox &box, const DXSpot &spot, int row, uint16_t bg_c
     // pretty freq, fixed 8 chars, bg matching band color assignment
     const char *f_fmt = spot.kHz < 1e6F ? "%8.1f" : "%8.0f";
     snprintf (line, sizeof(line), f_fmt, spot.kHz);
-    const uint16_t fbg_col = getBandColor ((long)(1000*spot.kHz)); // wants Hz
+    const uint16_t fbg_col = getBandColor (spot.kHz);
     const uint16_t ffg_col = getGoodTextColor(fbg_col);
     tft.setTextColor(ffg_col);
     tft.fillRect (x, y-LISTING_OS, 50, h, fbg_col);
@@ -282,41 +251,23 @@ int16_t app_color)
     ss.drawScrollDownControl (box, dw_color, app_color);
 }
 
-/* return whether the two spots appear substantially similar
- */
-bool checkDXDup (const DXSpot &s1, const DXSpot &s2)
-{
-    return (strcmp (s1.tx_call, s2.tx_call) == 0
-                && abs (s1.spotted - s2.spotted) < MAXDUP_DT
-                && fabsf (s1.kHz-s2.kHz) < 0.1F);
-}
-
-
 /* qsort-style function to compare two DXSpot by freq
  */
 int qsDXCFreq (const void *v1, const void *v2)
 {
     DXSpot *s1 = (DXSpot *)v1;
     DXSpot *s2 = (DXSpot *)v2;
-    return (roundf(s1->kHz - s2->kHz));
-}
-
-/* qsort-style function to compare two DXSpot by rx_call
- */
-int qsDXCRXCall (const void *v1, const void *v2)
-{
-    DXSpot *s1 = (DXSpot *)v1;
-    DXSpot *s2 = (DXSpot *)v2;
-    return (strcmp (s1->rx_call, s2->rx_call));
+    return (roundf(s2->kHz - s1->kHz));
 }
 
 /* qsort-style function to compare two DXSpot by rx_grid
+ * N.B. actually used by OnAir to sort by org
  */
 int qsDXCRXGrid (const void *v1, const void *v2)
 {
     DXSpot *s1 = (DXSpot *)v1;
     DXSpot *s2 = (DXSpot *)v2;
-    return (strcmp (s1->rx_grid, s2->rx_grid));
+    return (strcmp (s2->rx_grid, s1->rx_grid));
 }
 
 /* qsort-style function to compare two DXSpot by tx_call
@@ -325,7 +276,7 @@ int qsDXCTXCall (const void *v1, const void *v2)
 {
     DXSpot *s1 = (DXSpot *)v1;
     DXSpot *s2 = (DXSpot *)v2;
-    return (strcmp (s1->tx_call, s2->tx_call));
+    return (strcmp (s2->tx_call, s1->tx_call));
 }
 
 /* qsort-style function to compare two DXSpot by time spotted
@@ -334,7 +285,7 @@ int qsDXCSpotted (const void *v1, const void *v2)
 {
     DXSpot *s1 = (DXSpot *)v1;
     DXSpot *s2 = (DXSpot *)v2;
-    return (s1->spotted - s2->spotted);
+    return (s1->spotted - s2->spotted);         // newest times (larger numbers) first
 }
 
 /* qsort-style function to compare two DXSpot by separation distance
@@ -345,5 +296,5 @@ int qsDXCDist (const void *v1, const void *v2)
     DXSpot *s2 = (DXSpot *)v2;
     float d1 = simpleSphereDist (s1->rx_ll, s1->tx_ll);
     float d2 = simpleSphereDist (s2->rx_ll, s2->tx_ll);
-    return (roundf(1000*(d1 - d2)));
+    return (roundf(1000*(d1 - d2)));            // want farthest (largest) first
 }

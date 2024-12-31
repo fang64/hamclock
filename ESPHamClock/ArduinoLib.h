@@ -133,7 +133,6 @@ extern bool skip_skip;
 extern bool init_iploc;
 extern bool want_kbcursor;
 extern const char *init_locip;
-extern int gimbal_trace_level;
 extern time_t usr_datetime;
 extern const char *getI2CFilename(void);
 extern bool GPIOOk(void);

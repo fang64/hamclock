@@ -87,9 +87,6 @@ static NTPServer ntp_list[] = {                 // init times to 0 insures all g
 #define WIFI_RETRY      (15)
 #define WIFI_MAXRETRY   (5*60)
 
-// pane auto rotation period in seconds
-#define ROTATION_INTERVAL       (getPaneRotationPeriod())
-
 /* "reverting" refers to restoring PANE_1 after temporarily forced to show DE or DX weather.
  */
 static time_t revert_time;                      // when to resume normal pane operation
@@ -193,16 +190,21 @@ time_t nextRotation (PlotPane pp)
     if (pp == PANE_NONE) {
         next_rot = brb_next_update = latest_rot + ROTATION_INTERVAL;
         int dt = next_rot - t0;
-        int at = millis()/1000+dt;
-        if (BRBIsRotating())
-            Serial.printf ("BRB: next rotation in %d sec at %d\n", dt, at);
-        else
-            Serial.printf ("BRB: next update in %d sec at %d\n", dt, at);
+        if (dt > 5) {                                   // reduce mog noise when rotating quickly
+            int at = millis()/1000+dt;
+            if (BRBIsRotating())
+                Serial.printf ("BRB: next rotation in %d sec at %d\n", dt, at);
+            else
+                Serial.printf ("BRB: next update in %d sec at %d\n", dt, at);
+        }
     } else {
         next_rot = next_rotation[pp] = latest_rot + ROTATION_INTERVAL;
         int dt = next_rot - t0;
-        int at = millis()/1000+dt;
-        Serial.printf ("Pane %d now %s next rotation in %d sec at %d\n", pp, plot_names[plot_ch[pp]], dt, at);
+        if (dt > 5) {                                   // reduce mog noise when rotating quickly
+            int at = millis()/1000+dt;
+            Serial.printf ("Pane %d now %s next rotation in %d sec at %d\n", pp, plot_names[plot_ch[pp]],
+                                                        dt, at);
+        }
     }
 
     return (next_rot);
@@ -1170,9 +1172,14 @@ bool getTCPChar (WiFiClient &client, char *cp)
  */
 void sendUserAgent (WiFiClient &client)
 {
+    // don't send full list until first time main page is up to insure all subsystems are up.
+    static bool ready;
+    if (mainpage_up)
+        ready = true;
+
     char ua[400];
 
-    if (logUsageOk()) {
+    if (logUsageOk() && ready) {
 
         // display mode: 0=X11 1=fb0 2=X11full 3=X11+live 4=X11full+live 5=noX
         int dpy_mode = 0;
@@ -2256,7 +2263,6 @@ void updateWiFi(void)
     }
 
     // freshen memory usage
-    cleanADIF();
     cleanDXCluster();
 
     // freshen NCDXF_b
