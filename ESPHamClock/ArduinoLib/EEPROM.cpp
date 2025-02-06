@@ -18,8 +18,6 @@
 
 class EEPROM EEPROM;
 
-static bool verbose;
-
 EEPROM::EEPROM()
 {
         fp = NULL;
@@ -66,15 +64,9 @@ void EEPROM::begin (int s)
 
         // open RW, create if new owned by real user
 	fp = fopen (filename, "r+");
-        if (fp) {
-            if (verbose)
-                printf ("EEPROM %s: open ok\n", filename);
-        } else {
+        if (!fp) {
             fp = fopen (filename, "w+");
-            if (fp) {
-                if (verbose)
-                    printf ("EEPROM %s: create ok\n", filename);
-            } else {
+            if (!fp) {
                 fprintf (stderr, "%s: %s\n", filename, strerror(errno));
                 exit(1);
             }
@@ -92,19 +84,26 @@ void EEPROM::begin (int s)
         n_data_array = s;
         data_array = (uint8_t *) calloc (n_data_array, sizeof(uint8_t));
 
-        // init data_array from file .. support old version of random memory locations
+        // init data_array from file .. support old version of random memory locations ...
+        // and another old version with bug that wrote valid locations a second time with zeros.
 	char line[64];
-	unsigned int a, b;
+	unsigned int a, v;
+        unsigned int largest_a = 0;
 	while (fp && fgets (line, sizeof(line), fp)) {
-	    if (sscanf (line, "%x %x", &a, &b) == 2 && a < n_data_array)
-                data_array[a] = b;
+	    if (sscanf (line, "%x %x", &a, &v) == 2 && a < n_data_array && a >= largest_a) {
+                data_array[a] = v;
+                largest_a = a;
+            }
         }
 }
 
 bool EEPROM::commit(void)
 {
         // (over)write entire data_array array
-        fseek (fp, 0L, SEEK_SET);
+        if (ftruncate (fileno(fp), 0) < 0 || fseek (fp, 0L, SEEK_SET) < 0) {
+            printf ("eeprom: %s\n", strerror(errno));
+            return (false);
+        }
         for (unsigned a = 0; a < n_data_array; a++)
             fprintf (fp, "%08X %02X\n", a, data_array[a]);
         fflush (fp);

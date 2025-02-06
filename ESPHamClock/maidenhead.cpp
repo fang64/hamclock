@@ -121,7 +121,7 @@ void setNVMaidenhead(NV_Name nv, LatLong &ll)
 void getNVMaidenhead (NV_Name nv, char maid[MAID_CHARLEN])
 {
     if (!NVReadString (nv, maid))
-        fatalError (_FX("getNVMaidenhead invalid %d"), (int)nv);
+        fatalError ("getNVMaidenhead invalid %d", (int)nv);
 }
 
 #endif // !_UNIT_TEST

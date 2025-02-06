@@ -28,6 +28,7 @@ static time_t next_refresh;                     // time of next download
 #define MAX_CTY_AGE     (2*24*3600)             // normally update city file this often, secs
 #define RETRY_DT        60                      // retry interval if trouble, secs
 #define MAX_DIST        12                      // max dist from target, degrees
+#define MIN_SZ          100000                  // min believable file size
 
 
 /* table of common prefixes and their rough center location.
@@ -858,7 +859,7 @@ static bool loadCtyFile(void)
         return (cty_list != NULL);
 
     // open cached file
-    FILE *fp = openCachedFile (cty_fn, cty_page, MAX_CTY_AGE);
+    FILE *fp = openCachedFile (cty_fn, cty_page, MAX_CTY_AGE, MIN_SZ);
     if (!fp) {
         next_refresh = myNow() + RETRY_DT;
         return (false);
@@ -877,7 +878,7 @@ static bool loadCtyFile(void)
     // done
     fclose (fp);
     next_refresh = myNow() + MAX_CTY_AGE;
-    Serial.printf ("CTY: refreshed %s from %s found %d locations\n", cty_fn, cty_page, n_cty);
+    Serial.printf ("CTY: loaded %d locations from %s\n", n_cty, cty_fn);
 
     // real question is whether cty_list exists
     return (cty_list != NULL);
@@ -927,6 +928,12 @@ bool call2LL (const char *call, LatLong &ll)
     char home_call[NV_CALLSIGN_LEN];
     char dx_call[NV_CALLSIGN_LEN];
     splitCallSign (call, home_call, dx_call);
+
+    // require a digit if 3 or more chars
+    if (strlen(dx_call) >= 3 && !strHasDigit(dx_call)) {
+        Serial.printf ("CTY: no digit in %s\n", dx_call);
+        return (false);
+    }
 
     const CtyLoc *candidate = searchCty (dx_call);
 

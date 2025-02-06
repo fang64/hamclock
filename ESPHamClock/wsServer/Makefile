@@ -16,7 +16,7 @@
 CC        = g++
 AR        = ar
 ARFLAGS   = r
-CXXFLAGS  = -Iinclude -Wall -O2
+CXXFLAGS  += -Iinclude
 LIB       = libws.a
 
 # Source

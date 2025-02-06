@@ -4,6 +4,7 @@
 
 #include "HamClock.h"
 
+
 // history record
 #define TLOOKSSANE(t)   ((t) > 10 && (t) < 300)                 // whether t, in C, looks sane
 #define SAMPLE_DT       30                                      // minimum sampling period, s
@@ -16,6 +17,9 @@ typedef struct {
 static CPUTempRecord temps_cq[N_CPUTEMPS];                      // circular q, next goes at temps_head
 static int temps_head;                                          // index to oldest record == next insert
 
+
+
+#if defined(_IS_LINUX) || defined(_IS_APPLE_x86)
 
 /* add t to temps_cq[] if at least SAMPLE_DT since previous
  */
@@ -40,6 +44,12 @@ static void logCPUTemp (float t)
     if (++temps_head == N_CPUTEMPS)
         temps_head = 0;
 }
+
+#endif // defined(_IS_LINUX) || defined(_IS_APPLE_x86)
+
+
+
+
 
 #if defined (_IS_LINUX)
 
@@ -352,7 +362,7 @@ static bool plotCPUTempSince (time_t start_tm)
         scale_factor = 1.0F/3600.0;
         scale_label = "Age, hours";
     } else {
-        scale_factor = 1.0F/SPD;
+        scale_factor = 1.0F/SECSPERDAY;
         scale_label = "Age, days";
     }
     for (int i = 0; i < n_data; i++)

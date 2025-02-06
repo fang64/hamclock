@@ -74,6 +74,7 @@ class WiFiClient {
         int connect_to (int sockfd, struct sockaddr *serv_addr, int addrlen, int to_ms);
         int tout (int to_ms, int fd);
         bool pending(int ms);
+        void logBuffer (const uint8_t *buf, int nbuf);
 
 };
 

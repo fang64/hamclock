@@ -287,7 +287,7 @@ static void drawONTA (const SBox &box)
 
 /* handy check whether New Spot symbol needs changing on/off
  */
-static void checkONTANewSpotSymbol (const SBox &box, bool was_at_newest)
+static void checkONTANewSpotSymbol (bool was_at_newest)
 {
     if (was_at_newest && !onta_ss.atNewest()) {
         // record hash when scrolling away and hold rotation
@@ -310,7 +310,7 @@ static void scrollONTAUp (const SBox &box)
         onta_ss.scrollUp ();
         drawONTAVisSpots (box);
     }
-    checkONTANewSpotSymbol (box, was_at_newest);
+    checkONTANewSpotSymbol (was_at_newest);
 }
 
 /* scroll down, if appropriate to do so now.
@@ -322,7 +322,7 @@ static void scrollONTADown (const SBox &box)
         onta_ss.scrollDown ();
         drawONTAVisSpots (box);
     }
-    checkONTANewSpotSymbol (box, was_at_newest);
+    checkONTANewSpotSymbol (was_at_newest);
 }
 
 /* set bio, radio and new DX from given spot
@@ -390,7 +390,7 @@ static void runONTASortMenu (const SBox &box)
     // set up the watch list MENU_TEXT field
     MenuText wl_mt;                                             // menu text prompt context
     char wl_state[WLA_MAXLEN];                                  // wl state, menu may change
-    setupWLMenuText (WLID_ONTA, wl_mt, box, wl_state);          // N.B. we must free wl_mt.text
+    setupWLMenuText (WLID_ONTA, wl_mt, wl_state);               // N.B. we must free wl_mt.text
 
     // set up the org name field
     MenuText org_mt;                                            // file name field
@@ -534,7 +534,7 @@ static bool retrieveONTA (void)
     n_ontaspots = 0;
 
     // go
-    FILE *fp = openCachedFile (onta_file, onta_page, ONTA_INTERVAL);
+    FILE *fp = openCachedFile (onta_file, onta_page, ONTA_INTERVAL, 0);
     bool ok = false;
 
     if (fp) {
@@ -653,15 +653,15 @@ bool updateOnTheAir (const SBox &box, bool fresh)
                 Serial.printf ("ONTA: now showing %s\n", onta_orgs[next_ontaorg]);
             }
             rebuildONTAWatchList();
-            onta_ss.drawNewSpotsSymbol (box, false, false);             // New symbol off
+            onta_ss.drawNewSpotsSymbol (false, false);                  // New symbol off
             ROTHOLD_CLR(PLOT_CH_ONTA);                                  // release rotation hold
             drawONTA (box);
         } else {
-            onta_ss.drawNewSpotsSymbol (box, NEW_SPOTS(), false);       // on if different
+            onta_ss.drawNewSpotsSymbol (NEW_SPOTS(), false);            // on if different
             ROTHOLD_SET(PLOT_CH_ONTA);                                  // hold rotation
         }
     } else {
-        onta_ss.drawNewSpotsSymbol (box, false, false);                 // insure off either way
+        onta_ss.drawNewSpotsSymbol (false, false);                      // insure off either way
         onta_ss.scrollToNewest();
         ROTHOLD_CLR(PLOT_CH_ONTA);                                      // release any rotation hold
         plotMessage (box, RA8875_RED, "ONTA download error");
@@ -692,7 +692,7 @@ bool checkOnTheAirTouch (const SCoord &s, const SBox &box)
         if (onta_ss.checkNewSpotsTouch (s, box)) {
             if (!onta_ss.atNewest() && NEW_SPOTS()) {
                 // scroll to newest, let updateOnTheAir() do the rest
-                onta_ss.drawNewSpotsSymbol (box, true, true);           // immediate feedback 
+                onta_ss.drawNewSpotsSymbol (true, true);                // immediate feedback 
                 onta_ss.scrollToNewest();
                 scheduleNewPlot (PLOT_CH_ONTA);
             }

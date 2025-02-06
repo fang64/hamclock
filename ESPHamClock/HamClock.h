@@ -20,6 +20,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <signal.h>
+#include <dirent.h>
 #include <sys/file.h>
 
 
@@ -109,7 +110,6 @@
 #include <WiFiClient.h>
 #include <WiFiServer.h>
 #include <WiFiUdp.h>
-#include <LittleFS.h>
 
 // screen coordinates, upper left at [0,0]
 typedef struct {
@@ -154,55 +154,87 @@ typedef struct {
 // maidenhead character arrey length, including EOS
 #define MAID_CHARLEN     7
 
-#define SPD     (3600L*24L)                             // seconds per day
-
-
 #define NV_ROTHOST_LEN          18
 #define NV_RIGHOST_LEN          18
 #define NV_FLRIGHOST_LEN        18
 #define NV_COREMAPSTYLE_LEN     10
 
 
-/* allows reading from either WiFiClient or FILE
+/* allows reading from array, WiFiClient or FILE
  */
 extern bool getTCPChar (WiFiClient &client, char *cp);
 class GenReader 
 {
     public:
         
-        // instantiate to read from a WiFiClient client thus: GenReader r(client);
-        GenReader (WiFiClient &client) : my_client (client) {
-            my_fp = NULL;
+        // instantiate to read from a WiFiClient client, with optional content_length
+        // N.B. caller is expected to stop client
+        GenReader (WiFiClient &client, long content_length = 0) {
+            my_type = GR_CLIENT;
+            my_client = &client;
+            my_clen = content_length;   // ignored if 0
         }
 
-        // instantiate to read from a FILE *p thus: GenReader r(fp);
-        GenReader (FILE *fp) : my_client (client_dummy) {
+        // instantiate to read from a FILE *p
+        // N.B. caller is expected to fclose
+        GenReader (FILE *fp) {
+            my_type = GR_FILE;
             my_fp = fp;
         }
 
-        // return next byte from either style stream
+        // instantiate to read from a memory array
+        GenReader (const char *a, int n_a)
+        {
+            my_type = GR_ARRAY;
+            my_array = a;
+            my_array_end = a + n_a;
+        }
+
+        // return next byte from the source
         bool getChar (char *bp) {
-            if (my_fp) {
+            switch (my_type) {
+            case GR_ARRAY:
+                if (my_array < my_array_end) {
+                    *bp = *my_array++;
+                    return (true);
+                }
+                return(false);
+                break;
+            case GR_FILE: {
                 int i = fgetc(my_fp);
-                if (i == EOF)
+                if (i == EOF || feof(my_fp) || ferror(my_fp))
                     return (false);
                 *bp = (char)i;
                 return (true);
-            } else {
-                return (getTCPChar (my_client, bp));
+                }
+                break;
+            case GR_CLIENT:
+                return ((!my_clen || my_clen-- > 0) && getTCPChar (*my_client, bp));
+                break;
+            default:
+                return (false);
             }
         }
 
-        // return whether we are reading a file
-        bool isFile(void) {
-            return (my_fp != NULL);
-        }
+        // type tests
+        bool isFile(void) { return (my_type == GR_FILE); }
+        bool isClient(void) { return (my_type == GR_CLIENT); }
+        bool isArray(void) { return (my_type == GR_ARRAY); }
 
     private:
 
+        typedef enum {
+            GR_ARRAY,
+            GR_FILE,
+            GR_CLIENT
+        } GRType;
+
+        GRType my_type;
         FILE *my_fp;
-        WiFiClient &my_client;
-        WiFiClient client_dummy;
+        WiFiClient *my_client;  // pointer to avoid having to init the reference everywhere with a dummy
+        long my_clen;
+        const char *my_array;
+        const char *my_array_end;
 };
 
 
@@ -244,9 +276,11 @@ class StackMalloc
 };
 
 
-// handy temperature conversions
+// handy unit conversions
 #define FAH2CEN(f)      ((5.0F/9.0F)*((f) - 32.0F))
 #define CEN2FAH(c)      ((9.0F/5.0F)*(c) + 32.0F)
+#define HPA2INHG(h)     ((h)/33.8639F)
+#define INHG2HPA(i)     ((i)*33.8639F)
 
 /* time styles in auxtime_b
  */
@@ -593,6 +627,12 @@ typedef enum {
     NV_X11GEOM_Y,               // app window y coord
     NV_X11GEOM_W,               // app window width
     NV_X11GEOM_H,               // app window height
+    NV_DEWXCHOICE,              // bit mask of NCDXF box DE wx stats
+    NV_DXWXCHOICE,              // bit mask of NCDXF box DX wx stats
+
+    // 230
+    NV_UDPSETSDX,               // whether a new UDP packet sets DX
+    NV_SPCWXCHOICE,             // bit mask of NCDXF box space wx stats
 
     NV_N
 
@@ -867,15 +907,6 @@ extern SBox skip_b;                     // common "Skip" button
 #define MH_RC_DY 5                      // right column char cell y down
 
 
-// ESP mechanism to save lots of RAM by storing what appear to be RAM strings in FLASH
-#if defined (_IS_ESP8266)
-#define _FX(x)  _FX_helper (PSTR(x))
-extern const char *_FX_helper(const char *flash_string);
-#else
-#define _FX(x)          x
-#define _FX_helper(x)   x
-#endif
-
 #define RSS_BG_COLOR    RGB565(0,40,80) // RSS banner background color
 #define RSS_FG_COLOR    RA8875_WHITE    // RSS banner text color
 #define RSS_DEF_INT     15              // RSS default interval, secs
@@ -958,7 +989,7 @@ extern void drawTZ (TZInfo &tzi);
 extern bool inBox (const SCoord &s, const SBox &b);
 extern bool inCircle (const SCoord &s, const SCircle &c);
 extern bool boxesOverlap (const SBox &b1, const SBox &b2);
-extern void doReboot(void);
+extern void doReboot(bool minus_k);
 extern void printFreeHeap (const __FlashStringHelper *label);
 extern void getWorstMem (int *heap, int *stack);
 extern void resetWatchdog(void);
@@ -1062,6 +1093,9 @@ extern void doOTAupdate(const char *ver);
 
 
 
+
+
+
 /*********************************************************************************************
  *
  * adif.cpp
@@ -1074,7 +1108,7 @@ extern bool from_set_adif;
 extern void updateADIF (const SBox &box, bool fresh);
 extern bool checkADIFTouch (const SCoord &s, const SBox &box);
 extern void drawADIFSpotsOnMap (void);
-extern void loadADIFFile (GenReader &gr, long gr_len, int &n_good, int &n_bad);
+extern void loadADIFFile (GenReader &gr, int &n_good, int &n_bad);
 extern void freshenADIFFile (void);
 extern void drawADIFPane (const SBox &box, const char *filename);
 extern bool getClosestADIFSpot (const LatLong &ll, DXSpot *sp, LatLong *llp);
@@ -1083,6 +1117,15 @@ extern bool getADIFPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll);
 extern bool onADIFList (const DXSpot &spot, bool chk_dxcc, bool chk_grid, bool chk_pref, bool chk_band);
 
 
+
+
+/*********************************************************************************************
+ *
+ * adif_parser.cpp
+ *
+ */
+
+extern int readADIFFile (GenReader &gr, DXSpot *&spots, bool use_wl, int &n_bad);
 
 
 
@@ -1221,6 +1264,7 @@ extern bool getDisplayInfo (uint16_t &percent, uint16_t &idle_min, uint16_t &idl
 extern bool brDimmableOk(void);
 extern bool brOnOffOk(void);
 extern bool found_phot, found_ltr;
+extern void doNCDXFBoxTouch (const SCoord &s);
 
 
 
@@ -1229,7 +1273,9 @@ extern bool found_phot, found_ltr;
  * cachefile.cpp
  *
  */
-extern FILE *openCachedFile (const char *fn, const char *url, long max_age);
+extern FILE *openCachedFile (const char *fn, const char *url, int max_age, int min_size);
+extern void cleanCache (const char *contains, int max_age);
+
 
 
 
@@ -1327,6 +1373,17 @@ extern uint16_t HSV_2_RGB565 (uint8_t h, uint8_t s, uint8_t v);
 
 
 
+/*********************************************************************************************
+ *
+ * configs.cpp
+ *
+ */
+
+extern void runConfigManagement(void);
+
+
+
+
 
 /*********************************************************************************************
  *
@@ -1334,16 +1391,17 @@ extern uint16_t HSV_2_RGB565 (uint8_t h, uint8_t s, uint8_t v);
  *
  */
 
-#define CONTESTS_INTERVAL (3600)                // polling interval, secs; updates every Monday
+#define CONTESTS_INTERVAL (2)                   // pane update interval, secs
 
 typedef struct {
-    time_t start_t;                             // start time for alarm, always UTC
+    time_t start_t;                             // contest start time, always UTC
+    time_t end_t;                               // contest end time, always UTC
     char *date_str;                             // malloced date string as user wants to see it
     char *title;                                // malloced title
     char *url;                                  // malloced web page URL
 } ContestEntry;
 
-extern bool updateContests (const SBox &box);
+extern bool updateContests (const SBox &box, bool fresh);
 extern bool checkContestsTouch (const SCoord &s, const SBox &box);
 extern int getContests (const char **credp, const ContestEntry **cepp);
 extern void scrubContestTitleLine (char *line, const SBox &box);
@@ -1372,30 +1430,9 @@ extern void plotCPUTempHistory (void);
  *
  */
 
+// see ArduinoLib.h for DEBUG_* subsystem defines
 
-/* define debug subsystems 
- */
-#define DEBUG_SUBSYS                    \
-    X(DEBUG_ADIF,   "ADIF")             \
-    X(DEBUG_BC,     "BigClock")         \
-    X(DEBUG_DXC,    "dxcluster")        \
-    X(DEBUG_GIMBAL, "gimbal")           \
-    X(DEBUG_WEB,    "live-web")         \
-    X(DEBUG_MENUS,  "menus")            \
-    X(DEBUG_NMEA,   "NMEA")             \
-    X(DEBUG_RADIO,  "radio")            \
-    X(DEBUG_WL,     "watchlist")
-
-#define X(a,b) a,               // expands DEBUG_SUBSYS to each enum and comma
-typedef enum {
-    DEBUG_SUBSYS
-    DEBUG_SUBSYS_N
-} DebugSubsys;
-#undef X
-
-extern bool setDebugLevel (const char *name, int level);
 extern void prDebugLevels (WiFiClient &client, int indent);
-extern bool debugLevel (DebugSubsys s, int level);
 
 
 
@@ -1439,7 +1476,7 @@ extern bool checkDXClusterTouch (const SCoord &s, const SBox &box);
 extern bool getDXClusterSpots (DXSpot **spp, uint8_t *nspotsp);
 extern void drawDXClusterSpotsOnMap (void);
 extern bool isDXClusterConnected(void);
-extern bool sendDXClusterDELLGrid(void);
+extern void sendDXClusterDELLGrid(void);
 extern bool getClosestDXCluster (const LatLong &ll, DXSpot *sp, LatLong *llp);
 extern bool getDXCPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll);
 extern void cleanDXCluster(void);
@@ -1576,7 +1613,7 @@ extern void normalizePanZoom (PanZoom &pz);
  *
  */
 
-#define NV_SATNAME_LEN          9
+#define NV_SATNAME_LEN          9       // max sat name, including EOS
 
 typedef struct _sat_now {
     char name[NV_SATNAME_LEN];          // name
@@ -1594,7 +1631,6 @@ extern void updateSatPath(void);
 extern void drawSatPathAndFoot(void);
 extern void updateSatPass(void);
 extern bool querySatSelection(void);
-extern void strncpySubChar (char to_str[], const char from_str[], char to_char, char from_char, int maxlen);
 extern bool checkSatMapTouch (const SCoord &s);
 extern bool checkSatNameTouch (const SCoord &s);
 extern void drawSatPass(void);
@@ -1637,6 +1673,29 @@ extern void drawEMETool (void);
  */
 
 extern void writeFavicon (FILE *fp);
+
+
+
+
+
+/*********************************************************************************************
+ *
+ * fsfree.cpp
+ *
+ */
+
+
+typedef struct {
+    char name[50];      // name with EOS
+    char date[30];      // ISO 8601 date with EOS
+    time_t t0;          // unix time
+    long len;           // n bytes
+} FS_Info;
+
+extern FS_Info *getConfigDirInfo (int *n_info, char **fs_name, long long *fs_size, long long *fs_used);
+
+extern void checkFSFull(void);
+
 
 
 
@@ -1793,19 +1852,17 @@ typedef enum {
 
 #define PROPBAND_NONE           PROPBAND_N      // handy alias for none
 
-#define PROPMAP_INTERVAL        (45*3600)
-
 // CoreMaps enum and corresponding CoreMapInfo
 #define COREMAPS                                                                        \
     X(CM_COUNTRIES, 7*SECSPERDAY,       "Countries", PROPBAND_NONE, false, false)       \
     X(CM_TERRAIN,   7*SECSPERDAY,       "Terrain",   PROPBAND_NONE, false, false)       \
     X(CM_DRAP,      DRAPMAP_INTERVAL,   "DRAP",      PROPBAND_NONE, false, false)       \
-    X(CM_MUF_V,     0, /* N/A */        "MUF-VCAP",  PROPBAND_NONE, false, false)       \
+    X(CM_MUF_V,     VOACAP_INTERVAL,    "MUF-VCAP",  PROPBAND_NONE, false, false)       \
     X(CM_MUF_RT,    MUF_RT_INTERVAL,    "MUF-RT",    PROPBAND_NONE, false, false)       \
     X(CM_AURORA,    AURORA_INTERVAL,    "Aurora",    PROPBAND_NONE, false, false)       \
     X(CM_WX,        DXWX_INTERVAL,      "Weather",   PROPBAND_NONE, false, false)       \
-    X(CM_PMTOA,     PROPMAP_INTERVAL,   "TOA",       PROPBAND_NONE, false, false)       \
-    X(CM_PMREL,     PROPMAP_INTERVAL,   "REL",       PROPBAND_NONE, false, false)
+    X(CM_PMTOA,     BC_INTERVAL,        "TOA",       PROPBAND_NONE, false, false)       \
+    X(CM_PMREL,     BC_INTERVAL,        "REL",       PROPBAND_NONE, false, false)
 
 #define X(a,b,c,d,e,f)  a,                      // expands COREMAPS to each enum followed by comma
 typedef enum {
@@ -1815,6 +1872,10 @@ typedef enum {
 #undef X
 
 #define CM_NONE CM_N                            // handy alias meaning none active
+
+// macro to test whether the given core map style is just a file (not an active query)
+#define CM_ISFILE(cm)     ((cm) == CM_COUNTRIES || (cm) == CM_TERRAIN || (cm) == CM_DRAP \
+                            || (cm) == CM_AURORA || (cm) == CM_WX || (cm) == CM_MUF_RT)
 
 typedef struct {
     int maxage;                                 // cache file max age, seconds
@@ -1861,14 +1922,7 @@ extern void mapMsg (uint32_t dwell_ms, const char *fmt, ...);
 #endif
 
 
-
-typedef struct {
-    char name[33];      // name with EOS
-    char date[21];      // ISO 8601 date with EOS
-    time_t t0;          // unix time
-    uint32_t len;       // n bytes
-} FS_Info;
-extern FS_Info *getConfigDirInfo (int *n_info, char **fs_name, uint64_t *fs_size, uint64_t *fs_used);
+extern bool zinfWiFiFILE (WiFiClient &in_client, int in_n, FILE *out_fp);
 
 
 
@@ -1904,6 +1958,7 @@ typedef struct _menu_text {
 
 typedef enum {
     MENU_LABEL,                 // insensitive string
+    MENU_0OFN,                  // any number set including none, round selector
     MENU_1OFN,                  // exactly 1 of this set, round selector
     MENU_01OFN,                 // exactly 0 or 1 of this set, round selector
     MENU_AL1OFN,                // at least 1 of this set, square selector
@@ -1914,8 +1969,7 @@ typedef enum {
 } MenuFieldType;
 
 // return whether the given MenuFieldType involves active user interaction
-#define MENU_ACTIVE(i)          ((i)==MENU_1OFN || (i)==MENU_01OFN || (i)==MENU_AL1OFN \
-                                                || (i)==MENU_TOGGLE || (i)==MENU_TEXT)
+#define MENU_ACTIVE(i)          ((i)!=MENU_LABEL && (i)!=MENU_IGNORE && (i)!=MENU_BLANK)
 
 typedef enum {
     MENU_OK_OK,                 // normal ok button appearance
@@ -1997,12 +2051,10 @@ extern bool checkMoonTouch (const SCoord &s, const SBox &box);
  */
 
 #define NCDXF_B_NFIELDS         4       // n fields in NCDXF_b
-#define NCDXF_B_MAXLEN          10      // max field length
+#define NCDXF_B_MAXLEN          9       // max field length, including EOS
 
 extern void updateBeacons (bool immediate);
 extern void updateBeaconMapLocations(void);
-extern void doNCDXFStatsTouch (const SCoord &s, PlotChoice pcs[NCDXF_B_NFIELDS]);
-extern void doNCDXFBoxTouch (const SCoord &s);
 extern bool drawNCDXFBox(void);
 extern void initBRBRotset(void);
 extern void checkBRBRotset(void);
@@ -2132,6 +2184,7 @@ extern bool wsjtxIsStatusMsg (uint8_t **bpp);
 extern bool wsjtxParseStatusMsg (uint8_t *msg, DXSpot &spot);
 extern bool crackN1MMSpot (const char xml[], DXSpot &spot);
 extern bool crackDXLogSpot (const char xml[], DXSpot &spot);
+extern bool crackLog4OMSpot (const char xml[], DXSpot &spot);
 
 
 
@@ -2229,7 +2282,7 @@ extern uint32_t plot_rotset[PANE_N];       // bitmask of each pane's PlotChoice 
 #define PLOT_ROTWARN_DT        4           // show rotation about to occur, secs
 
 extern void insureCountdownPaneSensible(void);
-extern bool checkPlotTouch (const SCoord &s, PlotPane pp, TouchType tt);
+extern bool checkPlotTouch (const SCoord &s, PlotPane pp);
 extern PlotPane findPaneForChoice (PlotChoice pc);
 extern PlotPane findPaneChoiceNow (PlotChoice pc);
 extern PlotChoice getNextRotationChoice (PlotPane pp, PlotChoice pc);
@@ -2460,7 +2513,7 @@ class ScrollState {
         bool checkScrollDownTouch (const SCoord &s, const SBox &b) const;
 
         void initNewSpotsSymbol (const SBox &box, uint16_t color);
-        void drawNewSpotsSymbol (const SBox &box, bool draw, bool active) const;
+        void drawNewSpotsSymbol (bool draw, bool active) const;
         bool checkNewSpotsTouch (const SCoord &s, const SBox &b) const;
 
         void scrollDown (void);
@@ -2639,7 +2692,7 @@ extern bool autoMap(void);
 extern int getMapRotationPeriod(void);
 extern GrayDpy_t getGrayDisplay(void);
 extern bool setRadio (void);
-extern void drawSpotDot (int16_t raw_x, int16_t raw_y, uint16_t radius, LabelOnMapEnd txrx, uint16_t color);
+extern bool UDPSetsDX(void);
 
 
 
@@ -2716,7 +2769,7 @@ extern void drawDigit (const SBox &b, int digit, uint16_t lt, uint16_t bg, uint1
 
 
 // Bz Bt solar magnetic flux info, new data posted every few minutes
-#define BZBT_INTERVAL           (120)                   // polling interval, secs
+#define BZBT_INTERVAL           (180)                   // polling interval, secs
 #define BZBT_BZCOLOR            RGB565(230,75,74)       // BZ plot color
 #define BZBT_BTCOLOR            RGB565(100,100,200)     // BT plot color
 #define BZBT_NV                 (6*25)                  // n lines to collect = 25 hours @ 10 mins per line
@@ -2783,19 +2836,20 @@ extern void drawDigit (const SBox &b, int digit, uint16_t lt, uint16_t bg, uint1
 
 
 /* consolidated space weather enum and stats. #define X to extract desired components.
+ * N.B. max name chars NCDXF_B_MAXLEN-1
  */
-#define SPCWX_DATA                                           \
-    X(SPCWX_SSN,        PLOT_CH_SSN,     0, false, 9, 1, 0)  \
-    X(SPCWX_XRAY,       PLOT_CH_XRAY,    0, false, 1, 1, 0)  \
-    X(SPCWX_FLUX,       PLOT_CH_FLUX,    0, false, 0, 1, 0)  \
-    X(SPCWX_KP,         PLOT_CH_KP,      0, false, 2, 1, 0)  \
-    X(SPCWX_SOLWIND,    PLOT_CH_SOLWIND, 0, false, 9, 1, 0)  \
-    X(SPCWX_DRAP,       PLOT_CH_DRAP,    0, false, 9, 1, 0)  \
-    X(SPCWX_BZ,         PLOT_CH_BZBT,    0, false, 3, 1, 0)  \
-    X(SPCWX_NOAASPW,    PLOT_CH_NOAASPW, 0, false, 9, 1, 0)  /* value will be max noaa_sw.val[] */ \
-    X(SPCWX_AURORA,     PLOT_CH_AURORA,  0, false, 9, 1, 0)
+#define SPCWX_DATA                                                     \
+    X("SSN",      SPCWX_SSN,      PLOT_CH_SSN,     0, false, 9, 1, 0)  \
+    X("X-Ray",    SPCWX_XRAY,     PLOT_CH_XRAY,    0, false, 1, 1, 0)  \
+    X("SFI",      SPCWX_FLUX,     PLOT_CH_FLUX,    0, false, 0, 1, 0)  \
+    X("Kp",       SPCWX_KP,       PLOT_CH_KP,      0, false, 2, 1, 0)  \
+    X("Sol Wind", SPCWX_SOLWIND,  PLOT_CH_SOLWIND, 0, false, 9, 1, 0)  \
+    X("DRAP",     SPCWX_DRAP,     PLOT_CH_DRAP,    0, false, 9, 1, 0)  \
+    X("Bz",       SPCWX_BZ,       PLOT_CH_BZBT,    0, false, 3, 1, 0)  \
+    X("NOAA SpW", SPCWX_NOAASPW,  PLOT_CH_NOAASPW, 0, false, 9, 1, 0)  /* value will be max noaa_sw.val[] */ \
+    X("Aurora",   SPCWX_AURORA,   PLOT_CH_AURORA,  0, false, 9, 1, 0)
 
-#define X(a,b,c,d,e,f,g) a,                     // expands SPCWX_DATA to each enum and comma
+#define X(a,b,c,d,e,f,g,h) b,                   // expands SPCWX_DATA to each enum and comma
 typedef enum {
     SPCWX_DATA
     SPCWX_N
@@ -2805,11 +2859,12 @@ typedef enum {
 /* manage the display and sorting of space weather in NCDXF box
  */
 typedef struct {
+    const char *name;                           // printable name
     SPCWX_t sp;                                 // which one we are, needed for sorting
     PlotChoice pc;                              // corresponding plot choice if tapped
     float value;                                // current value
     bool value_ok;                              // whether value is valid
-    int rank;                                   // display order after sorting for NCDXF, 0 is top
+    int rank;                                   // display order after sorting for NCDXF, 0 is best
     float m, b;                                 // slope and intercept to convert value when finding rank
 } SpaceWeather_t;
 
@@ -2897,12 +2952,13 @@ extern bool retrieveKp (KpData &kp);
 extern bool retrieveNOAASWx(NOAASpaceWxData &noaa);
 extern bool retrieveAurora(AuroraData &a);
 
-extern void doSpaceStatsTouch (const SCoord &s);
-extern void drawSpaceStats(uint16_t color);
+extern void doNCDXFSpcWxTouch (const SCoord &s);
+extern void drawNCDXFSpcWxStats(uint16_t color);
 extern bool checkForNewSpaceWx(void);           // check for any new data or ...
 extern bool checkForNewDRAP(void);              // ... a few specific ones
 extern bool checkForNewAurora(void);            // ... a few specific ones
 extern time_t nextRetrieval (PlotChoice pc, int interval);
+extern void initSpaceWX(void);
 
 
 
@@ -2931,8 +2987,8 @@ extern bool getClosestSpot (const DXSpot *list, int n_list, LabelOnMapEnd which_
     DXSpot *sp, LatLong *llp);
 extern void drawSpotLabelOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMapDot dot);
 extern void drawSpotPathOnMap (const DXSpot &spot);
-extern void drawSpotOnList (const SBox &box, const DXSpot &spot, int row, uint16_t bg_color);
 extern void ditherLL (LatLong &ll);
+extern void drawSpotDot (int16_t raw_x, int16_t raw_y, uint16_t radius, LabelOnMapEnd txrx, uint16_t color);
 extern void drawVisibleSpots (WatchListId wl_id, const DXSpot *spots, const ScrollState &ss, const SBox &box,
     int16_t app_color);
 
@@ -3003,7 +3059,7 @@ typedef enum {
 extern SBox stopwatch_b;                        // clock icon on main display
 
 extern void initStopwatch(void);
-extern void checkStopwatchTouch(TouchType tt);
+extern void checkStopwatchTouch(void);
 extern void checkCountdownTouch(void);
 extern bool runStopwatch(void);
 extern void drawMainPageStopwatch (bool force);
@@ -3041,6 +3097,7 @@ extern uint16_t getTextWidth (const char str[]);
 extern char *expandENV (const char *fn);
 extern uint16_t maxStringW (char *str, uint16_t maxw);
 extern const char *strcistr (const char *haystack, const char *needle);
+extern int qsString (const void *v1, const void *v2);
 extern int strtokens (char *str, char *tokens[], int max_tokens);
 extern void quietStrncpy (char *to, const char *from, int len);
 extern void formatSexa (float dt_hrs, int &a, char &sep, int &b);
@@ -3049,6 +3106,8 @@ extern bool strHasAlpha (const char *s);
 extern bool strHasDigit (const char *s);
 extern bool strHasPunct (const char *s);
 extern bool strHasSpace (const char *s);
+extern void strncpySubChar (char to_str[], const char from_str[], char to_char, char from_char, int to_len);
+
 
 
 
@@ -3100,7 +3159,7 @@ extern char NOTADIFPREF_KW[];
 
 extern WatchListShow checkWatchListSpot (WatchListId wl_id, const DXSpot &dxsp);
 extern bool compileWatchList (WatchListId wl_id, const char *new_wlstr, char ynot[], size_t n_ynot);
-extern void setupWLMenuText (WatchListId wl_id, MenuText &mt, const SBox &box, char state[WLA_MAXLEN]);
+extern void setupWLMenuText (WatchListId wl_id, MenuText &mt, char state[WLA_MAXLEN]);
 extern char *wlCompress (char *spec);
 extern bool wlIdOk (WatchListId wl_id);
 
@@ -3148,6 +3207,8 @@ extern bool bypass_pw;
 #define MUF_RT_INTERVAL         (900)                   // polling interval, secs
 #define DEWX_INTERVAL           (1700)                  // polling interval, secs
 #define DXWX_INTERVAL           (1600)                  // polling interval, secs
+#define BC_INTERVAL             (2400)                  // polling interval, secs
+#define VOACAP_INTERVAL         (2500)                  // polling interval, secs
 #define OTHER_MAPS_INTERVAL     (1800)                  // polling interval, secs
 #define ROTATION_INTERVAL       (getPaneRotationPeriod()) // handy pane auto rotation period in seconds
 
@@ -3167,6 +3228,7 @@ extern void scheduleNewPlot (PlotChoice ch);
 extern void scheduleNewCoreMap (CoreMaps cm);
 extern void updateWiFi(void);
 extern bool checkBCTouch (const SCoord &s, const SBox &b);
+extern void setPlotVisible (PlotChoice pc);
 extern bool setPlotChoice (PlotPane new_pp, PlotChoice new_ch);
 extern time_t getNTPUTC (NTPServer *);
 extern void scheduleRSSNow(void);
@@ -3176,8 +3238,6 @@ extern bool wifiOk(void);
 extern void httpHCGET (WiFiClient &client, const char *server, const char *hc_page);
 extern bool httpSkipHeader (WiFiClient &client);
 extern bool httpSkipHeader (WiFiClient &client, const char *header, char *value, int value_len);
-extern void FWIFIPR (WiFiClient &client, const __FlashStringHelper *str);
-extern void FWIFIPRLN (WiFiClient &client, const __FlashStringHelper *str);
 extern int getNTPServers (const NTPServer **listp);
 extern bool setRSSTitle (const char *title, int &n_titles, int &max_titles);
 extern time_t nextPaneRotation (PlotPane pp);
@@ -3234,6 +3294,25 @@ extern bool readWiFiRSSI(int &rssi);
  *
  */
 
+/* set possible wx stats to display in NCDXF_b.
+ * N.B. put TEMP first because 1) most likely used and 2) short enough for DE/DX prefix (see drawNCDXFBoxWx())
+ * N.B. max name chars NCDXF_B_MAXLEN-1
+ */
+#define WXSTATS                   \
+    X(WXS_TEMP,     "Temp")       \
+    X(WXS_HUM,      "Humidity")   \
+    X(WXS_DEW,      "DewPoint")   \
+    X(WXS_PRES,     "Pressure")   \
+    X(WXS_WSPD,     "Wind Spd")   \
+    X(WXS_WDIR,     "Wind Dir")
+
+#define X(a,b) a,               // expands WXSTATS to each enum and comma
+typedef enum {
+    WXSTATS
+    WXS_N
+} WeatherStats;
+#undef X
+
 
 extern bool updateDEWX (const SBox &box);
 extern bool updateDXWX (const SBox &box);
@@ -3242,6 +3321,7 @@ extern const WXInfo *findTZCache (const LatLong &ll, bool is_de, char ynot[]);
 extern const WXInfo *findWXFast (const LatLong &ll);
 extern bool getFastWx (const LatLong &ll, WXInfo &wi);
 extern bool getCurrentWX (const LatLong &ll, bool is_de, WXInfo *wip, char ynot[]);
+extern void doNCDXFWXTouch (BRB_MODE m);
 
 
 

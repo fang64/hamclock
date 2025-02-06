@@ -72,7 +72,7 @@ static void setDefaultPaneChoice (PlotPane pp)
         // default for PANE_0 is PLOT_CH_NONE, others are from a standard set
         if (pp == PANE_0) {
             plot_ch[pp] = PLOT_CH_NONE;
-            Serial.println (F("PANE: Setting pane 0 to default NONE"));
+            Serial.println ("PANE: Setting pane 0 to default NONE");
         } else {
             const PlotChoice ch_defaults[PANE_N] = {PLOT_CH_SSN, PLOT_CH_XRAY, PLOT_CH_SDO};
             plot_ch[pp] = ch_defaults[pp];
@@ -372,7 +372,7 @@ void insureCountdownPaneSensible()
 /* check for touch in the given pane, return whether ours.
  * N.B. accommodate a few choices that have their own touch features.
  */
-bool checkPlotTouch (const SCoord &s, PlotPane pp, TouchType tt)
+bool checkPlotTouch (const SCoord &s, PlotPane pp)
 {
     // ignore taps in this pane while reverting
     if (pp == ignorePaneTouch())

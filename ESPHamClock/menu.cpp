@@ -154,7 +154,7 @@ static void menuDrawItem (const MenuItem &mi, const SBox &pb, bool draw_label, b
     char *no__copy = NULL;
     if (draw_label && mi.label) {       // label will be NULL for IGNORE and BLANK
         no__copy = strdup (mi.label);
-        strncpySubChar (no__copy, mi.label, ' ', '_', strlen(mi.label));
+        strncpySubChar (no__copy, mi.label, ' ', '_', strlen(mi.label)+1);      // len including EOS
     }
 
     // draw depending on type
@@ -173,6 +173,7 @@ static void menuDrawItem (const MenuItem &mi, const SBox &pb, bool draw_label, b
         drawSBox (pb, kb_focus ? MENU_FOCC : MENU_BGC);
         break;
 
+    case MENU_0OFN:     // fallthru
     case MENU_01OFN:    // fallthru
     case MENU_1OFN:
         if (mi.set)
@@ -306,8 +307,9 @@ static void updateMenu (MenuInfo &menu, SBox *pick_boxes, int pick_i, bool kb_fo
         }
         break;
 
+    case MENU_0OFN:     // fallthru
     case MENU_TOGGLE:
-        // uncondition change
+        // unconditional toggle
         mi.set = !mi.set;
         menuDrawItem (mi, pb, false, kb_focus);
         break;
@@ -778,11 +780,11 @@ bool runMenu (MenuInfo &menu)
     fillSBox (menu.menu_b, RA8875_BLACK);
 
     // record settings
-    Serial.printf (_FX("Menu result after %s:\n"), ok ? "Ok" : "Cancel");
+    Serial.printf ("Menu result after %s:\n", ok ? "Ok" : "Cancel");
     for (int i = 0; i < menu.n_items; i++) {
         MenuItem &mi = menu.items[i];
         if (MENU_ACTIVE(mi.type))
-            Serial.printf (_FX("  %-15s g%d s%d\n"), mi.label ? mi.label : "", mi.group, mi.set);
+            Serial.printf ("  %-15s g%d s%d\n", mi.label ? mi.label : "", mi.group, mi.set);
     }
 
     return (ok);
@@ -841,6 +843,7 @@ void menuRedrawOk (SBox &ok_b, MenuOkState oks)
  *   (*fp)() (IFF fp != NULL) returns true:          set fp_true to true and return false.
  *   to_ms is > 0 and nothing happens for that long: return false.
  * while waiting we optionally update clocks and allow some web server commands.
+ * return true if user typed or tapped, else false if timed out or ui.fp return true.
  */
 bool waitForUser (UserInput &ui)
 {

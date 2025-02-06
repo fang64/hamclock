@@ -17,18 +17,44 @@ static DebugLevel db_level[DEBUG_SUBSYS_N] = {
 };
 #undef X
 
+/* set the given debug subsystem to the given level.
+ * name can be short
+ */
 bool setDebugLevel (const char *name, int level)
 {
+    // only require match up to name length
+    const size_t n_l = strlen (name);
+
+    // find match, beware ambiquities
+    DebugLevel *dlp = NULL;
     for (int i = 0; i < DEBUG_SUBSYS_N; i++) {
-        if (strcasecmp (name, db_level[i].name) == 0) {
-            db_level[i].level = level;
-            Serial.printf ("DEBUG: set %s=%d\n", db_level[i].name, db_level[i].level);
-            return (true);
+        if (strncasecmp (name, db_level[i].name, n_l) == 0) {
+            if (dlp) {
+                Serial.printf ("DEBUG: %s is ambiguous\n", name);
+                return (false);
+            }
+            dlp = &db_level[i];
         }
     }
+
+    if (dlp) {
+        dlp->level = level;
+        Serial.printf ("DEBUG: set %s=%d\n", dlp->name, dlp->level);
+        return (true);
+    }
+
     Serial.printf ("DEBUG: set unknown %s\n", name);
     return (false);
 }
+
+void getDebugs (const char *names[DEBUG_SUBSYS_N], int levels[DEBUG_SUBSYS_N])
+{
+    for (int i = 0; i < DEBUG_SUBSYS_N; i++) {
+        names[i] = db_level[i].name;
+        levels[i] = db_level[i].level;
+    }
+}
+
 
 void prDebugLevels (WiFiClient &client, int indent)
 {

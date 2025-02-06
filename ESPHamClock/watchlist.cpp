@@ -213,7 +213,13 @@ class WatchList {
             if (modeptr > token) {
                 // leading number is followed by something, is it a valid band?
                 HamBandSetting h = findHamBand(n);
-                if (h != HAMBAND_NONE) {
+                if (h == HAMBAND_NONE) {
+                    // not valid band not a prefix either if over 9
+                    if (n >= 10) {
+                        snprintf (ynot, n_ynot, "band? %d", n);
+                        return (false);
+                    }
+                } else {
                     // number is a valid band, now check if what followed is valid mode
                     if (strcasecmp (modeptr, "m") == 0 || isValidSubBand(modeptr)) {
                         // valid mode too so we're commited to this not being a generic prefix
@@ -645,7 +651,7 @@ static bool compileTestADIFWatchList (struct _menu_text *tfp, char ynot[], size_
 /* handy consolidation of setting up a MENU_TEXT for editing watch lists.
  * N.B. caller must free mi.text
  */
-void setupWLMenuText (WatchListId wl_id, MenuText &mt, const SBox &box, char wl_state[WLA_MAXLEN])
+void setupWLMenuText (WatchListId wl_id, MenuText &mt, char wl_state[WLA_MAXLEN])
 {
     memset (&mt, 0, sizeof(mt));                                // easy defaults
     getWatchListState (wl_id, wl_state);                        // get current state name

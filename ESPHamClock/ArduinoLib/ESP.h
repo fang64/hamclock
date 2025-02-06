@@ -29,7 +29,7 @@ class ESP {
             return (1);
         }
 
-        void restart(void);
+        void restart(bool minus_k);
 
         uint32_t getChipId(void);
 

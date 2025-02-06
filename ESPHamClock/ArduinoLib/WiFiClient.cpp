@@ -6,9 +6,6 @@
 #include "IPAddress.h"
 #include "WiFiClient.h"
 
-// set for more verbose info
-static int _trace_client = 0;
-
 // default constructor
 WiFiClient::WiFiClient()
 {
@@ -28,7 +25,7 @@ WiFiClient::WiFiClient(int fd)
         next_peek = 0;
         eof = false;
 
-        if (fd >= 0 && _trace_client)
+        if (fd >= 0 && debugLevel (DEBUG_NET, 1))
             printf ("WiFiCl: new WiFiClient inheriting fd %d\n", fd);
 
 	socket = fd;
@@ -41,7 +38,7 @@ WiFiClient::WiFiClient(int fd)
 WiFiClient::operator bool()
 {
         bool is_active = socket != -1 && !eof;
-        if (_trace_client > 1)
+        if (debugLevel (DEBUG_NET, 3))
             printf ("WiFiCl: bool fd %d: active?%d eof?%d\n", socket, is_active, eof);
         if (!is_active)
             stop();
@@ -149,7 +146,7 @@ bool WiFiClient::connect(const char *host, int port)
         signal (SIGPIPE, SIG_IGN);
 
         /* ok start fresh */
-        if (_trace_client)
+        if (debugLevel (DEBUG_NET, 1))
             printf ("WiFiCl: new %s:%d fd %d\n", host, port, sockfd);
         freeaddrinfo (aip);
 
@@ -180,14 +177,14 @@ void WiFiClient::setNoDelay(bool on)
 void WiFiClient::stop()
 {
 	if (socket >= 0) {
-            if (_trace_client)
+            if (debugLevel (DEBUG_NET, 1))
                 printf ("WiFiCl: stopping fd %d\n", socket);
 	    shutdown (socket, SHUT_RDWR);
 	    close (socket);
 	    socket = -1;
 	    n_peek = 0;
             next_peek = 0;
-	} else if (_trace_client > 1)
+	} else if (debugLevel (DEBUG_NET, 3))
             printf ("WiFiCl: fd %d already stopped\n", socket);
 }
 
@@ -213,19 +210,22 @@ int WiFiClient::available()
         // read more
 	int nr = ::read(socket, peek, sizeof(peek));
 	if (nr > 0) {
-            if (_trace_client > 1)
+            if (debugLevel (DEBUG_NET, 1))
                 printf ("WiFiCl: read(%d) %d\n", socket, nr);
+            if (debugLevel (DEBUG_NET, 2))
+                logBuffer (peek, nr);
 	    n_peek = nr;
             next_peek = 0;
 	    return (1);
 	} else if (nr == 0) {
-            if (_trace_client)
+            if (debugLevel (DEBUG_NET, 1))
                 printf ("WiFiCl: read(%d) EOF\n", socket);
             eof = true;
 	    stop();
 	    return (0);
         } else {
-            printf ("WiFiCl: read(%d): %s\n", socket, strerror(errno));
+            if (debugLevel (DEBUG_NET, 1))
+                printf ("WiFiCl: read(%d): %s\n", socket, strerror(errno));
 	    stop();
 	    return (0);
 	}
@@ -234,7 +234,7 @@ int WiFiClient::available()
 int WiFiClient::read()
 {
 	if (available()) {
-            if (_trace_client > 1)
+            if (debugLevel (DEBUG_NET, 3))
                 printf ("WiFiCl: read(%d) returning %c %d\n", socket, peek[next_peek], peek[next_peek]);
             return (peek[next_peek++]);
         }
@@ -247,35 +247,56 @@ int WiFiClient::write (const uint8_t *buf, int n)
         if (socket < 0)
             return (0);
 
-	int nw;
+	int nw = 0;
 	for (int ntot = 0; ntot < n; ntot += nw) {
 	    nw = ::write (socket, buf+ntot, n-ntot);
 	    if (nw < 0) {
                 // select says it won't block but it still might be temporarily EAGAIN
                 if (errno != EAGAIN) {
-                    printf ("WiFiCl: write(%d): %s\n", socket, strerror(errno));
+                    printf ("WiFiCl: write(%d) after %d: %s\n", socket, ntot, strerror(errno));
                     stop();             // avoid repeated failed attempts
                     return (0);
                 } else
                     nw = 0;             // act like nothing happened
-	    }
-	    if (_trace_client > 1) {
-                printf ("WiFiCl: write(%d) %d: ", socket, nw);
-                bool all_printable = true;
-                for (int i = 0; i < nw; i++) {
-                    if (!isprint(buf[ntot+i])) {
-                        all_printable = false;
-                        break;
-                    }
-                }
-                if (all_printable)
-                    printf (" \"%.*s\"\n", nw, buf+ntot);
-                else
-                    printf ("\n");
+	    } else if (nw == 0) {
+                printf ("WiFiCl: write(%d) returns 0 after %d\n", socket, ntot);
+                stop();             // avoid repeated failed attempts
+                return (0);
             }
-
 	}
+
+        if (debugLevel (DEBUG_NET, 1))
+            printf ("WiFiCl: write(%d) %d\n", socket, n);
+        if (debugLevel (DEBUG_NET, 2))
+            logBuffer (buf, n);
+
 	return (n);
+}
+
+/* log the given buffer contents
+ */
+void WiFiClient::logBuffer (const uint8_t *buf, int nbuf)
+{
+        const int max_pg_w = 100;
+        int pg_w = 0;
+        bool last_nl = false;
+        while (nbuf-- > 0) {
+            uint8_t c = *buf++;
+            if (isprint(c)) {
+                pg_w += printf ("%c", c);
+                last_nl = false;
+            } else {
+                pg_w += printf (" %02X", c);
+                last_nl = c == '\n';
+            }
+            if (pg_w > max_pg_w) {
+                printf ("\n");
+                pg_w = 0;
+                last_nl = true;
+            }
+        }
+        if (!last_nl)
+            printf ("\n");
 }
 
 void WiFiClient::print (void)
@@ -413,7 +434,7 @@ bool WiFiClient::readArray (char buf[], int n)
                 return (false);
             }
             if (nr == 0) {
-                if (_trace_client)
+                if (debugLevel (DEBUG_NET, 1))
                     printf ("WiFiCl: readArray(%d) EOF\n", socket);
                 eof = true;
                 stop();

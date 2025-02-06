@@ -18,7 +18,6 @@ OBJS = \
 	ESP.o \
 	ESP8266WiFi.o \
 	ESP8266httpUpdate.o \
-        LittleFS.o \
 	Serial.o \
         SPI.o \
 	Time.o \

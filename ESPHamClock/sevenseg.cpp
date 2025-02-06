@@ -317,7 +317,7 @@ void drawDigit (const SBox &b, int digit, uint16_t lt, uint16_t bg, uint16_t fg)
         tft.fillRect (b.x+t, b.y+ho2-to2, w-2*t, t, fg);
         break;
     default:
-        fatalError(_FX("drawDigit %d"), digit);
+        fatalError("drawDigit %d", digit);
         break;
     }
 }

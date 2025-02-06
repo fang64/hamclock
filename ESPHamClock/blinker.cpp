@@ -73,7 +73,7 @@ void startBinkerThread (volatile ThreadBlinker &tb, int pin, bool on_is_low)
         pthread_t tid;
         int e = pthread_create (&tid, NULL, blinkerThread, (void*)&tb); // make volatile again in thread
         if (e != 0)
-            Serial.printf (_FX("blinker thread for pin %d failed: %s\n"), tb.pin, strerror(e));
+            Serial.printf ("blinker thread for pin %d failed: %s\n", tb.pin, strerror(e));
     }
 }
 
@@ -134,7 +134,7 @@ void startMCPPoller (volatile MCPPoller &mp, int pin, int hz)
         pthread_t tid;
         int e = pthread_create (&tid, NULL, pollerThread, (void*)&mp); // make volatile again in thread
         if (e != 0)
-            Serial.printf (_FX("poller thread for pin %d failed: %s\n"), mp.pin, strerror(e));
+            Serial.printf ("poller thread for pin %d failed: %s\n", mp.pin, strerror(e));
     }
 }
 

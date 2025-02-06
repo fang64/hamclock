@@ -14,16 +14,18 @@ static const char ww_page[] = "/worldwx/wx.txt";        // URL for the gridded w
 
 // config
 #define WWXTBL_INTERVAL (45*60)                         // "fast" world wx table update interval, secs
-#define MAX_WXTZ_AGE    (30*60)                         // max age of info for same location, secs
+#define MAX_WXTZ_AGE    (55*60)                         // max age of info for same location, secs
 
 // WXInfo and exactly where it applies and when it should be updated
 typedef struct {
-    WXInfo info;
-    float lat_d, lng_d;
+    WXInfo info;                                        // timezone and wx for ...
+    float lat_d, lng_d;                                 // this location
+    bool ok;                                            // whether info is valid
+    char ynot[100];                                     // or why not
     time_t next_update;                                 // next routine update of same lat/lng
-    time_t next_err_update;                             // next update if net trouble
 } WXCache;
 static WXCache de_cache, dx_cache;
+static time_t next_err_update;                          // next update if net trouble, shared
 
 /* table of world-wide info for fast general lookups by roaming cursor.
  * wwt.table is a 2d table n_cols x n_rows.
@@ -37,6 +39,34 @@ typedef struct {
 } WWTable;
 static WWTable wwt;
 
+/* bit masks of WeatherStats for DE and DX
+ */
+static uint16_t dewx_chmask, dxwx_chmask;
+
+/* menu names for each WeatherStats
+ */
+#define X(a,b)  b,                              // expands WXSTATS to name plus comma
+static const char *wxch_names[WXS_N] = {
+    WXSTATS
+};
+#undef X
+
+
+
+
+/* insure weather choice masks are defined
+ */
+static void initChoiceMasks(void)
+{
+    if (!NVReadUInt16 (NV_DEWXCHOICE, &dewx_chmask) || dewx_chmask == 0) {
+        dewx_chmask = (1<<WXS_TEMP) | (1<<WXS_HUM) | (1<<WXS_WSPD) | (1<<WXS_WDIR);
+        NVWriteUInt16 (NV_DEWXCHOICE, dewx_chmask);
+    }
+    if (!NVReadUInt16 (NV_DXWXCHOICE, &dxwx_chmask) || dxwx_chmask == 0) {
+        dxwx_chmask = (1<<WXS_TEMP) | (1<<WXS_HUM) | (1<<WXS_WSPD) | (1<<WXS_WDIR);
+        NVWriteUInt16 (NV_DXWXCHOICE, dxwx_chmask);
+    }
+}
 
 /* convert wind direction in degs to name, return whether in range.
  */
@@ -102,6 +132,9 @@ static bool retrieveWorldWx(void)
          */
         char line[100];
         while (getTCPLine (ww_client, line, sizeof(line), NULL)) {
+
+            if (debugLevel (DEBUG_WX, 2))
+                Serial.printf ("WWX: %s\n", line);
 
             // another line
             line_n++;
@@ -210,10 +243,12 @@ static bool retrieveWorldWx(void)
 }
 
 /* download current weather and time info for the given exact location.
- * if wip is filled ok return true, else return false with short reason in ynot[] if set
+ * if wxc.info is filled ok return true, else return false with short reason in wxc.ynot
  */
-static bool retrieveCurrentWX (const LatLong &ll, bool is_de, WXInfo *wip, char ynot[])
+static bool retrieveCurrentWX (const LatLong &ll, bool is_de, WXCache &wxc)
 {
+    WXInfo &wxi = wxc.info;
+
     WiFiClient wx_client;
     char line[100];
 
@@ -233,22 +268,27 @@ static bool retrieveCurrentWX (const LatLong &ll, bool is_de, WXInfo *wip, char 
 
         // skip response header
         if (!httpSkipHeader (wx_client)) {
-            strcpy (ynot, "WX timeout");
+            quietStrncpy (wxc.ynot, "WX timeout", sizeof(wxc.ynot));
             goto out;
         }
 
         // init response 
-        memset (wip, 0, sizeof(*wip));
+        memset (&wxi, 0, sizeof(WXInfo));
 
         // crack response
         uint8_t n_found = 0;
         while (n_found < N_WXINFO_FIELDS && getTCPLine (wx_client, line, sizeof(line), NULL)) {
-            // Serial.printf ("WX: %s\n", line);
+
+            if (debugLevel (DEBUG_WX, 1))
+                Serial.printf ("WX: %s\n", line);
+
             updateClocks(false);
 
             // check for error message in which case abandon further search
-            if (sscanf (line, "error=%[^\n]", ynot) == 1)
+            if (strncmp (line, "error=", 6) == 0) {
+                quietStrncpy (wxc.ynot, line+6, sizeof(wxc.ynot));
                 goto out;
+            }
 
             // find start of data value after =
             char *vstart = strchr (line, '=');
@@ -258,37 +298,37 @@ static bool retrieveCurrentWX (const LatLong &ll, bool is_de, WXInfo *wip, char 
 
             // check for content line
             if (strcmp (line, "city") == 0) {
-                strncpy (wip->city, vstart, sizeof(wip->city)-1);
+                quietStrncpy (wxi.city, vstart, sizeof(wxi.city));
                 n_found++;
             } else if (strcmp (line, "temperature_c") == 0) {
-                wip->temperature_c = atof (vstart);
+                wxi.temperature_c = atof (vstart);
                 n_found++;
             } else if (strcmp (line, "pressure_hPa") == 0) {
-                wip->pressure_hPa = atof (vstart);
+                wxi.pressure_hPa = atof (vstart);
                 n_found++;
             } else if (strcmp (line, "pressure_chg") == 0) {
-                wip->pressure_chg = atof (vstart);
+                wxi.pressure_chg = atof (vstart);
                 n_found++;
             } else if (strcmp (line, "humidity_percent") == 0) {
-                wip->humidity_percent = atof (vstart);
+                wxi.humidity_percent = atof (vstart);
                 n_found++;
             } else if (strcmp (line, "wind_speed_mps") == 0) {
-                wip->wind_speed_mps = atof (vstart);
+                wxi.wind_speed_mps = atof (vstart);
                 n_found++;
             } else if (strcmp (line, "wind_dir_name") == 0) {
-                strncpy (wip->wind_dir_name, vstart, sizeof(wip->wind_dir_name)-1);
+                quietStrncpy (wxi.wind_dir_name, vstart, sizeof(wxi.wind_dir_name));
                 n_found++;
             } else if (strcmp (line, "clouds") == 0) {
-                strncpy (wip->clouds, vstart, sizeof(wip->clouds)-1);
+                quietStrncpy (wxi.clouds, vstart, sizeof(wxi.clouds));
                 n_found++;
             } else if (strcmp (line, "conditions") == 0) {
-                strncpy (wip->conditions, vstart, sizeof(wip->conditions)-1);
+                quietStrncpy (wxi.conditions, vstart, sizeof(wxi.conditions));
                 n_found++;
             } else if (strcmp (line, "attribution") == 0) {
-                strncpy (wip->attribution, vstart, sizeof(wip->attribution)-1);
+                quietStrncpy (wxi.attribution, vstart, sizeof(wxi.attribution));
                 n_found++;
             } else if (strcmp (line, "timezone") == 0) {
-                wip->timezone = atoi (vstart);
+                wxi.timezone = atoi (vstart);
                 n_found++;
             }
 
@@ -296,7 +336,7 @@ static bool retrieveCurrentWX (const LatLong &ll, bool is_de, WXInfo *wip, char 
         }
 
         if (n_found < N_WXINFO_FIELDS) {
-            strcpy (ynot, "Missing WX data");
+            quietStrncpy (wxc.ynot, "Missing WX data", sizeof(wxc.ynot));
             goto out;
         }
 
@@ -305,52 +345,209 @@ static bool retrieveCurrentWX (const LatLong &ll, bool is_de, WXInfo *wip, char 
 
     } else {
 
-        strcpy (ynot, "WX connection failed");
+        quietStrncpy (wxc.ynot, "WX connection failed", sizeof(wxc.ynot));
 
     }
-
-
 
     // clean up
 out:
     wx_client.stop();
-    resetWatchdog();
     return (ok);
 }
 
 
 
-/* display the given location weather in NCDXF_b or err.
+/* display the desired weather stats in NCDXF_b or err.
  */
-static void drawNCDXFBoxWx (BRB_MODE m, const WXInfo &wi, bool ok)
+static void drawNCDXFBoxWx (BRB_MODE m, const WXInfo &wxi, bool ok)
 {
-    // init arrays for drawNCDXFStats() then replace values with real if ok
-    uint16_t color = m == BRB_SHOW_DEWX ? DE_COLOR : DX_COLOR;
+    // consistent err msg
+    static char err[] = "Err";
+
+    // insure masks are defined
+    initChoiceMasks();
+
+    // decide mask and indentity
+    const uint16_t mask = (m == BRB_SHOW_DEWX) ? dewx_chmask : dxwx_chmask;
+    const char *whoami =  (m == BRB_SHOW_DEWX) ? "DE" : "DX";
+    uint16_t color =      (m == BRB_SHOW_DEWX) ? DE_COLOR : DX_COLOR;
+
+    // arrays for drawNCDXFStats()
     char values[NCDXF_B_NFIELDS][NCDXF_B_MAXLEN];
     uint16_t colors[NCDXF_B_NFIELDS];
-    char titles[NCDXF_B_NFIELDS][NCDXF_B_MAXLEN] = {
-        "",                     // set later with DE/DX prefix
-        "Humidity",
-        "Wind Dir",
-        "W Speed",
-    };
-    snprintf (titles[0], sizeof(titles[0]), "%s Temp", m == BRB_SHOW_DEWX ? "DE" : "DX");
-    for (int i = 0; i < NCDXF_B_NFIELDS; i++) {
-        strcpy (values[i], "Err");
-        colors[i] = color;
-    }
+    char titles[NCDXF_B_NFIELDS][NCDXF_B_MAXLEN];
 
-    if (ok) {
-        float v = showTempC() ? wi.temperature_c : CEN2FAH(wi.temperature_c);
-        snprintf (values[0], sizeof(values[0]), "%.1f", v);
-        snprintf (values[1], sizeof(values[1]), "%.1f", wi.humidity_percent);
-        snprintf (values[2], sizeof(values[2]), "%s", wi.wind_dir_name);
-        v = (showDistKm() ? 3.6 : 2.237) * wi.wind_speed_mps;                       // kph or mph
-        snprintf (values[3], sizeof(values[3]), "%.0f", v);
+    // init in case not all used
+    for (int i = 0; i < NCDXF_B_NFIELDS; i++)
+        values[i][0] = titles[i][0] = '\0';
+
+    // fill arrays from mask and wxi, ignore any more than NCDXF_B_NFIELDS are set
+    int n_fields = 0;
+    for (int i = 0; i < WXS_N && n_fields < NCDXF_B_NFIELDS; i++) {
+        // fill next set field
+        if (mask & (1<<i)) {
+            switch ((WeatherStats)i) {
+            case WXS_TEMP:
+                if (n_fields == 0) {
+                    // first title includes whether DE or DX
+                    snprintf (titles[n_fields], NCDXF_B_MAXLEN, "%s Temp", whoami);
+                } else
+                    snprintf (titles[n_fields], NCDXF_B_MAXLEN, "%s", wxch_names[i]);
+                if (ok) {
+                    float v = showTempC() ? wxi.temperature_c : CEN2FAH(wxi.temperature_c);
+                    snprintf (values[n_fields], NCDXF_B_MAXLEN, "%.1f", v);
+                    colors[n_fields] = color;
+                } else {
+                    strcpy (values[n_fields], err);
+                    colors[n_fields] = RA8875_RED;
+                }
+                break;
+
+            case WXS_HUM:
+                if (n_fields == 0) {
+                    // first title includes whether DE or DX
+                    snprintf (titles[n_fields], NCDXF_B_MAXLEN, "%s Hum", whoami);
+                } else
+                    snprintf (titles[n_fields], NCDXF_B_MAXLEN, "%s", wxch_names[i]);
+                if (ok) {
+                    snprintf (values[n_fields], sizeof(values[1]), "%.1f", wxi.humidity_percent);
+                    colors[n_fields] = color;
+                } else {
+                    strcpy (values[n_fields], err);
+                    colors[n_fields] = RA8875_RED;
+                }
+                break;
+
+            case WXS_DEW:
+                if (n_fields == 0) {
+                    // first title includes whether DE or DX
+                    snprintf (titles[n_fields], NCDXF_B_MAXLEN, "%s DewPt", whoami);
+                } else
+                    snprintf (titles[n_fields], NCDXF_B_MAXLEN, "%s", wxch_names[i]);
+                if (ok) {
+                    float t = showTempC() ? wxi.temperature_c : CEN2FAH(wxi.temperature_c);
+                    float d = dewPoint (t, wxi.humidity_percent);        // wants and returns user units
+                    snprintf (values[n_fields], sizeof(values[1]), "%.1f", d);
+                    colors[n_fields] = color;
+                } else {
+                    strcpy (values[n_fields], err);
+                    colors[n_fields] = RA8875_RED;
+                }
+                break;
+
+            case WXS_PRES:
+                if (n_fields == 0) {
+                    // first title includes whether DE or DX
+                    snprintf (titles[n_fields], NCDXF_B_MAXLEN, "%s Pres", whoami);
+                } else
+                    snprintf (titles[n_fields], NCDXF_B_MAXLEN, "%s", wxch_names[i]);
+                if (ok) {
+                    if (showATMhPa())
+                        snprintf (values[n_fields], sizeof(values[1]), "%.0f", wxi.pressure_hPa);
+                    else
+                        snprintf (values[n_fields], sizeof(values[1]), "%.2f", HPA2INHG(wxi.pressure_hPa));
+                    colors[n_fields] = color;
+                } else {
+                    strcpy (values[n_fields], err);
+                    colors[n_fields] = RA8875_RED;
+                }
+                break;
+
+            case WXS_WSPD:
+                if (n_fields == 0) {
+                    // first title includes whether DE or DX
+                    snprintf (titles[n_fields], NCDXF_B_MAXLEN, "%s W Spd", whoami);
+                } else
+                    snprintf (titles[n_fields], NCDXF_B_MAXLEN, "%s", wxch_names[i]);
+                if (ok) {
+                    float s = (showDistKm() ? 3.6F : 2.237F) * wxi.wind_speed_mps; // kph or mph
+                    snprintf (values[n_fields], sizeof(values[1]), "%.0f", s);
+                    colors[n_fields] = color;
+                } else {
+                    strcpy (values[n_fields], err);
+                    colors[n_fields] = RA8875_RED;
+                }
+                break;
+
+            case WXS_WDIR:
+                if (n_fields == 0) {
+                    // first title includes whether DE or DX
+                    snprintf (titles[n_fields], NCDXF_B_MAXLEN, "%s W Dir", whoami);
+                } else
+                    snprintf (titles[n_fields], NCDXF_B_MAXLEN, "%s", wxch_names[i]);
+                if (ok) {
+                    snprintf (values[n_fields], sizeof(values[1]), "%s", wxi.wind_dir_name);
+                    colors[n_fields] = color;
+                } else {
+                    strcpy (values[n_fields], err);
+                    colors[n_fields] = RA8875_RED;
+                }
+                break;
+
+            case WXS_N:
+                break;
+            }
+
+            // another field
+            n_fields++;
+
+        }
     }
 
     // show it
     drawNCDXFStats (RA8875_BLACK, titles, values, colors);
+}
+
+/* display a menu in NCDXF_b allowing choosing which wx stats to display.
+ * m is expected to be BRB_SHOW_DEWX or BRB_SHOW_DXWX.
+ * set NV_DEWXCHOICE or NV_DXWXCHOICE
+ */
+void doNCDXFWXTouch (BRB_MODE m)
+{
+    // decide current mask
+    uint16_t &mask =     (m == BRB_SHOW_DEWX) ? dewx_chmask : dxwx_chmask;
+    const char *whoami = (m == BRB_SHOW_DEWX) ? "DE" : "DX";
+
+    // build menu
+    MenuItem mitems[WXS_N] = {
+        {MENU_AL1OFN, (mask & (1<<WXS_TEMP)) != 0, 1, 1, wxch_names[WXS_TEMP], 0},
+        {MENU_AL1OFN, (mask & (1<<WXS_HUM))  != 0, 1, 1, wxch_names[WXS_HUM], 0},
+        {MENU_AL1OFN, (mask & (1<<WXS_DEW))  != 0, 1, 1, wxch_names[WXS_DEW], 0},
+        {MENU_AL1OFN, (mask & (1<<WXS_PRES)) != 0, 1, 1, wxch_names[WXS_PRES], 0},
+        {MENU_AL1OFN, (mask & (1<<WXS_WSPD)) != 0, 1, 1, wxch_names[WXS_WSPD], 0},
+        {MENU_AL1OFN, (mask & (1<<WXS_WDIR)) != 0, 1, 1, wxch_names[WXS_WDIR], 0},
+    };
+
+    // its box
+    SBox menu_b = NCDXF_b;                      // copy, not ref!
+    menu_b.x += 1;
+    menu_b.y += NCDXF_b.h/8;
+    menu_b.w = 0;                               // shrink wrap
+
+    // run
+    SBox ok_b;
+    MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_NOCANCEL, 1, NARRAY(mitems), mitems};
+    if (runMenu (menu)) {
+
+        // set new mask
+        int n_bits = 0;
+        mask = 0;
+        for (int i = 0; i < WXS_N; i++) {
+            if (mitems[i].set) {
+                if (++n_bits > NCDXF_B_NFIELDS) {
+                    Serial.printf ("WX: using only first %d %s selections\n", NCDXF_B_NFIELDS, whoami);
+                    break;
+                }
+                mask |= (1<<i);
+            }
+        }
+
+        // save
+        NVWriteUInt16 (m == BRB_SHOW_DEWX ? NV_DEWXCHOICE : NV_DXWXCHOICE, mask);
+    }
+
+    // redraw box if for no other reason than to erase menu
+    drawNCDXFWx(m);
 }
 
 /* display current DE weather in the given box and in NCDXF_b if up.
@@ -358,16 +555,16 @@ static void drawNCDXFBoxWx (BRB_MODE m, const WXInfo &wi, bool ok)
 bool updateDEWX (const SBox &box)
 {
     char ynot[100];
-    WXInfo wi;
+    WXInfo wxi;
 
-    bool ok = getCurrentWX (de_ll, true, &wi, ynot);
+    bool ok = getCurrentWX (de_ll, true, &wxi, ynot);
     if (ok)
-        plotWX (box, DE_COLOR, wi);
+        plotWX (box, DE_COLOR, wxi);
     else
         plotMessage (box, DE_COLOR, ynot);
 
     if (brb_mode == BRB_SHOW_DEWX)
-        drawNCDXFBoxWx (BRB_SHOW_DEWX, wi, ok);
+        drawNCDXFBoxWx (BRB_SHOW_DEWX, wxi, ok);
 
     return (ok);
 }
@@ -377,16 +574,16 @@ bool updateDEWX (const SBox &box)
 bool updateDXWX (const SBox &box)
 {
     char ynot[100];
-    WXInfo wi;
+    WXInfo wxi;
 
-    bool ok = getCurrentWX (dx_ll, false, &wi, ynot);
+    bool ok = getCurrentWX (dx_ll, false, &wxi, ynot);
     if (ok)
-        plotWX (box, DX_COLOR, wi);
+        plotWX (box, DX_COLOR, wxi);
     else
         plotMessage (box, DX_COLOR, ynot);
 
     if (brb_mode == BRB_SHOW_DXWX)
-        drawNCDXFBoxWx (BRB_SHOW_DXWX, wi, ok);
+        drawNCDXFBoxWx (BRB_SHOW_DXWX, wxi, ok);
 
     return (ok);
 }
@@ -398,19 +595,19 @@ bool drawNCDXFWx (BRB_MODE m)
 {
     // get weather
     char ynot[100];
-    WXInfo wi;
+    WXInfo wxi;
     bool ok = false;
     if (m == BRB_SHOW_DEWX)
-        ok = getCurrentWX (de_ll, true, &wi, ynot);
+        ok = getCurrentWX (de_ll, true, &wxi, ynot);
     else if (m == BRB_SHOW_DXWX)
-        ok = getCurrentWX (dx_ll, false, &wi, ynot);
+        ok = getCurrentWX (dx_ll, false, &wxi, ynot);
     else
         fatalError ("Bogus drawNCDXFWx mode: %d", m);
     if (!ok)
         Serial.printf ("WX: %s\n", ynot);
 
     // show it
-    drawNCDXFBoxWx (m, wi, ok);
+    drawNCDXFBoxWx (m, wxi, ok);
 
     // done
     return (ok);
@@ -429,18 +626,21 @@ static const WXInfo *findWXTXCache (const LatLong &ll, bool is_de, char ynot[])
     bool new_loc = ll.lat_d != wxc.lat_d || ll.lng_d != wxc.lng_d;
 
     // update depending same location and how well things are working
-    if (myNow() > wxc.next_err_update && (new_loc || myNow() > wxc.next_update)) {
+    if (myNow() > next_err_update && (new_loc || myNow() > wxc.next_update)) {
 
         // get fresh, schedule retry if fail
-        if (!retrieveCurrentWX (ll, is_de, &wxc.info, ynot)) {
+        if (!retrieveCurrentWX (ll, is_de, wxc)) {
             char retry_msg[50];
             snprintf (retry_msg, sizeof(retry_msg), "%s WX/TZ", is_de ? "DE" : "DX");
-            wxc.next_err_update = nextWiFiRetry (retry_msg);
+            next_err_update = nextWiFiRetry (retry_msg);
+            wxc.ok = false;
+            strcpy (ynot, wxc.ynot);
             return (NULL);
         }
 
         // ok! update location and next routine expiration
 
+        wxc.ok = true;
         wxc.lat_d = ll.lat_d;
         wxc.lng_d = ll.lng_d;
         wxc.next_update = myNow() + MAX_WXTZ_AGE;
@@ -450,8 +650,11 @@ static const WXInfo *findWXTXCache (const LatLong &ll, bool is_de, char ynot[])
         Serial.printf ("WXTZ: expires in %d sec at %d\n", MAX_WXTZ_AGE, at);
     }
 
-    // return requested info
-    return (&wxc.info);
+    // return requested info else why not
+    if (wxc.ok)
+        return (&wxc.info);
+    strcpy (ynot, wxc.ynot);
+    return (NULL);
 }
 
 /* return current WXInfo with weather at de or dx.
@@ -497,13 +700,13 @@ const WXInfo *findWXFast (const LatLong &ll)
 
 
 /* look up wx conditions from local cache for the approx location, if possible.
- * return whether wi has been filled
+ * return whether wxi has been filled
  */
-bool getFastWx (const LatLong &ll, WXInfo &wi)
+bool getFastWx (const LatLong &ll, WXInfo &wxi)
 {
     const WXInfo *wip = findWXFast (ll);
     if (wip) {
-        wi = *wip;
+        wxi = *wip;
         return (true);
     }
     return (false);

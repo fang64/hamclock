@@ -91,9 +91,9 @@ static void drawSTSetup (time_t t0)
         tft.setCursor (ST_X0 - 20, ST_E2Y(-M_PI_2F) - 4);
         tft.print ("-90");
         tft.setCursor(ST_X0-17, ST_E2Y(deg2rad(50)));
-        tft.print(F("Up"));
+        tft.print("Up");
         tft.setCursor(ST_X0-29, ST_E2Y(deg2rad(-45)));
-        tft.print(F("Down"));
+        tft.print("Down");
         const char estr[] = "Elevation";
         const int estr_l = strlen(estr);
         for (int i = 0; i < estr_l; i++) {
@@ -299,11 +299,11 @@ static void drawSTBothUpTable (time_t t0, time_t t_start, time_t t_end)
         tft.setTextColor (RA8875_WHITE);
         tft.setCursor (map_b.x+ST_NI, map_b.y+5);
         if (always_both_up) {
-            tft.print (F("Both always up"));
+            tft.print ("Both always up");
             return;
         }
         if (never_both_up) {
-            tft.print (F("Never both up"));
+            tft.print ("Never both up");
             return;
         }
         int dt = better_end - better_start;
@@ -374,7 +374,7 @@ static void drawSTPopup (const time_t t, const SBox &popup_b)
         tft.setTextColor (RA8875_WHITE);
         selectFontStyle (LIGHT_FONT, FAST_FONT);
         tft.setCursor (popup_b.x+4, popup_b.y+2);
-        tft.print (F("     Time   Az   El"));
+        tft.print ("     Time   Az   El");
 
         // draw time, el and az at each location
         char buf[100];

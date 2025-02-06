@@ -101,6 +101,49 @@ static void loadSDOChoice (void)
     }
 }
 
+/* download and inflate the given sdo file name and save.
+ * return whether ok.
+ */
+static bool retrieveSDO (const char *fn, const char *save_fn)
+{
+    char url[1000];
+    snprintf (url, sizeof(url), "/SDO/%s.z", fn);
+
+    WiFiClient client;
+    bool ok = false;
+
+    Serial.println (url);
+    if (wifiOk() && client.connect(backend_host, backend_port)) {
+        updateClocks(false);
+    
+        // query web page
+        httpHCGET (client, backend_host, url);
+    
+        // collect content length from header
+        char cl_str[100];
+        if (!httpSkipHeader (client, "Content-Length: ", cl_str, sizeof(cl_str)))
+            goto out;
+        int cl = atol (cl_str);
+
+        // create local with effective ownership
+        FILE *fp = fopen (save_fn, "w");
+        if (!fp)
+            goto out;
+        if (fchown (fileno(fp), getuid(), getgid()) < 0)     // log but don't worry about it
+            Serial.printf ("chown(%s,%d,%d): %s\n", save_fn, getuid(), getgid(), strerror(errno));
+
+        // inflate and copy to local
+        ok = zinfWiFiFILE (client, cl, fp);
+
+        // finished with fp
+        fclose (fp);
+    }
+
+  out:
+    client.stop();
+    return (ok);
+}
+
 /* render sdo_choice, downloading fresh if not found or stale.
  * use plotMessage if error.
  * return whether ok.
@@ -121,54 +164,9 @@ static bool drawSDOImage (const SBox &box)
 
     // download if time to refresh
     if (need_fresh) {
-        char url[1000];
-        snprintf (url, sizeof(url), "/SDO/%s", fn);
-
-        WiFiClient client;
-        Serial.println (url);
-        if (wifiOk() && client.connect(backend_host, backend_port)) {
-            updateClocks(false);
-        
-            // query web page
-            httpHCGET (client, backend_host, url);
-        
-            // skip response header
-            if (!httpSkipHeader (client)) {
-                plotMessage (box, SDO_COLOR, "SDO header short");
-                goto out;
-            }
-
-            // create local
-            FILE *fp = fopen (local_path, "w");
-            if (!fp) {
-                plotMessage (box, SDO_COLOR, "can not create local SDO image");
-                goto out;
-            }
-            if (chown (local_path, getuid(), getgid()) < 0)     // friendly
-                Serial.printf ("chown(%s,%d,%d): %s\n", local_path, getuid(), getgid(), strerror(errno));
-
-            // copy to local
-            char c;
-            while (getTCPChar (client, &c)) {
-                if (fputc (c, fp) == EOF) {
-                    plotMessage (box, SDO_COLOR, "can not save SDO image");
-                    goto out;
-                }
-            }
-
-            // finished with fp
-            fclose (fp);
-
-            // got something
-            Serial.printf ("saved local %s\n", fn);
-            ok = true;
-
-        } else {
-            plotMessage (box, SDO_COLOR, "SDO connection failed");
-        }
-
-      out:
-        client.stop();
+        ok = retrieveSDO (fn, local_path);
+        if (!ok)
+            plotMessage (box, SDO_COLOR, "SDO download failed");
     }
 
     // display local file
@@ -298,23 +296,23 @@ bool checkSDOTouch (const SCoord &s, const SBox &box)
 
     // set first SDOT_N to name collection
     for (int i = 0; i < SDOT_N; i++) {
-        mitems[i] = {MENU_1OFN, !sdo_rotating && i == sdo_choice, 1, SM_INDENT, sdo_menu[i]};
+        mitems[i] = {MENU_1OFN, !sdo_rotating && i == sdo_choice, 1, SM_INDENT, sdo_menu[i], 0};
     }
 
     // set whether rotating
-    mitems[SDOM_ROTATE] = {MENU_1OFN, (bool)sdo_rotating, 1, SM_INDENT, "Rotate"};
+    mitems[SDOM_ROTATE] = {MENU_1OFN, (bool)sdo_rotating, 1, SM_INDENT, "Rotate", 0};
 
     // nice gap
-    mitems[SDOM_GAP] = {MENU_BLANK, false, 0, 0, NULL};
+    mitems[SDOM_GAP] = {MENU_BLANK, false, 0, 0, NULL, 0};
 
     // set grayline option
-    mitems[SDOM_GRAYLINE] = {MENU_TOGGLE, false, 2, SM_INDENT, "Grayline tool"};
+    mitems[SDOM_GRAYLINE] = {MENU_TOGGLE, false, 2, SM_INDENT, "Grayline tool", 0};
 
     // set show web page option, but not on fb0
 #if defined(_USE_FB0)
     mitems[SDOM_SHOWWEB] = {MENU_IGNORE, false, 0, 0, NULL};
 #else
-    mitems[SDOM_SHOWWEB] = {MENU_TOGGLE, false, 3, SM_INDENT, "Show movie"};
+    mitems[SDOM_SHOWWEB] = {MENU_TOGGLE, false, 3, SM_INDENT, "Show movie", 0};
 #endif
 
     SBox menu_b = box;          // copy, not ref

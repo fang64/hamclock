@@ -25,7 +25,7 @@ static bool lookforTime (const char *buf, void *arg)
         uint32_t t0 = millis();
 
         // check for all required fields, might be more than one class
-        // Serial.printf (_FX("\nGPSD: look for time in: %s\n"), buf);
+        // Serial.printf ("\nGPSD: look for time in: %s\n", buf);
 
         const char *classstr;
         bool found_tpv = false;
@@ -35,24 +35,24 @@ static bool lookforTime (const char *buf, void *arg)
                 found_tpv = true;
         }
         if (!found_tpv) {
-            Serial.print (_FX("GPSD: no TPV\n"));
+            Serial.print ("GPSD: no TPV\n");
             return (false);
         }
 
         const char *modestr = strstr (classstr, "\"mode\":");
         if (!modestr) {
-            Serial.print (_FX("GPSD: no mode\n"));
+            Serial.print ("GPSD: no mode\n");
             return (false);
         }
         int mode = atoi(modestr+7);
         if (mode < 2) {
-            Serial.printf (_FX("GPSD: bad mode '%s' %d\n"), modestr+7, mode);
+            Serial.printf ("GPSD: bad mode '%s' %d\n", modestr+7, mode);
             return (false);
         }
 
         const char *timestr = strstr (classstr, "\"time\":\"");
         if (!timestr || strlen(timestr) < 8+19) {
-            Serial.print (_FX("GPSD: no time\n"));
+            Serial.print ("GPSD: no time\n");
             return(false);
         }
 
@@ -60,7 +60,7 @@ static bool lookforTime (const char *buf, void *arg)
         const char *iso = timestr+8;
         time_t gpsd_time = crackISO8601 (iso);
         if (gpsd_time == 0) {
-            Serial.printf (_FX("GPSD: unexpected ISO8601: %.24s\n"), iso);
+            Serial.printf ("GPSD: unexpected ISO8601: %.24s\n", iso);
             return (false);
         }
 
@@ -80,7 +80,7 @@ static bool lookforTime (const char *buf, void *arg)
 static bool lookforLatLong (const char *buf, void *arg)
 {
         // check for all required fields, might be more than one class
-        // Serial.printf (_FX("\nGPSD: look for ll in: %s\n"), buf);
+        // Serial.printf ("\nGPSD: look for ll in: %s\n", buf);
 
         const char *classstr;
         bool found_tpv = false;
@@ -110,7 +110,7 @@ static bool lookforLatLong (const char *buf, void *arg)
         llp->lng_d = atof(lonstr+6);
 
         // success
-        Serial.printf (_FX("GPSD: lat %.2f long %.2f\n"), llp->lat_d, llp->lng_d);
+        Serial.printf ("GPSD: lat %.2f long %.2f\n", llp->lat_d, llp->lng_d);
         return (true);
 }
 
@@ -124,7 +124,7 @@ static bool getGPSDSomething(bool (*lookf)(const char *buf, void *arg), void *ar
 
         // get host name
         const char *host = getGPSDHost();
-        Serial.printf (_FX("GPSD: trying %s:%d\n"), host, GPSD_PORT);
+        Serial.printf ("GPSD: trying %s:%d\n", host, GPSD_PORT);
 
         // prep state
         WiFiClient gpsd_client;
@@ -146,7 +146,7 @@ static bool getGPSDSomething(bool (*lookf)(const char *buf, void *arg), void *ar
             uint32_t t0 = millis();
 
             // enable reporting
-            gpsd_client.print (F("?WATCH={\"enable\":true,\"json\":true};?POLL;\n"));
+            gpsd_client.print ("?WATCH={\"enable\":true,\"json\":true};?POLL;\n");
 
             // read lines, give to lookf, done when it's happy or no more or time out
             for (size_t ll = 0;
@@ -178,11 +178,11 @@ static bool getGPSDSomething(bool (*lookf)(const char *buf, void *arg), void *ar
         // report problems
         if (!look_ok) {
             if (got_something)
-                Serial.printf (_FX("GPSD: unexpected response: %s\n"), line);
+                Serial.printf ("GPSD: unexpected response: %s\n", line);
             else if (connect_ok)
-                Serial.println (F("GPSD: connected but no response"));
+                Serial.println ("GPSD: connected but no response");
             else
-                Serial.println (F("GPSD: no connection"));
+                Serial.println ("GPSD: no connection");
         }
 
         // success?
@@ -240,7 +240,7 @@ time_t crackISO8601 (const char *iso)
 {
         time_t t = 0;
         int yr, mo, dy, hr, mn, sc;
-        if (sscanf (iso, _FX("%d-%d-%d%*c%d:%d:%d"), &yr, &mo, &dy, &hr, &mn, &sc) == 6) {
+        if (sscanf (iso, "%d-%d-%d%*c%d:%d:%d", &yr, &mo, &dy, &hr, &mn, &sc) == 6) {
 
             // reformat
             tmElements_t tm;

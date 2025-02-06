@@ -184,7 +184,7 @@ void drawDEInfo()
 
         // lat and lon
         char buf[50];
-        snprintf (buf, sizeof(buf), _FX("%.0f%c  %.0f%c"),
+        snprintf (buf, sizeof(buf), "%.0f%c  %.0f%c",
                     roundf(fabsf(de_ll.lat_d)), de_ll.lat_d < 0 ? 'S' : 'N',
                     roundf(fabsf(de_ll.lng_d)), de_ll.lng_d < 0 ? 'W' : 'E');
         tft.setCursor (de_info_b.x, de_info_b.y+2*vspace-6);
@@ -232,9 +232,9 @@ void drawDECalTime(bool center)
     // generate text
     char buf[32];
     if (getDateFormat() == DF_MDY || getDateFormat() == DF_YMD)
-        snprintf (buf, sizeof(buf), _FX("%02d:%02d %s %d"), hr, mn, monthShortStr(mo), dy);
+        snprintf (buf, sizeof(buf), "%02d:%02d %s %d", hr, mn, monthShortStr(mo), dy);
     else
-        snprintf (buf, sizeof(buf), _FX("%02d:%02d %d %s"), hr, mn, dy, monthShortStr(mo));
+        snprintf (buf, sizeof(buf), "%02d:%02d %d %s", hr, mn, dy, monthShortStr(mo));
 
     // set position
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
@@ -318,7 +318,7 @@ static void drawMapPopup(void)
 {
     // offer to set DX or DE and possibly control pan and zoom, depending on context
 
-    Serial.printf (_FX("POPUP before: pan_x %d pan_y %d zoom %d\n"), pan_zoom.pan_x, pan_zoom.pan_y,
+    Serial.printf ("POPUP before: pan_x %d pan_y %d zoom %d\n", pan_zoom.pan_x, pan_zoom.pan_y,
                                 pan_zoom.zoom);
 
     const int ZINDENT = 2;
@@ -334,15 +334,15 @@ static void drawMapPopup(void)
     MenuFieldType rst_mft = reset_ok ? (pan_ok ? MENU_01OFN : MENU_TOGGLE) : MENU_IGNORE;
 
     MenuItem mitems[] = {
-        {MENU_01OFN, false,          1, ZINDENT, "Set DX"},             // 0
-        {MENU_01OFN, false,          1, ZINDENT, "Set DE"},             // 1
-        {MENU_BLANK, false,          0, ZINDENT, NULL},                 // 2
-        {z1_mft, pan_zoom.zoom == 1, 2, ZINDENT, "Zoom 1x"},            // 3
-        {z2_mft, pan_zoom.zoom == 2, 2, ZINDENT, "Zoom 2x"},            // 4
-        {z3_mft, pan_zoom.zoom == 3, 2, ZINDENT, "Zoom 3x"},            // 5
-        {z4_mft, pan_zoom.zoom == 4, 2, ZINDENT, "Zoom 4x"},            // 6
-        {ctr_mft, false,             4, ZINDENT, "Recenter"},           // 7
-        {rst_mft, false,             4, ZINDENT, "Reset"},              // 8
+        {MENU_01OFN, false,          1, ZINDENT, "Set DX", 0},             // 0
+        {MENU_01OFN, false,          1, ZINDENT, "Set DE", 0},             // 1
+        {MENU_BLANK, false,          0, ZINDENT, NULL, 0},                 // 2
+        {z1_mft, pan_zoom.zoom == 1, 2, ZINDENT, "Zoom 1x", 0},            // 3
+        {z2_mft, pan_zoom.zoom == 2, 2, ZINDENT, "Zoom 2x", 0},            // 4
+        {z3_mft, pan_zoom.zoom == 3, 2, ZINDENT, "Zoom 3x", 0},            // 5
+        {z4_mft, pan_zoom.zoom == 4, 2, ZINDENT, "Zoom 4x", 0},            // 6
+        {ctr_mft, false,             4, ZINDENT, "Recenter", 0},           // 7
+        {rst_mft, false,             4, ZINDENT, "Reset", 0},              // 8
     };
     const int n_menu = NARRAY(mitems);
 
@@ -402,7 +402,7 @@ static void drawMapPopup(void)
             scheduleFreshMap();
         }
 
-        Serial.printf (_FX("POPUP after: pan_x %d pan_y %d zoom %d\n"), pan_zoom.pan_x, pan_zoom.pan_y,
+        Serial.printf ("POPUP after: pan_x %d pan_y %d zoom %d\n", pan_zoom.pan_x, pan_zoom.pan_y,
                                 pan_zoom.zoom);
     }
 }
@@ -601,7 +601,7 @@ static void drawMapGrid()
         break;
 
     default:
-        fatalError (_FX("drawMapGrid() bad mapgrid_choice: %d"), mapgrid_choice);
+        fatalError ("drawMapGrid() bad mapgrid_choice: %d", mapgrid_choice);
         break;
     }
 }
@@ -639,7 +639,7 @@ static void drawML_DB (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 
     // show direction
     tft.setCursor (tx, ty += dy);
-    tft.printf (_FX("%s %5.0f"), show_lp ? "LP" : "SP", bearing);
+    tft.printf ("%s %5.0f", show_lp ? "LP" : "SP", bearing);
     if (bearing_ismag) {
         tft.setCursor(tft.getCursorX()+2, ty-2); 
         tft.print ('M');
@@ -649,7 +649,7 @@ static void drawML_DB (const LatLong &ll, uint16_t tx, int dy, uint16_t &ty)
 
     // show distance
     tft.setCursor (tx, ty += dy);
-    tft.printf (_FX("%6.0f %s"), dist, showDistKm() ? "km" : "mi");
+    tft.printf ("%6.0f %s", dist, showDistKm() ? "km" : "mi");
 }
 
 /* drawMouseLoc() helper to show weather at the given location,
@@ -1006,14 +1006,14 @@ static void drawMouseLoc()
         int cqzone_n = 0;
         if (findZoneNumber (ZONE_CQ, ms, &cqzone_n)) {
             tft.setCursor (tx+ML_INDENT, ty += ML_LINEDY);
-            tft.printf (_FX("CQ  %5d"), cqzone_n);
+            tft.printf ("CQ  %5d", cqzone_n);
         }
 
         // itu zone
         int ituzone_n = 0;
         if (findZoneNumber (ZONE_ITU, ms, &ituzone_n)) {
             tft.setCursor (tx+ML_INDENT, ty += ML_LINEDY);
-            tft.printf (_FX("ITU %5d"), ituzone_n);
+            tft.printf ("ITU %5d", ituzone_n);
         }
 
         // show local time
@@ -1098,7 +1098,7 @@ static void drawAzmStars()
         break;
 
     default:
-        fatalError (_FX("drawAzmStars() bad map_proj %d"), map_proj);
+        fatalError ("drawAzmStars() bad map_proj %d", map_proj);
     }
 }
 
@@ -1168,32 +1168,32 @@ static void drawMapMenu()
     #define PRI_INDENT 2
     #define SEC_INDENT 8
     MenuItem mitems[MI_N] = {
-        {MENU_LABEL, false, 0, PRI_INDENT, "Style:"},
-            {MENU_AL1OFN, IS_CMROT(CM_COUNTRIES), 1, SEC_INDENT, cm_info[CM_COUNTRIES].name},
-            {MENU_AL1OFN, IS_CMROT(CM_TERRAIN),   1, SEC_INDENT, cm_info[CM_TERRAIN].name},
-            {MENU_AL1OFN, IS_CMROT(CM_DRAP),      1, SEC_INDENT, cm_info[CM_DRAP].name},
-            {MENU_AL1OFN, IS_CMROT(CM_MUF_V),     1, SEC_INDENT, cm_info[CM_MUF_V].name},
-            {MENU_AL1OFN, IS_CMROT(CM_MUF_RT),    1, SEC_INDENT, cm_info[CM_MUF_RT].name},
-            {MENU_AL1OFN, IS_CMROT(CM_AURORA),    1, SEC_INDENT, cm_info[CM_AURORA].name},
-            {MENU_AL1OFN, IS_CMROT(CM_WX),        1, SEC_INDENT, cm_info[CM_WX].name},
-            {MENU_IGNORE, false,                  1, SEC_INDENT, NULL}, // see below
-            {MENU_IGNORE, false,                  1, SEC_INDENT, NULL}, // see below
-        {MENU_LABEL, false, 0, PRI_INDENT, "Grid:"},
-            {MENU_1OFN, false, 2, SEC_INDENT, "None"},
-            {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_TROPICS]},
-            {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_LATLNG]},
-            {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_MAID]},
-            {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_AZIM]},
-            {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_CQZONES]},
-            {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_ITUZONES]},
-        {MENU_LABEL, false, 0, PRI_INDENT, "Projection:"},
-            {MENU_1OFN, false, 3, SEC_INDENT, map_projnames[MAPP_MERCATOR]},
-            {MENU_1OFN, false, 3, SEC_INDENT, map_projnames[MAPP_AZIMUTHAL]},
-            {MENU_1OFN, false, 3, SEC_INDENT, map_projnames[MAPP_AZIM1]},
-            {MENU_1OFN, false, 3, SEC_INDENT, map_projnames[MAPP_ROB]},
-        {MENU_TOGGLE, false, 4, PRI_INDENT, "RSS"},
-        {MENU_TOGGLE, false, 5, PRI_INDENT, "Night"},
-        {MENU_TOGGLE, false, 6, PRI_INDENT, "Cities"},
+        {MENU_LABEL, false, 0, PRI_INDENT, "Style:", 0},
+            {MENU_AL1OFN, IS_CMROT(CM_COUNTRIES), 1, SEC_INDENT, cm_info[CM_COUNTRIES].name, 0},
+            {MENU_AL1OFN, IS_CMROT(CM_TERRAIN),   1, SEC_INDENT, cm_info[CM_TERRAIN].name, 0},
+            {MENU_AL1OFN, IS_CMROT(CM_DRAP),      1, SEC_INDENT, cm_info[CM_DRAP].name, 0},
+            {MENU_AL1OFN, IS_CMROT(CM_MUF_V),     1, SEC_INDENT, cm_info[CM_MUF_V].name, 0},
+            {MENU_AL1OFN, IS_CMROT(CM_MUF_RT),    1, SEC_INDENT, cm_info[CM_MUF_RT].name, 0},
+            {MENU_AL1OFN, IS_CMROT(CM_AURORA),    1, SEC_INDENT, cm_info[CM_AURORA].name, 0},
+            {MENU_AL1OFN, IS_CMROT(CM_WX),        1, SEC_INDENT, cm_info[CM_WX].name, 0},
+            {MENU_IGNORE, false,                  1, SEC_INDENT, NULL, 0}, // see below
+            {MENU_IGNORE, false,                  1, SEC_INDENT, NULL, 0}, // see below
+        {MENU_LABEL, false, 0, PRI_INDENT, "Grid:", 0},
+            {MENU_1OFN, false, 2, SEC_INDENT, "None", 0},
+            {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_TROPICS], 0},
+            {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_LATLNG], 0},
+            {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_MAID], 0},
+            {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_AZIM], 0},
+            {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_CQZONES], 0},
+            {MENU_1OFN, false, 2, SEC_INDENT, grid_styles[MAPGRID_ITUZONES], 0},
+        {MENU_LABEL, false, 0, PRI_INDENT, "Projection:", 0},
+            {MENU_1OFN, false, 3, SEC_INDENT, map_projnames[MAPP_MERCATOR], 0},
+            {MENU_1OFN, false, 3, SEC_INDENT, map_projnames[MAPP_AZIMUTHAL], 0},
+            {MENU_1OFN, false, 3, SEC_INDENT, map_projnames[MAPP_AZIM1], 0},
+            {MENU_1OFN, false, 3, SEC_INDENT, map_projnames[MAPP_ROB], 0},
+        {MENU_TOGGLE, false, 4, PRI_INDENT, "RSS", 0},
+        {MENU_TOGGLE, false, 5, PRI_INDENT, "Night", 0},
+        {MENU_TOGGLE, false, 6, PRI_INDENT, "Cities", 0},
     };
 
     // init selections with current states
@@ -1338,7 +1338,7 @@ static void drawMapMenu()
     // discard any extra taps
     drainTouch();
 
-    printFreeHeap (F("drawMapMenu"));
+    printFreeHeap ("drawMapMenu");
 
 }
 
@@ -1536,7 +1536,7 @@ static void ll2sScaled (const LatLong &ll, SCoord &s, uint8_t edge, int scale)
         break;
 
     default:
-        fatalError (_FX("ll2sRaw() bad map_proj %d"), map_proj);
+        fatalError ("ll2sRaw() bad map_proj %d", map_proj);
     }
 }
 
@@ -1654,7 +1654,7 @@ bool s2ll (const SCoord &s, LatLong &ll)
         break;
 
     default:
-        fatalError (_FX("s2ll() bad map_proj %d"), map_proj);
+        fatalError ("s2ll() bad map_proj %d", map_proj);
     }
 
 
@@ -1778,21 +1778,22 @@ void drawMoon ()
 
     float phase = lunar_cir.phase;
     
-    // draw at full display precision
+    // draw at full display precision -- similar to drawMoonImage()
 
     SCoord mc;
     const uint16_t moon_r = MOON_R*tft.SCALESZ;
     ll2sRaw (moon_ss_ll, mc, moon_r);
-    const uint16_t raw_x = mc.x;
-    const uint16_t raw_y = mc.y;
-    for (int16_t dy = -moon_r; dy <= moon_r; dy++) {    // scan top to bottom
-        float Ry = sqrtf(moon_r*moon_r-dy*dy);          // half-width at y
-        int16_t Ryi = roundf(Ry);                       // " as int
-        for (int16_t dx = -Ryi; dx <= Ryi; dx++) {      // scan left to right at y
-            float a = acosf(dx/Ry);                     // looking down from NP CW from right limb
+    const int16_t raw_x = mc.x;
+    const int16_t raw_y = mc.y;
+    const int16_t flip = de_ll.lat < 0 ? -1 : 1;
+    for (int16_t dy = -moon_r; dy <= moon_r; dy++) {
+        float Ry = sqrtf(moon_r*moon_r-dy*dy);
+        int16_t Ryi = roundf(Ry);
+        for (int16_t dx = -Ryi; dx <= Ryi; dx++) {
+            float a = acosf(dx/Ry);
             uint16_t color = (isnan(a) || (phase > 0 && a > phase) || (phase < 0 && a < phase+M_PIF))
                                 ? RA8875_BLACK : RA8875_WHITE;
-            tft.drawPixelRaw (raw_x+dx, raw_y+dy, color);
+            tft.drawPixelRaw (raw_x+dx*flip, raw_y+dy*flip, color);
         }
     }
 }
@@ -1820,7 +1821,7 @@ void drawDXInfo ()
 
     // lat and long
     char buf[50];
-    snprintf (buf, sizeof(buf), _FX("%.0f%c  %.0f%c"),
+    snprintf (buf, sizeof(buf), "%.0f%c  %.0f%c",
                 roundf(fabsf(dx_ll.lat_d)), dx_ll.lat_d < 0 ? 'S' : 'N',
                 roundf(fabsf(dx_ll.lng_d)), dx_ll.lng_d < 0 ? 'W' : 'E');
     tft.setCursor (dx_info_b.x, dx_info_b.y+3*vspace-8);
@@ -1931,9 +1932,9 @@ void drawDXTime()
 
     char buf[32];
     if (getDateFormat() == DF_MDY || getDateFormat() == DF_YMD)
-        snprintf (buf, sizeof(buf), _FX("%02d:%02d %s %d"), hr, mn, monthShortStr(mo), dy);
+        snprintf (buf, sizeof(buf), "%02d:%02d %s %d", hr, mn, monthShortStr(mo), dy);
     else
-        snprintf (buf, sizeof(buf), _FX("%02d:%02d %d %s"), hr, mn, dy, monthShortStr(mo));
+        snprintf (buf, sizeof(buf), "%02d:%02d %d %s", hr, mn, dy, monthShortStr(mo));
     tft.print(buf);
 }
 

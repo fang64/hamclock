@@ -83,9 +83,6 @@ class Adafruit_MCP23X17 {
             }
         };
 
-        // trace level
-        int verbose;
-
         // i2c addr
         uint8_t my_addr;
 

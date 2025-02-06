@@ -1,7 +1,5 @@
 #include "WiFiUdp.h"
 
-static bool verbose = false;
-
 WiFiUDP::WiFiUDP()
 {
 	sockfd = -1;
@@ -35,7 +33,7 @@ bool WiFiUDP::begin(int port)
 	    return (false);
 	}
 
-        if (verbose)
+        if (debugLevel(DEBUG_NET, 1))
             printf ("UDP: new socket %d port %d\n", sockfd, port);
 
 	return (true);
@@ -77,7 +75,7 @@ bool WiFiUDP::beginMulticast (IPAddress ifIP, IPAddress mcIP, int port)
 	    return (false);
         }
 
-        if (verbose)
+        if (debugLevel(DEBUG_NET, 1))
             printf ("UDP: new multicast socket %d\n", sockfd);
 
         // ok
@@ -170,7 +168,7 @@ int WiFiUDP::parsePacket()
 	tv.tv_usec = 0;
 	FD_ZERO (&rset);
 	FD_SET (sockfd, &rset);
-        if (verbose)
+        if (debugLevel(DEBUG_NET, 1))
             printf ("UDP: checking for pending packet\n");
 	int s = ::select (sockfd+1, &rset, NULL, NULL, &tv);
 	if (s < 0) {
@@ -179,14 +177,14 @@ int WiFiUDP::parsePacket()
 	    return (0);
 	}
 	if (s == 0) {
-            if (verbose)
+            if (debugLevel(DEBUG_NET, 1))
                 printf ("UDP: socket %d read timed out\n", sockfd);
 	    return (0);
         }
 
         socklen_t rlen = sizeof(remoteip);
 	r_n = ::recvfrom(sockfd, r_buf, sizeof(r_buf), 0, (struct sockaddr *)&remoteip, &rlen);
-        if (verbose)
+        if (debugLevel(DEBUG_NET, 1))
             printf ("UDP: socket %d read %d\n", sockfd, r_n);
 	if (r_n < 0) {
 	    printf ("UDP: recvfrom(): %s\n", strerror(errno));
@@ -206,7 +204,7 @@ void WiFiUDP::stop()
 {
 	if (sockfd >= 0) {
 	    ::close (sockfd);
-            if (verbose)
+            if (debugLevel(DEBUG_NET, 1))
                 printf ("UDP: closing socket %d\n", sockfd);
 	    sockfd = -1;
 	}

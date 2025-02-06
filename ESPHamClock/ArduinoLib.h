@@ -117,6 +117,39 @@ typedef enum {
 // #define RGB2GRAY(r,g,b) ((r)*0.26F + (g)*0.65F + (b)*0.09F)
 #define RGB2GRAY(r,g,b) ((r)/4 + 2*(g)/3 + (b)/12)      // faster??
 
+/* define debug subsystems
+ */
+#define DEBUG_SUBSYS                        \
+    X(DEBUG_ADIF,       "ADIF")             \
+    X(DEBUG_BC,         "BigClock")         \
+    X(DEBUG_CONTESTS,   "contests")         \
+    X(DEBUG_DXC,        "dxcluster")        \
+    X(DEBUG_GIMBAL,     "gimbal")           \
+    X(DEBUG_IO,         "io")               \
+    X(DEBUG_WEB,        "live-web")         \
+    X(DEBUG_MENUS,      "menus")            \
+    X(DEBUG_NMEA,       "NMEA")             \
+    X(DEBUG_NVRAM,      "NVRAM")            \
+    X(DEBUG_NET,        "network")          \
+    X(DEBUG_RADIO,      "radio")            \
+    X(DEBUG_SCROLL,     "scroller")         \
+    X(DEBUG_WL,         "watchlist")        \
+    X(DEBUG_WX,         "wx")               \
+    X(DEBUG_ZONES,      "zones")
+
+#define X(a,b) a,               // expands DEBUG_SUBSYS to each enum and comma
+typedef enum {
+    DEBUG_SUBSYS
+    DEBUG_SUBSYS_N
+} DebugSubsys;
+#undef X
+
+extern bool debugLevel (DebugSubsys s, int level);
+extern bool setDebugLevel (const char *name, int level);
+extern void getDebugs (const char *names[DEBUG_SUBSYS_N], int levels[DEBUG_SUBSYS_N]);
+
+
+
 // glue
 extern void setX11FullScreen (bool);
 extern void setDemoMode(bool on);

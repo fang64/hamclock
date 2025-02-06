@@ -168,35 +168,35 @@ static void drawBeaconKey()
     drawBeaconSymbol (s, c);
     tft.setTextColor (c);
     tft.setCursor (s.x+BEACONR, s.y-BEACONR/2);
-    tft.print (F("14.10"));
+    tft.print ("14.10");
 
     s.y += dy;
     c = BCOL_18;
     drawBeaconSymbol (s, c);
     tft.setTextColor (c);
     tft.setCursor (s.x+BEACONR, s.y-BEACONR/2);
-    tft.print (F("18.11"));
+    tft.print ("18.11");
 
     s.y += dy;
     c = BCOL_21;
     drawBeaconSymbol (s, c);
     tft.setTextColor (c);
     tft.setCursor (s.x+BEACONR, s.y-BEACONR/2);
-    tft.print (F("21.15"));
+    tft.print ("21.15");
 
     s.y += dy;
     c = BCOL_24;
     drawBeaconSymbol (s, c);
     tft.setTextColor (c);
     tft.setCursor (s.x+BEACONR, s.y-BEACONR/2);
-    tft.print (F("24.93"));
+    tft.print ("24.93");
 
     s.y += dy;
     c = BCOL_28;
     drawBeaconSymbol (s, c);
     tft.setTextColor (c);
     tft.setCursor (s.x+BEACONR, s.y-BEACONR/2);
-    tft.print (F("28.20"));
+    tft.print ("28.20");
 }
 
 /* draw any of the various contents in NCDXF_b depending on brb_mode.
@@ -220,7 +220,7 @@ bool drawNCDXFBox()
     case BRB_SHOW_SWSTATS:
 
         (void) checkForNewSpaceWx();
-        drawSpaceStats(RA8875_BLACK);
+        drawNCDXFSpcWxStats(RA8875_BLACK);
         break;
 
     case BRB_SHOW_BME76:        // fallthru
@@ -257,6 +257,7 @@ bool drawNCDXFBox()
 }
 
 /* common template to draw table of stats in NCDXF_b.
+ * divide NCDXF_b into NCDXF_B_NFIELDS equal regions vertically with titles near each bottom.
  * use white text and colors for each unless color is black in which case us it for everything.
  */
 void drawNCDXFStats (uint16_t color,
@@ -264,83 +265,29 @@ void drawNCDXFStats (uint16_t color,
                      const char values[NCDXF_B_NFIELDS][NCDXF_B_MAXLEN],
                      const uint16_t colors[NCDXF_B_NFIELDS])
 {
-    // prep layout
-    uint16_t y = NCDXF_b.y;
-    const int valurect_dy = -23;
-    const int valurect_h = 26;
+    // each box height and nice offsets down to value and title
+    const uint16_t h = NCDXF_b.h / NCDXF_B_NFIELDS;
+    const uint16_t vo = 24*h/37;                         // font baseline
+    const uint16_t to = 28*h/37;                         // font top
 
     // show each item
     for (int i = 0; i < NCDXF_B_NFIELDS; i++) {
 
-        y += 25;
+        // top height
+        uint16_t y = i * NCDXF_b.h / NCDXF_B_NFIELDS;
 
         selectFontStyle (LIGHT_FONT, SMALL_FONT);
         tft.setTextColor (color == RA8875_BLACK ? colors[i] : color);
-        tft.fillRect (NCDXF_b.x+1, y+valurect_dy, NCDXF_b.w-2, valurect_h, RA8875_BLACK);
-        // tft.drawRect (NCDXF_b.x+1, y+valurect_dy, NCDXF_b.w-2, valurect_h, RA8875_RED);
-        tft.setCursor (NCDXF_b.x + (NCDXF_b.w-getTextWidth(values[i]))/2, y);
+        tft.fillRect (NCDXF_b.x+1, y, NCDXF_b.w-2, h, RA8875_BLACK);
+        // tft.drawRect (NCDXF_b.x+1, y, NCDXF_b.w-2, h, RA8875_RED);              // RBF
+        tft.setCursor (NCDXF_b.x + (NCDXF_b.w-getTextWidth(values[i]))/2, y+vo);
         tft.print (values[i]);
-
-        y += 4;
 
         selectFontStyle (LIGHT_FONT, FAST_FONT);
         tft.setTextColor (color == RA8875_BLACK ? RA8875_WHITE : color);
-        tft.setCursor (NCDXF_b.x + (NCDXF_b.w-getTextWidth(titles[i]))/2, y);
+        tft.setCursor (NCDXF_b.x + (NCDXF_b.w-getTextWidth(titles[i]))/2, y+to);
         tft.print (titles[i]);
-
-        y += 7;
     }
-}
-
-/* common function to install pane corresponding to touch in NCDXF_b.
- * N.B. never use PANE_0
- */
-void doNCDXFStatsTouch (const SCoord &s, PlotChoice pcs[NCDXF_B_NFIELDS])
-{
-    // decide which row
-    int r = NCDXF_B_NFIELDS*(s.y - NCDXF_b.y)/NCDXF_b.h;
-    if (r < 0 || r >= NCDXF_B_NFIELDS)
-        fatalError(_FX("Bogus doNCDXFStatsTouch r %d"), r);       // never returns
-                
-    // decide which PLOT_CH 
-    PlotChoice pc = pcs[r];
-                    
-    // done if the chosen pane is already on display
-    if (findPaneChoiceNow (pc) != PANE_NONE)
-        return; 
-            
-    // not on display, choose a pane to use
-    PlotPane pp = PANE_NONE;
-            
-    // start by looking for a pane with the new stat already in its rotation set (we know it's not visible)
-    for (int i = PANE_1; i < PANE_N; i++) {
-        if (plot_rotset[i] & (1<<pc)) {
-            pp = (PlotPane)i;
-            break;
-        } 
-    }
-            
-    // else look for a pane with no related stats anywhere in its rotation set
-    if (pp == PANE_NONE) {
-        uint32_t pcs_mask = 0;
-        for (int i = 0; i < NCDXF_B_NFIELDS; i++)
-            pcs_mask |= (1 << pcs[i]);
-        for (int i = PANE_1; i < PANE_N; i++) {
-            if ((plot_rotset[i] & pcs_mask) == 0) {
-                pp = (PlotPane)i;
-                break;
-            }
-        }
-    }
-
-    // else just pick the pane next to the stats summary
-    if (pp == PANE_NONE)
-        pp = PANE_3;
-
-    // install as only choice
-    (void) setPlotChoice (pp, pc);
-    plot_rotset[pp] = 1 << pc;
-    savePlotOps();
 }
 
 /* init brb_rotset and brb_mode

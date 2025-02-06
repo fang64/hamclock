@@ -349,6 +349,7 @@ static void usage (const char *errfmt, ...)
             fprintf (stderr, "Built as %s\n", our_make);
             fprintf (stderr, "Options:\n");
             fprintf (stderr, " -0   : remove eeprom file to restore all default values\n");
+            fprintf (stderr, " -a x : set debug name=level, bogus name gives list\n");
             fprintf (stderr, " -b h : set backend host:port to h; default is %s:%d\n", backend_host,
                                     backend_port);
             fprintf (stderr, " -d d : set working directory to d; default is %s\n", defaultAppDir().c_str());
@@ -365,7 +366,8 @@ static void usage (const char *errfmt, ...)
             fprintf (stderr, " -o   : write diagnostic log to stdout instead of in %s\n",
                                     defaultAppDir().c_str());
             fprintf (stderr, " -p f : require passwords in file f formatted as lines of \"category password\"\n");
-            fprintf (stderr, "        categories: changeUTC exit newde newdx reboot restart setup shutdown unlock upgrade\n");
+            fprintf (stderr, "        changeUTC configurations exit newde newdx reboot restart setup shutdown unlock upgrade\n");
+
             fprintf (stderr, " -q   : ignore saved startup screen location and size\n");
             fprintf (stderr, " -r p : set read-only live web server port to p or -1 to disable; default %d\n",
                                     LIVEWEB_RO_PORT);
@@ -380,6 +382,19 @@ static void usage (const char *errfmt, ...)
         }
 
         exit(1);
+}
+
+/* print available debugs
+ */
+static void prDebugs (void)
+{
+    const char *db_names[DEBUG_SUBSYS_N];
+    int db_levels[DEBUG_SUBSYS_N];
+    getDebugs (db_names, db_levels);
+    fprintf (stderr, "-a names:");
+    for (int i = 0; i < DEBUG_SUBSYS_N; i++)
+        fprintf (stderr, " %s", db_names[i]);
+    fprintf (stderr, "\n");
 }
 
 /* process main's argc/argv -- never returns if any issues
@@ -399,6 +414,19 @@ static void crackArgs (int ac, char *av[])
                 switch (*s) {
                 case '0':
                     rm_eeprom = true;
+                    break;
+                case 'a': {
+                        if (ac < 2)
+                            usage ("missing name=level for -a");
+                        char *eq = strchr (*++av, '=');
+                        if (!eq)
+                            usage ("no = in -a arg");
+                        if (!setDebugLevel (*av, atoi(eq+1))) {
+                            prDebugs();
+                            exit(1);
+                        }
+                        ac--;
+                    }
                     break;
                 case 'b': {
                         if (ac < 2)
@@ -455,7 +483,8 @@ static void crackArgs (int ac, char *av[])
                     init_locip = *++av;
                     ac--;
                     break;
-                case 'k':
+                case 'k':                       // fallthru
+                case 'K':
                     skip_skip = true;
                     break;
                 case 'l':
@@ -576,12 +605,31 @@ static void crackArgs (int ac, char *av[])
             setX11FullScreen (full_screen);
 }
 
+/* remove the given arg from our_argv IN PLACE.
+ * return whether argv_not was indeed removed.
+ */
+static bool rmOurArgv (const char *argv_not)
+{
+        bool found_not = false;
+        char **to_argv = our_argv;
+        for (char **from_argv = our_argv; *from_argv != NULL; from_argv++) {
+            if (strcmp (argv_not, *from_argv) == 0) {
+                found_not = true;
+                printf ("removing %s\n", argv_not);
+            } else
+                *to_argv++ = *from_argv;
+        }
+        *to_argv = NULL;
+
+        return (found_not);
+}
+
 /* Every normal C program requires a main().
  * This is provided as magic in the Arduino IDE so here we must do it ourselves.
  */
 int main (int ac, char *av[])
 {
-	// save our args for identical restart or remote update
+        // save our args for identical restart or remote update
 	our_argv = av;
 
         // always want stdout synchronous 
@@ -590,10 +638,14 @@ int main (int ac, char *av[])
         // check args
         crackArgs (ac, av);
 
-        // log args after cracking so they go to proper diag file
+        // log args after cracking so they honor proper diag file
         printf ("\nNew program args:\n");
         for (int i = 0; i < ac; i++)
             printf ("  argv[%d] = %s\n", i, av[i]);
+
+	// but now rm -K, see ESP::restart(bool minus_K)
+        if (rmOurArgv ("-K"))
+            ac -= 1;
 
         // log some sys info
         logSys();

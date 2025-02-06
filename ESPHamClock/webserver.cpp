@@ -349,10 +349,10 @@ static void startPlainText (WiFiClient &client)
 {
     resetWatchdog();
 
-    FWIFIPRLN (client, "HTTP/1.0 200 OK");
+    client.println ("HTTP/1.0 200 OK");
     sendUserAgent (client);
-    FWIFIPRLN (client, "Content-Type: text/plain; charset=us-ascii");
-    FWIFIPRLN (client, "Connection: close\r\n");             // include extra blank line
+    client.println ("Content-Type: text/plain; charset=us-ascii");
+    client.println ("Connection: close\r\n");             // include extra blank line
 
     resetWatchdog();
 }
@@ -377,10 +377,10 @@ static void sendHTTPError (WiFiClient &client, const char *fmt, ...)
     Serial.print (errmsg);
 
     // send to client
-    FWIFIPRLN (client, "HTTP/1.0 400 Bad request");
+    client.println ("HTTP/1.0 400 Bad request");
     sendUserAgent (client);
-    FWIFIPRLN (client, "Content-Type: text/plain; charset=us-ascii");
-    FWIFIPRLN (client, "Connection: close\r\n");             // include extra blank line
+    client.println ("Content-Type: text/plain; charset=us-ascii");
+    client.println ("Connection: close\r\n");             // include extra blank line
     client.print (errmsg);
 
     resetWatchdog();
@@ -523,12 +523,12 @@ static bool getWiFiCaptureBMP(WiFiClient &client, char *unused_line, size_t line
 
     // send the web page header
     resetWatchdog();
-    FWIFIPRLN (client, "HTTP/1.0 200 OK");
+    client.println ("HTTP/1.0 200 OK");
     sendUserAgent (client);
-    FWIFIPRLN (client, "Content-Type: image/bmp");
-    FWIFIPRLN (client, "Cache-Control: no-cache");
-    FWIFIPR (client, "Content-Length: "); client.println (BHDRSZ+nbytes);
-    FWIFIPRLN (client, "Connection: close\r\n");
+    client.println ("Content-Type: image/bmp");
+    client.println ("Cache-Control: no-cache");
+    client.print ("Content-Length: "); client.println (BHDRSZ+nbytes);
+    client.println ("Connection: close\r\n");
     // Serial.println("web header sent");
 
     // send the image header
@@ -605,9 +605,9 @@ static bool getWiFiDEDXInfo_helper (WiFiClient &client, char line[], size_t line
         bool B_ismag = desiredBearing (de_ll, B);
         if (showDistKm())
             dist *= KM_PER_MI;
-        FWIFIPR (client, "DX_path_SP    ");
+        client.print ("DX_path_SP    ");
         snprintf (buf, sizeof(buf), "%.0f %s @ %.0f deg %s\n", dist, showDistKm() ? "km" : "mi", B,
-                B_ismag ? "magnetic" : _FX("true"));
+                B_ismag ? "magnetic" : "true");
         client.print (buf);
 
         // show long path info
@@ -617,9 +617,9 @@ static bool getWiFiDEDXInfo_helper (WiFiClient &client, char line[], size_t line
         B_ismag = desiredBearing (de_ll, B);
         if (showDistKm())
             dist *= KM_PER_MI;
-        FWIFIPR (client, "DX_path_LP    ");
+        client.print ("DX_path_LP    ");
         snprintf (buf, sizeof(buf), "%.0f %s @ %.0f deg %s\n", dist, showDistKm() ? "km" : "mi", B,
-                B_ismag ? "magnetic" : _FX("true"));
+                B_ismag ? "magnetic" : "true");
         client.print (buf);
 
     } else {
@@ -726,10 +726,10 @@ static bool getWiFiDEDXInfo_helper (WiFiClient &client, char line[], size_t line
         snprintf (buf, sizeof(buf), "%sWxTemp     %.1f %c\n", prefix, x, showTempC() ? 'C' : 'F');
         client.print(buf);
 
-        x = showATMhPa() ? wip->pressure_hPa : wip->pressure_hPa/33.8639;
+        x = showATMhPa() ? wip->pressure_hPa : HPA2INHG(wip->pressure_hPa);
         snprintf (buf, sizeof(buf), "%sWxPressure %.2f %s %s\n", prefix, x,
             showATMhPa() ? "hPa" : "inHg",
-            wip->pressure_chg < 0 ? "falling" : (wip->pressure_chg > 0 ? _FX("rising") : _FX("steady")));
+            wip->pressure_chg < 0 ? "falling" : (wip->pressure_chg > 0 ? "rising" : "steady"));
         client.print(buf);
 
         snprintf (buf, sizeof(buf), "%sWxHumidity %.1f %%\n", prefix, wip->humidity_percent);
@@ -780,7 +780,7 @@ static bool getWiFiDXInfo (WiFiClient &client, char line[], size_t line_len)
 static void spotsHelper (WiFiClient &client, const DXSpot *spots, int nspots, char *buf, int buf_len)
 {
     // print each row
-    FWIFIPR (client, "#  kHz   Call        UTC     Mode Grid      Lat     Lng     DEDist   DEBearing\n");
+    client.print ("#  kHz   Call        UTC     Mode Grid      Lat     Lng     DEDist   DEBearing\n");
     for (uint8_t i = 0; i < nspots; i++) {
 
         const DXSpot &spot = spots[i];
@@ -802,7 +802,7 @@ static void spotsHelper (WiFiClient &client, const DXSpot *spots, int nspots, ch
         snprintf (buf+bufl, buf_len-bufl, " %-*s %02d%02d %7s %6s %7.2f %7.2f   %6.0f   %4.0f %s\n",
                 MAX_SPOTCALL_LEN-1, spot.tx_call, hour(spot.spotted), minute(spot.spotted), spot.mode,
                 spot.tx_grid, spot.tx_ll.lat_d, spot.tx_ll.lng_d, dist, bear,
-                bear_ismag ? "magnetic" : _FX("true"));
+                bear_ismag ? "magnetic" : "true");
 
         // print
         client.print(buf);
@@ -870,9 +870,9 @@ static bool getWiFiLiveStats (WiFiClient &client, char *line, size_t line_len)
     // heading
     char buf[100];
     if (showDistKm())
-        FWIFIPR (client, "# Band Count MaxKm    @Lat    @Lng\n");
+        client.print ("# Band Count MaxKm    @Lat    @Lng\n");
     else
-        FWIFIPR (client, "# Band Count MaxMi    @Lat    @Lng\n");
+        client.print ("# Band Count MaxMi    @Lat    @Lng\n");
 
     // table
     for (int i = 0; i < HAMBAND_N; i++) {
@@ -901,7 +901,7 @@ static bool getWiFiContests (WiFiClient &client, char *unused_line, size_t line_
     startPlainText (client);
 
     if (n_con > 0) {
-        FWIFIPR (client, "# ");
+        client.print ("# ");
         client.println (credp);
         for (int i = 0; i < n_con; i++) {
             const ContestEntry &ce = cep[i];
@@ -933,11 +933,11 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
     startPlainText (client);
 
     // report whether screen is locked
-    FWIFIPR (client, "Screen    ");
+    client.print ("Screen    ");
     if (screenIsLocked())
-        FWIFIPRLN (client, "locked");
+        client.println ("locked");
     else
-        FWIFIPRLN (client, "unlocked");
+        client.println ("unlocked");
 
 
     // report active map styles, starting with core_map
@@ -975,7 +975,7 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
         reportPaneChoices (client, (PlotPane)pp);
 
     // report psk if active
-    FWIFIPR (client, "LiveSpots ");
+    client.print ("LiveSpots ");
     if (findPaneForChoice(PLOT_CH_PSK) != PANE_NONE) {
         bool ispsk = (psk_mask & PSKMB_SRCMASK) == PSKMB_PSK;
         bool iswspr = (psk_mask & PSKMB_SRCMASK) == PSKMB_WSPR;
@@ -989,12 +989,12 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
     client.print(buf);
 
     // report each selected NCDXF beacon box state
-    FWIFIPR (client, "NCDXF     ");
+    client.print ("NCDXF     ");
     for (unsigned i = 0; i < BRB_N; i++) {
         int j = (brb_mode + i) % BRB_N; // start list with current
         if (brb_rotset & (1 << j)) {
             if (j != brb_mode)
-                FWIFIPR (client, ", ");
+                client.print (", ");
             client.print(brb_names[j]);
         }
     }
@@ -1006,7 +1006,7 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
 
     // report display brightness and timers
     uint16_t pcon, t_idle, t_idle_left;
-    FWIFIPR (client, "Bright    ");
+    client.print ("Bright    ");
     if (getDisplayInfo (pcon, t_idle, t_idle_left)) {
 
         // display brightness info
@@ -1017,7 +1017,7 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
         client.print (buf);
 
         // display dimming info
-        FWIFIPR (client, "AutoDim   ");
+        client.print ("AutoDim   ");
         if (t_idle == 0)
             strcpy (buf, "off");
         else {
@@ -1044,11 +1044,11 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
         }
 
     } else
-        FWIFIPRLN (client, not_sup);
+        client.println ( not_sup);
 
 
     // report daily alarm
-    FWIFIPR (client, "Alarm     ");
+    client.print ("Alarm     ");
     AlarmState d_as;
     uint16_t d_dehr, d_demn;
     bool utc;
@@ -1068,7 +1068,7 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
     client.print (buf);
 
     // report once-only alarm
-    FWIFIPR (client, "One Alarm ");
+    client.print ("One Alarm ");
     AlarmState wo_as;
     time_t wo_t;
     bool wo_utc;
@@ -1091,12 +1091,12 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
 
     // report stopwatch
     getStopwatchReport (buf, sizeof(buf));
-    FWIFIPR (client, "Stopwatch ");
+    client.print ("Stopwatch ");
     client.print (buf);
 
 
     // time source
-    FWIFIPR (client, "TimeFrom  ");
+    client.print ("TimeFrom  ");
     if (useOSTime())
         snprintf (buf, sizeof(buf), "host computer\n");
     else if (useGPSDTime())
@@ -1108,17 +1108,17 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
     client.print(buf);
 
     // gpsd?
-    FWIFIPR (client, "GPSD      ");
+    client.print ("GPSD      ");
     if (useGPSDTime() || useGPSDLoc()) {
-        FWIFIPR (client, "get");
+        client.print ("get");
         if (useGPSDTime())
-            FWIFIPR (client, " time");
+            client.print (" time");
         if (useGPSDLoc())
-            FWIFIPR (client, " location");
-        FWIFIPR (client, " from ");
+            client.print (" location");
+        client.print (" from ");
         client.println (getGPSDHost());
     } else {
-        FWIFIPRLN (client, "off");
+        client.println ("off");
     }
 
     // gimbal activity
@@ -1130,8 +1130,8 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
         bufl += snprintf (buf+bufl, sizeof(buf)-bufl, "Rotator   ");
         if (gconn && vis_now)  {
             bufl += snprintf (buf+bufl, sizeof(buf)-bufl, "%s, %s @ ",
-                            gstop ? "stopped" : _FX("active"),
-                            gauto ? "auto" : _FX("manual"));
+                            gstop ? "stopped" : "active",
+                            gauto ? "auto" : "manual");
             if (has_el)
                 bufl += snprintf (buf+bufl, sizeof(buf)-bufl, "%.1f %.1f\n", az, el);
             else
@@ -1146,7 +1146,7 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
     // report what DE pane is being used for
     snprintf (buf, sizeof(buf), "DEPane    %s, TZ=UTC%+g%s\n",
                 detime_names[de_time_fmt], getTZ(de_tz)/3600.0,
-                de_time_fmt == DETIME_INFO ? (desrss ? ", RSAtAt" : _FX(", RSInAgo")) : "");
+                de_time_fmt == DETIME_INFO ? (desrss ? ", RSAtAt" : ", RSInAgo") : "");
     client.print(buf);
 
 
@@ -1155,7 +1155,7 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
     if (!dx_info_for_sat) {
         nbuf += snprintf (buf+nbuf, sizeof(buf)-nbuf, "TZ=UTC%+g %s\n", getTZ(dx_tz)/3600.0,
                             dxsrss == DXSRSS_INAGO ? "RSInAgo"
-                            : (dxsrss == DXSRSS_ATAT ? "RSAtAt" : _FX("Prefix")));
+                            : (dxsrss == DXSRSS_ATAT ? "RSAtAt" : "Prefix"));
     }
     client.print(buf);
 
@@ -1169,13 +1169,13 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
     client.print (buf);
 
     // report dxcluster state
-    FWIFIPR (client, "DXCluster ");
+    client.print ("DXCluster ");
     if (useDXCluster()) {
         snprintf (buf, sizeof(buf), "%s:%d %sconnected\n", getDXClusterHost(), getDXClusterPort(),
                                         isDXClusterConnected() ? "" : "dis");
         client.print (buf);
     } else
-        FWIFIPRLN (client, "off");
+        client.println ("off");
 
 
     // report units
@@ -1187,7 +1187,7 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
 
 
     // report BME info
-    FWIFIPR (client, "BME280    ");
+    client.print ("BME280    ");
     nbuf = 0;
     for (int i = 0; i < MAX_N_BME; i++) {
         const BMEData *dp = getBMEData((BMEIndex)i, false);
@@ -1198,20 +1198,20 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
     if (nbuf > 0)
         client.println (buf);
     else
-        FWIFIPRLN (client, "none");
+        client.println ("none");
 
     // report KX3 info
-    FWIFIPR (client, "KX3       ");
-    FWIFIPR (client, "ONAIR     ");
+    client.print ("KX3       ");
+    client.print ("ONAIR     ");
     #if defined(_SUPPORT_KX3)
         uint32_t baud = getKX3Baud();
         if (baud > 0) {
             snprintf (buf, sizeof(buf), "%d baud\n", baud);
             client.print (buf);
         } else
-            FWIFIPRLN (client, "off");
+            client.println ("off");
     #else
-        FWIFIPRLN (client, not_sup);
+        client.println ( not_sup);
     #endif // _SUPPORT_KX3
 
 
@@ -1250,20 +1250,20 @@ static bool getWiFiConfig (WiFiClient &client, char *unused_line, size_t line_le
 
 
     // report GPIO
-    FWIFIPR (client, "GPIO      ");
+    client.print ("GPIO      ");
     if (GPIOOk())
-        FWIFIPRLN (client, "on");
+        client.println ("on");
     else
-        FWIFIPRLN (client, "off");
+        client.println ("off");
 
     // report photosensor info
-    FWIFIPR (client, "Light sen ");
+    client.print ("Light sen ");
     if (found_ltr)
-        FWIFIPRLN (client, "LTR329");
+        client.println ("LTR329");
     else if (found_phot)
-        FWIFIPRLN (client, "photoresistor");
+        client.println ("photoresistor");
     else
-        FWIFIPRLN (client, "none");
+        client.println ("none");
 
     // report each map color
     for (int i = 0; i < N_CSPR; i++) {
@@ -1293,7 +1293,7 @@ static bool getWiFiSatellite (WiFiClient &client, char *line, size_t ll)
     // get name and current position
     SatNow sn;
     if (!getSatNow (sn)) {
-        FWIFIPRLN (client, "none");
+        client.println ("none");
         return (true);
     }
 
@@ -1314,7 +1314,7 @@ static bool getWiFiSatellite (WiFiClient &client, char *line, size_t ll)
     int n_times;
     if (sn.raz == SAT_NOAZ || sn.saz == SAT_NOAZ
                            || (n_times = nextSatRSEvents (&rises, &razs, &sets, &sazs)) == 0) {
-        FWIFIPR (client, "No rise or set\n");
+        client.print ("No rise or set\n");
     } else {
         // next events
         if (sn.rdt > 0) {
@@ -1327,9 +1327,9 @@ static bool getWiFiSatellite (WiFiClient &client, char *line, size_t ll)
         client.print(line);
 
         // print heading
-        FWIFIPR (client, "       Upcoming DE Passes\n");
-        FWIFIPR (client, "Day  Rise    Az   Set    Az   Up\n");
-        FWIFIPR (client, "___  _____  ___  _____  ___  _____\n");
+        client.print ("       Upcoming DE Passes\n");
+        client.print ("Day  Rise    Az   Set    Az   Up\n");
+        client.print ("___  _____  ___  _____  ___  _____\n");
         // snprintf (line, ll, "%.3s  %02dh%02d  %02dh%02d  %02d:%02d\n"
 
         // print table
@@ -1417,9 +1417,9 @@ static bool getWiFiSensorData (WiFiClient &client, char line[], size_t line_len)
 
     // send content header
     if (showTempC() && showATMhPa())
-        FWIFIPR (client, "#   UTC ISO 8601      UNIX secs I2C  Temp,C   P,hPa   Hum,%  DewP,C\n");
+        client.print ("#   UTC ISO 8601      UNIX secs I2C  Temp,C   P,hPa   Hum,%  DewP,C\n");
     else
-        FWIFIPR (client, "#   UTC ISO 8601      UNIX secs I2C  Temp,F  P,inHg   Hum,%  DewP,F\n");
+        client.print ("#   UTC ISO 8601      UNIX secs I2C  Temp,F  P,inHg   Hum,%  DewP,F\n");
 
     // send data for each connected sensor
     resetWatchdog();
@@ -1545,7 +1545,7 @@ static bool getWiFiSys (WiFiClient &client, char *unused_line, size_t line_len)
     (void)(unused_line);
     (void)(line_len);
 
-    char buf[100];
+    char buf[200];
 
     // send html header
     startPlainText(client);
@@ -1556,14 +1556,14 @@ static bool getWiFiSys (WiFiClient &client, char *unused_line, size_t line_len)
 
     // show basic info
     resetWatchdog();
-    FWIFIPR (client, "Version  "); client.println (hc_version);
+    client.print ("Version  "); client.println (hc_version);
     snprintf (buf, sizeof(buf), "BuildSz  %d x %d\n", BUILD_W, BUILD_H); client.print(buf);
-    FWIFIPR (client, "MaxStack "); client.println (worst_stack);
-    FWIFIPR (client, "Platform "); client.println (platform);
-    FWIFIPR (client, "BEHost   "); client.println (backend_host);
-    FWIFIPR (client, "BEPort   "); client.println (backend_port);
-    FWIFIPR (client, "MACaddr  "); client.println (WiFi.macAddress().c_str());
-    FWIFIPR (client, "S/N      "); client.println (ESP.getChipId());
+    client.print ("MaxStack "); client.println (worst_stack);
+    client.print ("Platform "); client.println (platform);
+    client.print ("BEHost   "); client.println (backend_host);
+    client.print ("BEPort   "); client.println (backend_port);
+    client.print ("MACaddr  "); client.println (WiFi.macAddress().c_str());
+    client.print ("S/N      "); client.println (ESP.getChipId());
 
     // show EEPROM used
     uint16_t ee_used, ee_size;
@@ -1594,30 +1594,37 @@ static bool getWiFiSys (WiFiClient &client, char *unused_line, size_t line_len)
     }
 
     // show debug levels
-    prDebugLevels (client, 9);
+    const char *db_names[DEBUG_SUBSYS_N];
+    int db_levels[DEBUG_SUBSYS_N];
+    getDebugs (db_names, db_levels);
+    client.println ("Debugs:");
+    for (int i = 0; i < DEBUG_SUBSYS_N; i++) {
+        snprintf (buf, sizeof(buf), "%9s%10s = %d\n", "", db_names[i], db_levels[i]);
+        client.print (buf);
+    }
 
     // show file system info
     int n_info;
-    uint64_t fs_size, fs_used;
+    long long fs_size, fs_used;
     char *fs_name;
     FS_Info *fip0 = getConfigDirInfo (&n_info, &fs_name, &fs_size, &fs_used);
-    client.print (fs_name);
-    if (fs_size > 1000000000U) {
-        snprintf (buf, sizeof(buf), " %lu / %lu MiB %.2f%%\n",
-                        (unsigned long)(fs_used/1048576U), (unsigned long)(fs_size/1048576U),
-                        100.0F*fs_used/fs_size);
-    } else
-        snprintf (buf, sizeof(buf), " %lu / %lu B %.2f%%\n",
-                        (unsigned long)fs_used, (unsigned long)fs_size,
-                        100.0F*fs_used/fs_size);
-    client.print (buf);
-    for (int i = 0; i < n_info; i++) {
-        FS_Info *fip = &fip0[i];
-        snprintf (buf, sizeof(buf), "  %-32s %20s %7u\n", fip->name, fip->date, fip->len);
+    if (fip0) {
+        client.print (fs_name);
+        if (fs_size > 1000000000L) {
+            snprintf (buf, sizeof(buf), " %lld / %lld MiB %.2f%%\n",
+                            fs_used/1048576LL, fs_size/1048576LL, 100.0F*fs_used/fs_size);
+        } else
+            snprintf (buf, sizeof(buf), " %lld / %lld B %.2f%%\n",
+                            fs_used, fs_size, 100.0F*fs_used/fs_size);
         client.print (buf);
+        for (int i = 0; i < n_info; i++) {
+            FS_Info *fip = &fip0[i];
+            snprintf (buf, sizeof(buf), "  %s %8ld %s\n", fip->date, fip->len, fip->name);
+            client.print (buf);
+        }
+        free (fs_name);
+        free (fip0);
     }
-    free (fs_name);
-    free (fip0);
 
     return (true);
 }
@@ -1671,7 +1678,7 @@ static bool getWiFiVOACAP (WiFiClient &client, char *line, size_t line_len)
 
     // bottom row is time DE or utc depending on bc_utc_tl but "now" always column 1
     buf_l = 0;
-    buf_l += snprintf (buf+buf_l, sizeof(buf)-buf_l, "%-5s", bc_utc_tl ? _FX("UTC") : _FX("DE"));
+    buf_l += snprintf (buf+buf_l, sizeof(buf)-buf_l, "%-5s", bc_utc_tl ? "UTC" : "DE");
     for (int p_col = 0; p_col < BMTRX_ROWS; p_col++) {
         int hr = (hr_now + p_col) % 24;
         if ((hr%4) != 0)
@@ -2046,7 +2053,7 @@ static bool setWiFiDebug (WiFiClient &client, char line[], size_t line_len)
 
     // try to set
     if (!setDebugLevel (name, level)) {
-        strcpy (line, garbcmd);
+        strcpy (line, "unknown debug");
         return (false);
     }
 
@@ -2215,11 +2222,11 @@ static bool setWiFiOnceAlarm (WiFiClient &client, char line[], size_t line_len)
     // ack
     startPlainText (client);
     if (as == ALMS_OFF)
-        FWIFIPRLN (client, "alarm off");
+        client.println ("alarm off");
     else {
-        FWIFIPR (client, "armed for ");
-        client.print (utc ? "UTC " : _FX("DE "));
-        FWIFIPRLN (client, str);
+        client.print ("armed for ");
+        client.print (utc ? "UTC " : "DE ");
+        client.println ( str);
     }
 
     return (true);
@@ -2293,7 +2300,7 @@ static bool setWiFiDisplayOnOff (WiFiClient &client, char line[], size_t line_le
 
         // ack with same state
         startPlainText (client);
-        FWIFIPR (client, "display ");
+        client.print ("display ");
         client.println (line);
 
         // ok
@@ -2433,19 +2440,19 @@ static bool setWiFiDisplayTimes (WiFiClient &client, char line[], size_t line_le
         char buf[100];
 
         if (found_onoff) {
-            FWIFIPR (client, "On    ");
+            client.print ("On    ");
             snprintf (buf, sizeof(buf), "%02d:%02d", on_hr, on_mn);
             client.println (buf);
-            FWIFIPR (client, "Off   ");
+            client.print ("Off   ");
             snprintf (buf, sizeof(buf), "%02d:%02d", off_hr, off_mn);
             client.println (buf);
-            FWIFIPR (client, "Day   ");
+            client.print ("Day   ");
             strcpy (buf, dayShortStr(dow));
             client.println (buf);
         }
 
         if (found_idle) {
-            FWIFIPR (client, "Idle  ");
+            client.print ("Idle  ");
             client.println (idle_mins);
         }
 
@@ -2921,11 +2928,11 @@ static bool setWiFiADIF (WiFiClient &client, char line[], size_t line_len)
         }
 
         // create GenReader using existing client
-        GenReader gr(client);
+        GenReader gr (client, content_length);
 
         // process POST content which immediately follows header
         int n_good, n_bad;
-        loadADIFFile (gr, content_length, n_good, n_bad);
+        loadADIFFile (gr, n_good, n_bad);
         if (n_good == 0) {
             strcpy (line, "No qualifying spots found");
             return (false);
@@ -2976,8 +2983,8 @@ static bool setWiFiloadBMP (WiFiClient &client, char line[], size_t line_len)
     } else {
 
         // POST content immediately follows header
-        GenReader r (client);
-        if (!install24BMP (r, plot_b[pane], line, line_len))
+        GenReader gr (client);
+        if (!install24BMP (gr, plot_b[pane], line, line_len))
             return (false);             // error already in line[]
     }
 
@@ -3700,14 +3707,14 @@ static bool doWiFiReboot (WiFiClient &client, char *unused_line, size_t line_len
 
     // send html header then close
     startPlainText(client);
-    FWIFIPRLN (client, "restarting ... bye for now.");
+    client.println ("restarting ... bye for now.");
     wdDelay(100);
     client.flush();
     client.stop();
     wdDelay(1000);
 
     Serial.println ("restarting...");
-    doReboot();
+    doReboot(false);
 
     // never returns but compiler doesn't know that
     return (true);
@@ -3730,9 +3737,9 @@ static bool doWiFiUpdate (WiFiClient &client, char *unused_line, size_t line_len
         snprintf (msg, sizeof(msg), "updating from %s to %s ... \n", hc_version, ver);
         client.print(msg);
         doOTAupdate(ver);                               // never returns if successful
-        FWIFIPRLN (client, "update failed");
+        client.println ("update failed");
     } else
-        FWIFIPRLN (client, "You're up to date!");    // match tapping version
+        client.println ("You're up to date!");    // match tapping version
 
     return (true);
 }
@@ -3974,7 +3981,7 @@ static bool doWiFiExit (WiFiClient &client, char *unused_line, size_t line_len)
 
     // ack then die
     startPlainText(client);
-    FWIFIPRLN (client, "exiting");
+    client.println ("exiting");
 
     Serial.print ("Exiting\n");
     doExit();

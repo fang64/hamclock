@@ -10,6 +10,7 @@ static const char cities_fn[] = "cities2.txt";
 
 // refresh period
 #define CITIES_DT       (7L*24*3600)            // max cache age, secs
+#define CITIES_SZ       1000                    // min believable size
 #define CRETRY_DT       (60)                    // retry preiod on error, secs
 
 // malloced sorted kdtree
@@ -34,7 +35,7 @@ static void readCities()
         }
 
         // open file from cache
-        FILE *fp = openCachedFile (cities_fn, cities_page, CITIES_DT);
+        FILE *fp = openCachedFile (cities_fn, cities_page, CITIES_DT, CITIES_SZ);
         if (!fp)
             return;
 

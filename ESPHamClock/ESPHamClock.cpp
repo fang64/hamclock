@@ -29,7 +29,7 @@ TZInfo de_tz = {{75, 158, 50, 17}, DE_COLOR, de_ll, true, 0};
 TZInfo dx_tz = {{75, 307, 50, 17}, DX_COLOR, dx_ll, true, 0};
 
 // NCDFX box, also used for brightness, on/off controls and space wx stats
-SBox NCDXF_b = {740, 0, 60, PLOTBOX123_H};
+SBox NCDXF_b = {738, 0, 62, PLOTBOX123_H};
 
 // common "skip" button in several places
 SBox skip_b    = {730,10,55,35};
@@ -54,7 +54,7 @@ uint8_t night_on, names_on;
 bool mainpage_up;
 
 // grid styles
-uint8_t mapgrid_choice;
+uint8_t mapgrid_choice;                         // one of MapGridStyle
 const char *grid_styles[MAPGRID_N] = {
     "None",
     "Tropics",
@@ -140,7 +140,7 @@ static void toggleLockScreen(void);
 static void setDXPrefixOverride (const char *ovprefix);
 static void unsetDXPrefixOverride (void);
 static void runShutdownMenu(void);
-static bool checkOnAirPin (void);
+static void checkOnAirPin (void);
 
 
 
@@ -582,10 +582,16 @@ void setup()
     }
 
     // set up map projection
-    NVReadUInt8 (NV_MAPPROJ, &map_proj);
+    if (!NVReadUInt8 (NV_MAPPROJ, &map_proj)) {
+        map_proj = MAPP_MERCATOR;
+        NVWriteUInt8 (NV_MAPPROJ, map_proj);
+    }
 
     // get grid style state
-    NVReadUInt8 (NV_GRIDSTYLE, &mapgrid_choice);
+    if (!NVReadUInt8 (NV_GRIDSTYLE, &mapgrid_choice)) {
+        mapgrid_choice = MAPGRID_OFF;
+        NVWriteUInt8 (NV_GRIDSTYLE, mapgrid_choice);
+    }
 
     // init psk reporter
     initPSKState();
@@ -659,6 +665,7 @@ void loop()
         updateNMEALoc();
         updateCallsign (false);
         pollRadio();
+        checkFSFull();
 
         // check for touch events
         checkTouch();
@@ -744,7 +751,6 @@ void drawOneTimeDX()
  */
 void initScreen()
 {
-
     // erase entire screen
     eraseScreen();
 
@@ -791,7 +797,6 @@ void initScreen()
  */
 static void checkTouch()
 {
-
     TouchType tt;
     SCoord s;
 
@@ -849,7 +854,7 @@ static void checkTouch()
         drawDEFormatMenu();
     } else if (inBox (s, stopwatch_b)) {
         // check this before checkClockTouch
-        checkStopwatchTouch(tt);
+        checkStopwatchTouch();
     } else if (checkClockTouch(s)) {
         updateClocks(true);
     } else if (!SHOWING_PANE_0() && inBox (s, de_tz.box)) {
@@ -902,13 +907,13 @@ static void checkTouch()
         }
     } else if (!SHOWING_PANE_0() && !dx_info_for_sat && inCircle(s, dx_marker_c)) {
         newDX (dx_ll, NULL, NULL);
-    } else if (SHOWING_PANE_0() && checkPlotTouch(s, PANE_0, tt)) {
+    } else if (SHOWING_PANE_0() && checkPlotTouch(s, PANE_0)) {
         updateWiFi();
-    } else if (checkPlotTouch(s, PANE_1, tt)) {
+    } else if (checkPlotTouch(s, PANE_1)) {
         updateWiFi();
-    } else if (checkPlotTouch(s, PANE_2, tt)) {
+    } else if (checkPlotTouch(s, PANE_2)) {
         updateWiFi();
-    } else if (checkPlotTouch(s, PANE_3, tt)) {
+    } else if (checkPlotTouch(s, PANE_3)) {
         updateWiFi();
     } else if (inBox (s, NCDXF_b)) {
         doNCDXFBoxTouch(s);
@@ -1168,12 +1173,11 @@ bool waiting4DXPath()
 
 /* change call sign to ON AIR as long as ONAIR_PIN is low
  */
-static bool checkOnAirPin()
+static void checkOnAirPin()
 {
-    // switch is grounded when active
-    bool on_now = !readMCPPoller (onair_poller);
+    // force on for debugging else read IO line which is grounded when active
+    bool on_now = debugLevel (DEBUG_RADIO, 5) || !readMCPPoller (onair_poller);
     setOnAirHW (on_now);
-    return (on_now);
 }
 
 // handy
@@ -1717,17 +1721,17 @@ void drawDEFormatMenu()
     MenuItem mitems[N_DEFMT_CORE+N_PANE_0_CH] = {
 
         // outer menu is whether to display the DE pane or use both DE+DX for a pane choice
-        {MENU_1OFN, !SHOWING_PANE_0(), 1, mi, "DE format:"},
+        {MENU_1OFN, !SHOWING_PANE_0(), 1, mi, "DE format:", NULL},
 
             // top submenu is list of de display formats
-            {MENU_1OFN, de_time_fmt == DETIME_INFO,        2, Mi, detime_names[DETIME_INFO]},
-            {MENU_1OFN, de_time_fmt == DETIME_ANALOG,      2, Mi, detime_names[DETIME_ANALOG]},
-            {MENU_1OFN, de_time_fmt == DETIME_CAL,         2, Mi, detime_names[DETIME_CAL]},
-            {MENU_1OFN, de_time_fmt == DETIME_ANALOG_DTTM, 2, Mi, detime_names[DETIME_ANALOG_DTTM]},
-            {MENU_1OFN, de_time_fmt == DETIME_DIGITAL_12,  2, Mi, detime_names[DETIME_DIGITAL_12]},
-            {MENU_1OFN, de_time_fmt == DETIME_DIGITAL_24,  2, Mi, detime_names[DETIME_DIGITAL_24]},
+            {MENU_1OFN, de_time_fmt == DETIME_INFO,        2, Mi, detime_names[DETIME_INFO], NULL},
+            {MENU_1OFN, de_time_fmt == DETIME_ANALOG,      2, Mi, detime_names[DETIME_ANALOG], NULL},
+            {MENU_1OFN, de_time_fmt == DETIME_CAL,         2, Mi, detime_names[DETIME_CAL], NULL},
+            {MENU_1OFN, de_time_fmt == DETIME_ANALOG_DTTM, 2, Mi, detime_names[DETIME_ANALOG_DTTM], NULL},
+            {MENU_1OFN, de_time_fmt == DETIME_DIGITAL_12,  2, Mi, detime_names[DETIME_DIGITAL_12], NULL},
+            {MENU_1OFN, de_time_fmt == DETIME_DIGITAL_24,  2, Mi, detime_names[DETIME_DIGITAL_24], NULL},
 
-        {MENU_1OFN, SHOWING_PANE_0(), 1, mi, "Data Panes:"},
+        {MENU_1OFN, SHOWING_PANE_0(), 1, mi, "Data Panes:", NULL},
 
             // bottom submenu is list of possible pane choices, see next.
             // N.B. don't include ones already in play in the top set
@@ -1748,7 +1752,7 @@ void drawDEFormatMenu()
         PlotPane pp = findPaneForChoice ((PlotChoice)plot_n);
         bool available =  plotChoiceIsAvailable((PlotChoice)plot_n) && (pp == PANE_NONE || pp == PANE_0);
         MenuFieldType type = available ? MENU_AL1OFN : MENU_IGNORE;
-        mitems[N_DEFMT_CORE+i] = {type, !!(plot_rotset[PANE_0] & (1<<plot_n)), 3, Mi, plot_names[plot_n]};
+        mitems[N_DEFMT_CORE+i] = {type, !!(plot_rotset[PANE_0] & (1<<plot_n)), 3, Mi, plot_names[plot_n], 0};
     }
     if (pane_0_bits != 0)
         fatalError ("drawDEFormatMenu() %d %d 0x%x\n", pane_0_bits, N_PANE_0_CH, PANE_0_CH_MASK);
@@ -2095,6 +2099,7 @@ static bool postDiags (void)
                                                 remote_addr, ESP.getChipId());
 
     // get total size of all diag files for content length
+    // N.B. DO NOT use Serial after this because it adds to the log file !
     struct stat s;
     int cl = 0;
     for (int i = 0; i < N_DIAG_FILES; i++) {
@@ -2107,7 +2112,6 @@ static bool postDiags (void)
     if (stat (EEPROM.getFilename(), &s) == 0)
         cl += s.st_size;
 
-    Serial.printf ("Diag: %d %s\n", cl, fn);
 
     if (pd_client.connect (backend_host, backend_port)) {
 
@@ -2126,7 +2130,6 @@ static bool postDiags (void)
             std::string dp = i < N_DIAG_FILES ? our_dir + diag_files[i] : EEPROM.getFilename();
             FILE *fp = fopen (dp.c_str(), "r");
             if (fp) {
-                Serial.printf ("Diag:   %s\n", dp.c_str());
                 int n_r;
                 while ((n_r = fread (buf, 1, sizeof(buf), fp)) > 0)
                     pd_client.write ((uint8_t*)buf, n_r);
@@ -2137,11 +2140,14 @@ static bool postDiags (void)
         pd_client.stop();
         ok = true;
 
+        Serial.printf ("Diag: %d %s\n", cl, fn);
+
     } else {
 
         Serial.printf ("postDiags() failed to connect to %s:%d\n", backend_host, backend_port);
         ok = false;
     }
+
 
     // ok?
     return (ok);
@@ -2171,7 +2177,7 @@ static int runExecv (const char *path, ...)
                     break;
             }
             va_end (ap);
-            execv (path, (char **const) argv);
+            execv (path, (char **) argv);
             Serial.printf ("execv(%s): %s\n", path, strerror(errno));
             free ((void*)argv);
             _exit(1);
@@ -2193,11 +2199,11 @@ static bool RUSure (SBox &box, const char *q)
     uint8_t q_indent = (box.w - getTextWidth(q))/2 - 2;         // - MENU_RM in menu.cpp
     uint8_t r_indent = (box.w - getTextWidth(r))/2 - 2;         //            "
     MenuItem mitems[] = {
-        {MENU_BLANK, false, 0, 0, NULL},
-        {MENU_LABEL, false, 0, q_indent, q},
-        {MENU_BLANK, false, 0, 0, NULL},
-        {MENU_LABEL, false, 0, r_indent, r},
-        {MENU_BLANK, false, 0, 0, NULL},
+        {MENU_BLANK, false, 0, 0, NULL, 0},
+        {MENU_LABEL, false, 0, q_indent, q, 0},
+        {MENU_BLANK, false, 0, 0, NULL, 0},
+        {MENU_LABEL, false, 0, r_indent, r, 0},
+        {MENU_BLANK, false, 0, 0, NULL, 0},
     };
     const int n_rusm = NARRAY(mitems);
 
@@ -2218,19 +2224,20 @@ static void runShutdownMenu(void)
 
     const int SHM_INDENT = 3;
     MenuItem mitems[] = {
-        {MENU_TOGGLE,                        locked,        1, SHM_INDENT, "Lock screen "},     // 0
-        {locked ? MENU_IGNORE : MENU_TOGGLE, getDemoMode(), 2, SHM_INDENT, "Demo mode"},        // 1
-        {locked ? MENU_IGNORE : MENU_01OFN,  false,         3, SHM_INDENT, "Post diagnostics"}, // 2
-        {locked ? MENU_IGNORE : MENU_01OFN,  false,         3, SHM_INDENT, "Restart HamClock"}, // 3
-        {locked ? MENU_IGNORE : MENU_01OFN,  false,         3, SHM_INDENT, "Exit HamClock"},    // 4
-        {locked ? MENU_IGNORE : MENU_01OFN,  false,         3, SHM_INDENT, "Reboot computer"},  // 5
-        {locked ? MENU_IGNORE : MENU_01OFN,  false,         3, SHM_INDENT, "Shutdown computer"},// 6
+        {MENU_TOGGLE,                        locked,        1, SHM_INDENT, "Lock screen ", 0},     // 0
+        {locked ? MENU_IGNORE : MENU_TOGGLE, getDemoMode(), 2, SHM_INDENT, "Demo mode", 0},        // 1
+        {locked ? MENU_IGNORE : MENU_01OFN,  false,         3, SHM_INDENT, "Configurations", 0},   // 2
+        {locked ? MENU_IGNORE : MENU_01OFN,  false,         3, SHM_INDENT, "Post diagnostics", 0}, // 3
+        {locked ? MENU_IGNORE : MENU_01OFN,  false,         3, SHM_INDENT, "Restart HamClock", 0}, // 4
+        {locked ? MENU_IGNORE : MENU_01OFN,  false,         3, SHM_INDENT, "Exit HamClock", 0},    // 5
+        {locked ? MENU_IGNORE : MENU_01OFN,  false,         3, SHM_INDENT, "Reboot computer", 0},  // 6
+        {locked ? MENU_IGNORE : MENU_01OFN,  false,         3, SHM_INDENT, "Shutdown computer", 0},// 7
     };
     const int n_shm = NARRAY(mitems);
 
     // boxes
     uint16_t menu_x = locked ? 150 : 114;       // just one entry if locked
-    uint16_t menu_y = locked ? 120 : 54;        // just one entry if locked
+    uint16_t menu_y = locked ? 120 : 34;        // just one entry if locked
     SBox menu_b = {menu_x, menu_y, 0, 0};       // shrink wrap size
     SBox ok_b;
 
@@ -2253,28 +2260,33 @@ static void runShutdownMenu(void)
         setDemoMode (mitems[1].set);
 
         if (mitems[2].set) {
+            if (askPasswd ("configurations", true))
+                runConfigManagement();
+        }
+
+        if (mitems[3].set) {
             bool ok = postDiags();
             const char *str = ok ? "Success" : "Fail";
             menuMsg (menu_b, ok ? RA8875_GREEN : RA8875_RED, str);
         }
 
-        if (mitems[3].set) {
-            if (RUSure (menu_b, mitems[3].label) && askPasswd ("restart", true)) {
+        if (mitems[4].set) {
+            if (RUSure (menu_b, mitems[4].label) && askPasswd ("restart", true)) {
                 Serial.print ("Restarting\n");
                 eraseScreen();  // fast touch feedback
-                doReboot();
+                doReboot(false);
             }
         }
 
-        if (mitems[4].set) {
-            if (RUSure (menu_b, mitems[4].label) && askPasswd ("exit", true)) {
+        if (mitems[5].set) {
+            if (RUSure (menu_b, mitems[5].label) && askPasswd ("exit", true)) {
                 Serial.print ("Exiting\n");
                 doExit();
             }
         }
 
-        if (mitems[5].set) {
-            if (RUSure (menu_b, mitems[5].label) && askPasswd ("reboot", true)) {
+        if (mitems[6].set) {
+            if (RUSure (menu_b, mitems[6].label) && askPasswd ("reboot", true)) {
                 Serial.print ("Rebooting\n");
                 eraseScreen();
                 selectFontStyle (BOLD_FONT, SMALL_FONT);
@@ -2295,8 +2307,8 @@ static void runShutdownMenu(void)
             }
         }
 
-        if (mitems[6].set) {
-            if (RUSure (menu_b, mitems[6].label) && askPasswd ("shutdown", true)) {
+        if (mitems[7].set) {
+            if (RUSure (menu_b, mitems[7].label) && askPasswd ("shutdown", true)) {
                 Serial.print ("Shutting down\n");
                 eraseScreen();
                 selectFontStyle (BOLD_FONT, SMALL_FONT);
@@ -2331,6 +2343,7 @@ static void runShutdownMenu(void)
         initScreen();
     } else {
         // just need updating in upper corner
+        updateCallsign (true);
         showClocks();
         updateClocks(true);
         drawMainPageStopwatch(true);
@@ -2342,10 +2355,10 @@ static void runShutdownMenu(void)
 
 /* reboot
  */
-void doReboot()
+void doReboot(bool minus_k)
 {
     defaultState();
-    ESP.restart();
+    ESP.restart(minus_k);
     for(;;);
 }
 
@@ -2486,7 +2499,7 @@ void fatalError (const char *fmt, ...)
                 if ((typed_ok && select_restart) || (kbc == CHAR_NONE && inBox(s, r_b))) {
                     drawStringInBox (r_msg, r_b, true, RA8875_WHITE);
                     Serial.print ("Fatal error: rebooting\n");
-                    doReboot();
+                    doReboot(false);
                 }
 
                 if ((typed_ok && !select_restart) || (kbc == CHAR_NONE && inBox(s, x_b))) {

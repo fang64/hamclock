@@ -28,8 +28,6 @@ time_t usr_datetime;
 
 
 // band conditions and voacap map, models change each hour
-#define BC_INTERVAL     (2400)                  // polling interval, secs
-#define VOACAP_INTERVAL (2500)                  // polling interval, secs
 uint16_t bc_powers[] = {1, 5, 10, 50, 100, 500, 1000};
 const int n_bc_powers = NARRAY(bc_powers);
 static const char bc_page[] = "/fetchBandConditions.pl";
@@ -235,7 +233,7 @@ static void geolocateIP (const char *ip)
         // send
         httpHCGET (iploc_client, backend_host, llline);
         if (!httpSkipHeader (iploc_client)) {
-            Serial.println (F("geoIP header short"));
+            Serial.println ("geoIP header short");
             goto out;
         }
 
@@ -560,10 +558,6 @@ void initSys()
         setTime (usr_datetime);
 
 
-    // init fs
-    LittleFS.begin();
-    LittleFS.setTimeCallback(now);
-
     // init bc_power, bc_toa, bc_utc_tl and bc_modevalue
     if (!NVReadUInt16 (NV_BCPOWER, &bc_power)) {
         bc_power = 100;
@@ -581,6 +575,9 @@ void initSys()
         bc_modevalue = findBCModeValue("CW");           // default to CW
         NVWriteUInt8 (NV_BCMODE, bc_modevalue);
     }
+
+    // init space wx
+    initSpaceWX();
 
     // offer time to peruse unless alreay opted to skip
     if (!skipped_here) {
@@ -760,14 +757,17 @@ char *xrayLevel (char *buf, const SpaceWeather_t &xray)
  */
 static bool retrieveBandConditions (char *config)
 {
-    char buf[100];
     WiFiClient bc_client;
     bool ok = false;
 
     // init data unknown
     bc_matrix.ok = false;
 
-    // build query for now
+    // start by cleaning cache.
+    // N.B. make sure search string match name we use below
+    cleanCache ("bc-", BC_INTERVAL);
+
+    // build query
     time_t t = nowWO();
     char query[sizeof(bc_page) + 200];
     snprintf (query, sizeof(query),
@@ -775,40 +775,40 @@ static bool retrieveBandConditions (char *config)
         bc_page, year(t), month(t), dx_ll.lat_d, dx_ll.lng_d, de_ll.lat_d, de_ll.lng_d,
         hour(t), show_lp, bc_power, bc_modevalue, bc_toa);
 
-    Serial.println (query);
-    if (wifiOk() && bc_client.connect(backend_host, backend_port)) {
-        updateClocks(false);
+    // build local cache file name
+    char cache_fn[100];
+    snprintf (cache_fn, sizeof(cache_fn), "bc-%010u.txt", stringHash(query)); // N.B. see cleanCache() above
 
-        // query web page
-        httpHCGET (bc_client, backend_host, query);
+    // open cache or get fresh
+    FILE *fp = openCachedFile (cache_fn, query, 12*3600L, 100);
+    if (fp) {
 
-        // skip header
-        if (!httpSkipHeader (bc_client)) {
-            Serial.println (F("BC: no header"));
+        char buf[100];
+
+        // first line is CSV path reliability for the requested time between DX and DE, 9 bands 80-10m
+        if (!fgets (buf, sizeof(buf), fp)) {
+            Serial.println ("BC: No CSV");
             goto out;
         }
-
-        // next line is CSV path reliability for the requested time between DX and DE, 9 bands 80-10m
-        if (!getTCPLine (bc_client, buf, sizeof(buf), NULL)) {
-            Serial.println (F("BC: No response"));
-            goto out;
-        }
-        // Serial.printf ("BC response: %s\n", buf);
 
         // next line is configuration summary, save if interested
-        if (!getTCPLine (bc_client, buf, sizeof(buf), NULL)) {
-            Serial.println (F("BC: No config"));
+        if (!fgets (buf, sizeof(buf), fp)) {
+            Serial.println ("BC: No config line");
             goto out;
         }
-        // Serial.printf ("BC config: %s\n", buf);
-        if (config)
+        if (config) {
+            // sans nl
+            size_t c_len = strlen(buf);
+            if (c_len < 2) {
+                Serial.println ("BC: empty config line");
+                goto out;
+            }
+            buf[c_len] = '\0';
             strcpy (config, buf);
+        }
 
         // transaction for at least config is ok
         ok = true;
-
-        // keep time fresh
-        updateClocks(false);
 
         // next 24 lines are reliability matrix.
         // N.B. col 1 is UTC but runs from 1 .. 24, 24 is really 0
@@ -817,8 +817,8 @@ static bool retrieveBandConditions (char *config)
         for (int r = 0; r < BMTRX_ROWS; r++) {
 
             // read next row
-            if (!getTCPLine (bc_client, buf, sizeof(buf), NULL)) {
-                Serial.printf ("BC: fail row %d", r);
+            if (!fgets (buf, sizeof(buf), fp)) {
+                Serial.printf ("BC: fail row %d\n", r);
                 goto out;
             }
 
@@ -849,14 +849,16 @@ static bool retrieveBandConditions (char *config)
         // matrix ok
         bc_matrix.ok = true;
 
+        // finished with file
+        fclose(fp);
+
     } else {
-        Serial.println (F("VOACAP connection failed"));
+        Serial.println ("VOACAP connection failed");
     }
 
 out:
 
-    // clean up
-    bc_client.stop();
+    // out
     return (ok);
 }
 
@@ -942,6 +944,26 @@ static void checkBRB (time_t t)
         }
 
     }
+}
+
+/* insure the given plot choice is visible in some pane by itself.
+ * N.B. never use PANE_0
+ */
+void setPlotVisible (PlotChoice pc)
+{
+    // done if the choice is already on display
+    if (findPaneChoiceNow (pc) != PANE_NONE)
+        return;
+
+    // not on display now but maybe in rotation, else just pick one
+    PlotPane pp = findPaneForChoice (pc);
+    if (pp == PANE_NONE)
+        pp = PANE_3;
+
+    // install as the only choice
+    (void) setPlotChoice (pp, pc);
+    plot_rotset[pp] = 1 << pc;
+    savePlotOps();
 }
 
 /* set the given pane to the given plot choice now.
@@ -1037,7 +1059,7 @@ time_t getNTPUTC (NTPServer *ntp)
     // create udp endpoint
     WiFiUDP ntp_udp;
     if (!ntp_udp.begin(1000+random(50000))) {                   // any local port
-        Serial.println (F("NTP: UDP startup failed"));
+        Serial.println ("NTP: UDP startup failed");
         return (0);
     }
 
@@ -1056,20 +1078,20 @@ time_t getNTPUTC (NTPServer *ntp)
     ntp_udp.write(buf, sizeof(buf));
     tx_ms = millis();                                           // record when packet sent
     if (!ntp_udp.endPacket()) {
-        Serial.println (F("NTP: UDP write failed"));
+        Serial.println ("NTP: UDP write failed");
         ntp->rsp_time = NTP_TOO_LONG;                           // force different choice next time
         ntp_udp.stop();
         return (0UL);
     }
-    // Serial.print (F("NTP: Sent 48 ... "));
+    // Serial.print ("NTP: Sent 48 ... ");
 
     // receive response
-    // Serial.print(F("NTP: Awaiting response ... "));
+    // Serial.print("NTP: Awaiting response ... ");
     memset(buf, 0, sizeof(buf));
     uint32_t t0 = millis();
     while (ntp_udp.parsePacket() == 0) {
         if (timesUp (&t0, NTP_TOO_LONG)) {
-            Serial.println(F("NTP: UDP timed out"));
+            Serial.println("NTP: UDP timed out");
             ntp->rsp_time = NTP_TOO_LONG;                       // force different choice next time
             ntp_udp.stop();
             return (0UL);
@@ -1084,7 +1106,7 @@ time_t getNTPUTC (NTPServer *ntp)
 
     // read response
     if (ntp_udp.read (buf, sizeof(buf)) != sizeof(buf)) {
-        Serial.println (F("NTP: UDP read failed"));
+        Serial.println ("NTP: UDP read failed");
         ntp->rsp_time = NTP_TOO_LONG;                           // force different choice next time
         ntp_udp.stop();
         return (0UL);
@@ -1112,10 +1134,10 @@ time_t getNTPUTC (NTPServer *ntp)
     uint16_t sec_more = ms_more/1000U+1U;                       // whole seconds behind rounded up
     wdDelay (sec_more*1000U - ms_more);                         // wait to next whole second
     unix_s += sec_more;                                         // account for delay
-    // Serial.print (F("NTP: Fraction ")); Serial.print(ms_more);
-    // Serial.print (F(", transit ")); Serial.print(transit_time);
-    // Serial.print (F(", seconds ")); Serial.print(sec_more);
-    // Serial.print (F(", UNIX ")); Serial.print (unix_s); Serial.println();
+    // Serial.print ("NTP: Fraction "); Serial.print(ms_more);
+    // Serial.print (", transit "); Serial.print(transit_time);
+    // Serial.print (", seconds "); Serial.print(sec_more);
+    // Serial.print (", UNIX "); Serial.print (unix_s); Serial.println();
 
     // one more sanity check
     if (unix_s < 1577836800L) {          // Jan 1 2020
@@ -1146,7 +1168,7 @@ bool getTCPChar (WiFiClient &client, char *cp)
                 return (false);
             }
             if (timesUp(&t0,10000)) {
-                Serial.print (F("getTCPChar timeout\n"));
+                Serial.print ("getTCPChar timeout\n");
                 return (false);
             }
 
@@ -1159,7 +1181,7 @@ bool getTCPChar (WiFiClient &client, char *cp)
     // read, which offers yet another way to indicate failure
     int c = client.read();
     if (c < 0) {
-        Serial.print (F("bad getTCPChar read\n"));
+        Serial.print ("bad getTCPChar read\n");
         return (false);
     }
 
@@ -1468,13 +1490,13 @@ static bool updateDRAP (const SBox &box)
             plotMessage (box, DRAPPLOT_COLOR, "DRAP data invalid");
         } else {
             // plot
-            plotXY (box, drap.x, drap.y, DRAPDATA_NPTS, "Hours", _FX("DRAP, max MHz"), DRAPPLOT_COLOR,
+            plotXY (box, drap.x, drap.y, DRAPDATA_NPTS, "Hours", "DRAP, max MHz", DRAPPLOT_COLOR,
                                                             0, 0, drap.y[DRAPDATA_NPTS-1]);
         }
 
         // update NCDXF box too either way
         if (brb_mode == BRB_SHOW_SWSTATS)
-            drawSpaceStats(RA8875_BLACK);
+            drawNCDXFSpcWxStats(RA8875_BLACK);
 
     } else {
         plotMessage (box, DRAPPLOT_COLOR, "DRAP connection failed");
@@ -1506,7 +1528,7 @@ static bool updateKp(const SBox &box)
 
         // update NCDXF box too either way
         if (brb_mode == BRB_SHOW_SWSTATS)
-            drawSpaceStats(RA8875_BLACK);
+            drawNCDXFSpcWxStats(RA8875_BLACK);
 
     } else {
         plotMessage (box, KP_COLOR, "Kp connection failed");
@@ -1540,7 +1562,7 @@ static bool updateXRay(const SBox &box)
 
         // update NCDXF box too either way
         if (brb_mode == BRB_SHOW_SWSTATS)
-            drawSpaceStats(RA8875_BLACK);
+            drawNCDXFSpcWxStats(RA8875_BLACK);
 
     } else {
         plotMessage (box, XRAY_LCOLOR, "X-Ray connection failed");
@@ -1573,7 +1595,7 @@ static bool updateSunSpots (const SBox &box)
 
         // update NCDXF box too either way
         if (brb_mode == BRB_SHOW_SWSTATS)
-            drawSpaceStats(RA8875_BLACK);
+            drawNCDXFSpcWxStats(RA8875_BLACK);
 
     } else {
         plotMessage (box, SSN_COLOR, "SSN connection failed");
@@ -1603,7 +1625,7 @@ static bool updateSolarFlux(const SBox &box)
 
         // update NCDXF box too either way
         if (brb_mode == BRB_SHOW_SWSTATS)
-            drawSpaceStats(RA8875_BLACK);
+            drawNCDXFSpcWxStats(RA8875_BLACK);
 
     } else {
         plotMessage (box, SFLUX_COLOR, "Flux connection failed");
@@ -1630,7 +1652,7 @@ static bool updateSolarWind(const SBox &box)
 
         // update NCDXF box too either way
         if (brb_mode == BRB_SHOW_SWSTATS)
-            drawSpaceStats(RA8875_BLACK);
+            drawNCDXFSpcWxStats(RA8875_BLACK);
 
     } else {
         plotMessage (box, SWIND_COLOR, "Sol Wind connection failed");
@@ -1683,7 +1705,7 @@ static bool updateBzBt (const SBox &box)
 
         // update NCDXF box too either way
         if (brb_mode == BRB_SHOW_SWSTATS)
-            drawSpaceStats(RA8875_BLACK);
+            drawNCDXFSpcWxStats(RA8875_BLACK);
 
     } else {
 
@@ -1770,7 +1792,7 @@ static bool updateAurora (const SBox &box)
 
         // update NCDXF box either way
         if (brb_mode == BRB_SHOW_SWSTATS)
-            drawSpaceStats(RA8875_BLACK);
+            drawNCDXFSpcWxStats(RA8875_BLACK);
 
     } else {
 
@@ -1885,7 +1907,7 @@ bool checkBCTouch (const SCoord &s, const SBox &b)
         // show menu of available mode choices
         MenuItem mitems[N_BCMODES];
         for (int i = 0; i < N_BCMODES; i++)
-            mitems[i] = {MENU_1OFN, bc_modevalue == bc_modes[i].value, 1, 5, bc_modes[i].name};
+            mitems[i] = {MENU_1OFN, bc_modevalue == bc_modes[i].value, 1, 5, bc_modes[i].name, 0};
 
         SBox menu_b;
         menu_b.x = mode_b.x;
@@ -1920,9 +1942,9 @@ bool checkBCTouch (const SCoord &s, const SBox &b)
         // show menu of available TOA choices
         // N.B. line display width can only accommodate 1 character
         MenuItem mitems[3];
-        mitems[0] = {MENU_1OFN, bc_toa <= 1,              1, 5, ">1 deg"};
-        mitems[1] = {MENU_1OFN, bc_toa > 1 && bc_toa < 9, 1, 5, ">3 degs"};
-        mitems[2] = {MENU_1OFN, bc_toa >= 9,              1, 5, ">9 degs"};
+        mitems[0] = {MENU_1OFN, bc_toa <= 1,              1, 5, ">1 deg", 0};
+        mitems[1] = {MENU_1OFN, bc_toa > 1 && bc_toa < 9, 1, 5, ">3 degs", 0};
+        mitems[2] = {MENU_1OFN, bc_toa >= 9,              1, 5, ">9 degs", 0};
 
         SBox menu_b;
         menu_b.x = toa_b.x;
@@ -2203,9 +2225,10 @@ void updateWiFi(void)
 
         case PLOT_CH_CONTESTS:
             if (t0 >= next_update[pp]) {
-                if (updateContests(box))
+                if (updateContests(box, fresh_redraw[pc])) {
                     next_update[pp] = nextPaneUpdate (pc, CONTESTS_INTERVAL);
-                else
+                    fresh_redraw[pc] = false;
+                } else
                     next_update[pp] = nextWiFiRetry(pc);
             }
             break;
@@ -2306,21 +2329,6 @@ bool getTCPLine (WiFiClient &client, char line[], uint16_t line_len, uint16_t *l
         } else if (i < line_len)
             line[i++] = c;
     }
-}
-
-/* it is MUCH faster to print F() strings in a String than using them directly.
- * see esp8266/2.3.0/cores/esp8266/Print.cpp::print(const __FlashStringHelper *ifsh) to see why.
- */
-void FWIFIPR (WiFiClient &client, const __FlashStringHelper *str)
-{
-    String _sp(str);
-    client.print(_sp);
-}
-
-void FWIFIPRLN (WiFiClient &client, const __FlashStringHelper *str)
-{
-    String _sp(str);
-    client.println(_sp);
 }
 
 // handy wifi health check

@@ -63,9 +63,6 @@ class TwoWire {
             }
         };
 
-        // trace level
-        int verbose;
-
         // for native i2c
         int i2c_fd;
 

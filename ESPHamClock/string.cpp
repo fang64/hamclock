@@ -134,11 +134,18 @@ bool strHasSpace (const char *s)
     return (strHasCType (s, isspace));
 }
 
-/* strncpy that insures "to" has EOS (and avoids the g++ fussing)
+/* strncpy that avoids g++ fussing when from is longer than to
  */
 void quietStrncpy (char *to, const char *from, int len)
 {
     snprintf (to, len, "%.*s", len-1, from);
+}
+
+/* qsort-style comparison of two strings
+ */
+int qsString (const void *v1, const void *v2)
+{
+    return (strcmp (*(char**)v1, *(char**)v2));
 }
 
 
@@ -159,7 +166,7 @@ uint16_t getTextWidth (const char str[])
     return (w);
 }
 
-/* shorten str IN PLACE as needed to be less that maxw pixels wide.
+/* shorten str IN PLACE as needed to be less than maxw pixels wide.
  * return final width in pixels.
  */
 uint16_t maxStringW (char *str, uint16_t maxw)
@@ -172,6 +179,24 @@ uint16_t maxStringW (char *str, uint16_t maxw)
 
     return (bw);
 }
+
+/* copy from_str to to_str changing all from_char to to_char.
+ * unlike strncpy(3) to_str is always terminated with EOS, ie copying stops after from_str EOS or (to_len-1).
+ * the two strings should not overlap but they may be the same.
+ */
+void strncpySubChar (char to_str[], const char from_str[], char to_char, char from_char, int to_len)
+{
+    if (to_len > 0) {
+        while (--to_len > 0) {
+            char c = *from_str++;
+            *to_str++ = (c == from_char) ? to_char : c;
+            if (c == '\0')
+                return;
+        }
+        *to_str = '\0';
+    }
+}
+
 
 /* expand any ENV in the given file.
  * return malloced result -- N.B. caller must free!

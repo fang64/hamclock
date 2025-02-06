@@ -1,5 +1,5 @@
 /* DO NOT HAND EDIT THIS FILE.
- * built using ./mkbands.pl from DX Cluster bands.pl Sun Dec 29 19:48:45 2024Z
+ * built using ./mkbands.pl from DX Cluster bands.pl Fri Jan 31 22:51:56 2025Z
  */
 
 #include "HamClock.h"
@@ -96,7 +96,7 @@ static const BandEdge band_es[] = {
     {  40, "FT4",       7047,   7051},
     {  40, "FT8",       7074,   7077},
     {  40, "RTTY",      7040,   7060},
-    {  40, "SSB",       7050,   7300},
+    {  40, "SSB",       7080,   7300},
     {  60, "BAND",      5195,   5450},
     {  60, "CW",        5258,   5264},
     {  60, "CW",        5351,   5366},

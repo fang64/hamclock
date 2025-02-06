@@ -12,6 +12,8 @@
 
 #include "HamClock.h"
 
+// uncomment to set debug level before net comes up
+// #define EARLY_NV_DEBUG 1
 
 #define NV_BASE         55      // base address, move anywhere else to effectively start fresh
 #define NV_COOKIE       0x5A    // magic cookie to decide whether a value is valid
@@ -346,6 +348,12 @@ static const uint8_t nv_sizes[NV_N] = {
     2,                          // NV_X11GEOM_Y
     2,                          // NV_X11GEOM_W
     2,                          // NV_X11GEOM_H
+    2,                          // NV_DEWXCHOICE
+    2,                          // NV_DXWXCHOICE
+
+    // 230
+    1,                          // NV_UDPSETSDX
+    4,                          // NV_SPCWXCHOICE
 
 };
 
@@ -374,6 +382,11 @@ static void initEEPROM()
         return;
     before = true;
 
+    // possible early debug
+    #if defined(EARLY_NV_DEBUG)
+    (void) setDebugLevel ("NVRAM", EARLY_NV_DEBUG);
+    #endif
+
     // init EEPROM
     uint16_t ee_used, ee_size;
     reportEESize (ee_used, ee_size);
@@ -382,7 +395,7 @@ static void initEEPROM()
     EEPROM.begin(ee_size);      
     Serial.printf ("EEPROM %d size %u + %u = %u, max %u\n", NV_N, NV_BASE, ee_used-NV_BASE, ee_used, ee_size);
 
-    // build nv_addrs[]
+    // build nv_addrs[] cache
     uint16_t e_addr = NV_BASE;
     for (int i = 0; i < NV_N; i++) {
         nv_addrs[i] = e_addr;
@@ -390,47 +403,51 @@ static void initEEPROM()
     }
 
 
-// #define _SHOW_EEPROM
-#if defined(_SHOW_EEPROM)
-    uint16_t len = 0;
-    for (size_t i = 0; i < n; i++) {
-        const uint8_t sz = nv_sizes[i];
-        uint16_t start = NV_BASE+len;
-        Serial.printf ("%3d %3d %3d %02X: ", i, len, sz, EEPROM.read(start));
-        start += 1;                     // skip cookie
-        switch (sz) {
-        case 1: {
-            uint8_t i1 = EEPROM.read(start);
-            Serial.printf ("%11d = 0x%02X\n", i1, i1);
+    if (debugLevel (DEBUG_NVRAM, 2)) {
+        printf ("NV: initial settings:\n");
+        uint16_t offset = 0;
+        for (int i = 0; i < NV_N; i++) {
+            const uint8_t sz = nv_sizes[i];
+            uint16_t start = NV_BASE+offset;
+            printf ("NV: %3d 0%03X %3d %02X ", i, start, sz, EEPROM.read(start));
+            start += 1;                     // skip cookie
+            switch (sz) {
+            case 1: {
+                uint8_t i1 = EEPROM.read(start);
+                printf ("1: %11d = 0x%02X\n", i1, i1);
+                }
+                break;
+            case 2: {
+                uint16_t i2 = EEPROM.read(start) + 256*EEPROM.read(start+1);
+                printf ("2: %11d = 0x%04X\n", i2, i2);
+                }
+                break;
+            case 4: {
+                uint32_t i4 = EEPROM.read(start) + (1UL<<8)*EEPROM.read(start+1)*(1UL<<16)
+                                + (1UL<<16)*EEPROM.read(start+2) + (1UL<<24)*EEPROM.read(start+3);
+                float f4;
+                memcpy (&f4, &i4, 4);
+                printf ("4: %11d = 0x%08X = %g\n", i4, i4, f4);
+                }
+                break;
+            default:
+                // string -- stop after first EOS
+                printf ("s: ");
+                for (int j = 0; j < sz; j++) {
+                    uint8_t c = EEPROM.read(start+j);
+                    if (c == '\0')
+                        break;
+                    if (c < ' ' || c >= 0x7f)
+                        printf (" %02X", c);
+                    else
+                        printf ("%c", (char)c);
+                }
+                printf ("\n");
+                break;
             }
-            break;
-        case 2: {
-            uint16_t i2 = EEPROM.read(start) + 256*EEPROM.read(start+1);
-            Serial.printf ("%11d = 0x%04X\n", i2, i2);
-            }
-            break;
-        case 4: {
-            uint32_t i4 = EEPROM.read(start) + (1UL<<8)*EEPROM.read(start+1)*(1UL<<16)
-                            + (1UL<<16)*EEPROM.read(start+2) + (1UL<<24)*EEPROM.read(start+3);
-            float f4;
-            memcpy (&f4, &i4, 4);
-            Serial.printf ("%11d = 0x%08X = %g\n", i4, i4, f4);
-            }
-            break;
-        default:
-            for (int j = 0; j < sz; j++) {
-                uint8_t c = EEPROM.read(start+j);
-                if (c < ' ' || c >= 0x7f)
-                    Serial.printf (" %02X ", c);
-                else
-                    Serial.printf ("%c", (char)c);
-            }
-            Serial.println();
-            break;
+            offset += sz + 1;         // size + cookie
         }
-        len += sz + 1;         // size + cookie
     }
-#endif // _SHOW_EEPROM
 }
 
 
@@ -442,6 +459,7 @@ static bool nvramStartAddr (NV_Name e, uint16_t *e_addr, uint8_t *e_len)
         return(false);
     *e_addr = nv_addrs[e];
     *e_len = nv_sizes[e];
+
     return (true);
 }
 
@@ -456,15 +474,25 @@ static void nvramWriteBytes (NV_Name e, const uint8_t data[], uint8_t xbytes)
     uint16_t e_addr = 0;
     if (!nvramStartAddr (e, &e_addr, &e_len))
         fatalError ("NVBUG! Write: bad id %d", e);
-    // Serial.printf ("Write %d at %d\n", e_len, e_addr-NV_BASE);
     if (xbytes && e_len != xbytes)
         fatalError ("NVBUG! Write: %d %d != %d bytes", e, e_len, xbytes);
+
+    if (debugLevel (DEBUG_NVRAM, 1)) {
+        printf ("NV: e= %3d write 1+%d to 0x%03X:", e, xbytes, e_addr);
+        printf (" %02X +", NV_COOKIE);
+        for (int i = 0; i < xbytes; i++) {
+            uint8_t v = data[i];
+            printf (" 0x%02X=%c", v, isprint(v) ? v : '?');
+        }
+        printf ("\n");
+    }
+
     EEPROM.write (e_addr++, NV_COOKIE);
+
     for (int i = 0; i < e_len; i++)
         EEPROM.write (e_addr++, *data++);
     if (!EEPROM.commit())
         fatalError ("EEPROM.commit failed");
-    // Serial.printf ("Read back cookie: 0x%02X\n", EEPROM.read(e_addr - e_len -1));
 }
 
 /* read NV_COOKIE then the given array for the given element with the given number of expected bytes.
@@ -480,8 +508,23 @@ static bool nvramReadBytes (NV_Name e, uint8_t *buf, uint8_t xbytes)
         fatalError ("NVBUG! Read: bad id %d", e);
     if (xbytes && e_len != xbytes)
         fatalError ("NVBUG! Read: %d %d != %d bytes", e, e_len, xbytes);
-    if (EEPROM.read(e_addr++) != NV_COOKIE)
+
+    if (EEPROM.read(e_addr++) != NV_COOKIE) {
+        Serial.printf ("NV: no cookie for e= %d at 0x%03X\n", e, e_addr);
         return (false);
+    }
+
+    if (debugLevel (DEBUG_NVRAM, 1)) {
+        // N.B. already incremented e_addr
+        printf ("NV: e= %3d read 1+%d from 0x%03X:", e, xbytes, e_addr-1);
+        printf (" %02X +", EEPROM.read(e_addr-1));
+        for (int i = 0; i < xbytes; i++) {
+            uint8_t v = EEPROM.read(e_addr+i);
+            printf (" 0x%02X=%c", v, isprint(v) ? v : '?');
+        }
+        printf ("\n");
+    }
+
     for (int i = 0; i < e_len; i++)
         *buf++ = EEPROM.read(e_addr++);
     return (true);

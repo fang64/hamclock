@@ -40,7 +40,7 @@ static bool retrieveRSS (void)
 
         // skip response header
         if (!httpSkipHeader (rss_client)) {
-            Serial.println (F("RSS header short"));
+            Serial.println ("RSS header short");
             goto out;
         }
 
@@ -54,7 +54,7 @@ static bool retrieveRSS (void)
             if (rss_titles[rss_ntitles])
                 free (rss_titles[rss_ntitles]);
             rss_titles[rss_ntitles] = strdup (line);
-            // Serial.printf (_FX("RSS[%d] len= %d\n"), rss_ntitles, strlen(rss_titles[rss_ntitles]));
+            // Serial.printf ("RSS[%d] len= %d\n", rss_ntitles, strlen(rss_titles[rss_ntitles]));
         }
     }
 
@@ -152,10 +152,10 @@ static bool updateRSS (void)
             row2[-1] = sep_char;
 
             if (!fits) {
-                Serial.printf (_FX("RSS shrink from %d %d "), tw, tl);
+                Serial.printf ("RSS shrink from %d %d ", tw, tl);
                 tw = maxStringW (title, 9*tw/10);       // modifies title
                 tl = strlen(title);
-                Serial.printf (_FX("to %d %d\n"), tw, tl);
+                Serial.printf ("to %d %d\n", tw, tl);
             }
         }
     }

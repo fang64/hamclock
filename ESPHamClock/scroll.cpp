@@ -5,7 +5,7 @@
  *   if true (newest is shown on top) then scrolling Up means show Newer entries and Down means Older.
  *   if false (newest is shown at the bottom) then scrolling Up means show Older entries and Down means Newer.
  * The data array and its state variables are exactly the same either way, only the displayed rows are
- * affected.
+ * affected. Display row indices always start with 0 on top either way.
  *
  * state variables:
  *
@@ -13,29 +13,54 @@
  *   top_vis: index into the data array containing the newest entry to be displayed
  *   n_data:  the number of entries in the data array
  *
- * example: n_data 7, max_vis 3, scrolled to show newest data
+ * Examples show data in a box and visible list view into the data. Data indices are shown down the left
+ * side, 0 always the oldest. Values within the box start with A, the first datum to be added and thus
+ * the oldest. Display list is shown to the right with view port pointing into the viewable portion of data.
  *
- *    if scrollTopToBottom() is true:
+ * example 1: n_data 7, max_vis 3, scrolled to show newest data
+ *
+ *  scrollTopToBottom() is true:
  *  
- *    top_vis  6 |  A  |   ------|        display row 0, ie, top row
- *             5 |  B  |       max_vis    display row 1
- *             4 |  C  |   ------|        display row 2
+ *    top_vis  6 |  G  |  <------|        display row 0, ie, top row shows newest data
+ *             5 |  F  |       max_vis    display row 1
+ *             4 |  E  |  <------|        display row 2, ie, bottom row shows oldest viewable data
  *             3 |  D  |   
- *             2 |  E  |   
- *             1 |  F  | 
- *             0 |  G  |   oldest data array entry at index 0
+ *             2 |  C  |   
+ *             1 |  B  | 
+ *             0 |  A  |                  oldest data array entry at index 0
  *               -------
  *  
- *    else scrollTopToBottom() is falae:
+ *  scrollTopToBottom() is false, ie, srolling bottom-to-top:
  *  
- *    top_vis  6 |  A  |   ------|        display row 2
- *             5 |  B  |       max_vis    display row 1
- *             4 |  C  |   ------|        display row 0, ie, top row
- *             3 |  D  |   
- *             2 |  E  |   
- *             1 |  F  | 
- *             0 |  G  |   oldest data array entry at index 0
  *               -------
+ *             0 |  A  |                  oldest data array entry at index 0
+ *             1 |  B  |
+ *             2 |  C  |
+ *             3 |  D  |
+ *             4 |  E  |  <------|        display row 0, ie, top row shows oldest viewable data
+ *             5 |  F  |      max_vis     display row 1
+ *    top_vis  6 |  G  |  <------|        display row 2, ie, bottom row shows newest data
+ *
+ *
+ * example 2: n_data 3, max_vis 6, scrolled to show newest data
+ *
+ *  scrollTopToBottom() is true:
+ *  
+ *    top_vis  2 |  C  |  <------|        display row 0, ie, top row shows newest data
+ *             1 |  B  |         |        display row 1
+ *             0 |  A  |         |        display row 2, ie, middle row shows oldest data
+ *               -------      max_vis     display row 3 empty
+ *                               |        display row 4 empty
+ *                        <------|        display row 5 empty
+ *  
+ *   scrollTopToBottom() is false, ie, srolling bottom-to-top:
+ *  
+ *                        <------|        display row 0 empty
+ *                               |        display row 1 empty
+ *               -------      max_vis     display row 2 empty
+ *             0 |  A  |         |        display row 3, ie, middle row shows oldest data
+ *             1 |  B  |         |        display row 4
+ *    top_vis  2 |  C  |  <------|        display row 5, ie, bottom row shows newest data
  *
  */
 
@@ -123,11 +148,11 @@ void ScrollState::drawScrollDownControl (const SBox &box, uint16_t arrow_color, 
 }
 
 
-/* draw, else erase, the New Spots symbol in the given box.
+/* draw, else erase, the New Spots symbol in newsym_b.
  * when drawing: active indicates whether it should be shown as having just been tapped.
  * N.B. must have already called initNewSpotsSymbol()
  */
-void ScrollState::drawNewSpotsSymbol (const SBox &box, bool draw, bool active) const
+void ScrollState::drawNewSpotsSymbol (bool draw, bool active) const
 {
     if (draw) {
         selectFontStyle (LIGHT_FONT, FAST_FONT);
@@ -228,7 +253,7 @@ bool ScrollState::okToScrollDown (void) const
 
 }
 
-/* return whether there is more data aboce the displayed list
+/* return whether there is more data above the displayed list
  */
 bool ScrollState::okToScrollUp (void) const
 {
@@ -298,21 +323,28 @@ bool ScrollState::findDataIndex (int display_row, int &array_index) const
     return (ok);
 }
 
-/* pass back the min and max array indices currently visible and return total row count.
+/* pass back the min and max data _array_ indices currently visible and return total row count.
+ * use getDisplayRow() to convert to display row.
  */
 int ScrollState::getVisIndices (int &min_i, int &max_i) const
 {
-    max_i = top_vis;                            // list "head" is always newest being displayed
-    min_i = top_vis - max_vis + 1;              // list "tail" is oldest
+    // N.B. inclusivity used for computing n below gives 1 when there is no data
+    if (n_data == 0)
+        return (0);
+
+    max_i = top_vis;                            // max index is always newest being displayed
+    min_i = top_vis - max_vis + 1;              // min index is max_vis lower, inclusive
     if (min_i < 0)                              // but might not be enough to fill the list
         min_i = 0;
-    int n = max_i - min_i + 1;                  // inclusive
-    if (n > n_data)                             // check for overflow
-        n = 0;
+    int n = max_i - min_i + 1;                  // count, inclusive
+
+    if (debugLevel (DEBUG_SCROLL, 1))
+        Serial.printf ("SCROLL: top_vis= %d max_vis= %d n_data= %d  min_i= %d max_i= %d n= %d\n",
+                            top_vis, max_vis, n_data, min_i, max_i, n);
     return (n);
 }
 
-/* given a data array index ala getVisIndices, return the display row number starting with 0 on top
+/* given a data array index ala getVisIndices, return the display row number starting with 0 on top.
  */
 int ScrollState::getDisplayRow (int array_index) const
 {

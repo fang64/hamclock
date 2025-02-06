@@ -56,7 +56,7 @@ TouchType checkKBWarp (SCoord &s)
                 if (engage_rate_ok)
                     n_fast_engages = 0;
                 else if (!engage_ok)
-                    Serial.printf (F("Keyboard functions are too fast\n"));
+                    Serial.printf ("Keyboard functions are too fast\n");
 
                 prev_engage_ms = engage_ms;
             }

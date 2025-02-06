@@ -330,70 +330,70 @@ static StringPrompt string_pr[N_SPR] = {
 
     // "page 1" -- index 0
 
-    {0, { 10, R2Y(0), 70, PR_H}, { 90, R2Y(0), 270, PR_H}, "Call:", cs_info.call, NV_CALLSIGN_LEN, 0}, 
-    {0, { 10, R2Y(1),180, PR_H}, {190, R2Y(1), 110, PR_H}, "Enter DE Lat:", NULL, 0, 0},       // shadowed
-    {0, {380, R2Y(1), 50, PR_H}, {430, R2Y(1), 130, PR_H}, "Lng:", NULL, 0, 0},                // shadowed
-    {0, {560, R2Y(1), 60, PR_H}, {620, R2Y(1), 130, PR_H}, "Grid:", NULL, 0, 0},               // shadowed
-    {0, {340, R2Y(2), 60, PR_H}, {400, R2Y(2), 300, PR_H}, "host:", gpsd_host, NV_GPSDHOST_LEN, 0},
-    {0, {480, R2Y(3), 50, PR_H}, {530, R2Y(3), 270, PR_H}, "file:", nmea_file, NV_NMEAFILE_LEN, 0},
-    {0, {180, R2Y(5), 60, PR_H}, {240, R2Y(5), 560, PR_H}, "host:", ntp_host, NV_NTPHOST_LEN, 0},
+    {0, { 10, R2Y(0), 70, PR_H}, { 90, R2Y(0), 270, PR_H}, "Call:", cs_info.call, NV_CALLSIGN_LEN, 0,0}, 
+    {0, { 10, R2Y(1),180, PR_H}, {190, R2Y(1), 110, PR_H}, "Enter DE Lat:", NULL, 0, 0,0},       // shadowed
+    {0, {380, R2Y(1), 50, PR_H}, {430, R2Y(1), 130, PR_H}, "Lng:", NULL, 0, 0,0},                // shadowed
+    {0, {560, R2Y(1), 60, PR_H}, {620, R2Y(1), 130, PR_H}, "Grid:", NULL, 0, 0,0},               // shadowed
+    {0, {340, R2Y(2), 60, PR_H}, {400, R2Y(2), 300, PR_H}, "host:", gpsd_host, NV_GPSDHOST_LEN, 0,0},
+    {0, {480, R2Y(3), 50, PR_H}, {530, R2Y(3), 270, PR_H}, "file:", nmea_file, NV_NMEAFILE_LEN, 0,0},
+    {0, {180, R2Y(5), 60, PR_H}, {240, R2Y(5), 560, PR_H}, "host:", ntp_host, NV_NTPHOST_LEN, 0,0},
 
-    {0, { 90, R2Y(6), 60, PR_H}, {160, R2Y(6), 500, PR_H}, "SSID:", wifi_ssid, NV_WIFI_SSID_LEN, 0},
-    {0, {670, R2Y(6),110, PR_H}, { 10, R2Y(7), 789, PR_H}, "Password:", wifi_pw, NV_WIFI_PW_LEN, 0},
+    {0, { 90, R2Y(6), 60, PR_H}, {160, R2Y(6), 500, PR_H}, "SSID:", wifi_ssid, NV_WIFI_SSID_LEN, 0,0},
+    {0, {670, R2Y(6),110, PR_H}, { 10, R2Y(7), 789, PR_H}, "Password:", wifi_pw, NV_WIFI_PW_LEN, 0,0},
 
     // "page 2" -- index 1
 
-    {1, {140, R2Y(1),  0, PR_H}, {140, R2Y(1), 650, PR_H}, NULL, dx_wlist, NV_DXWLIST_LEN, 0},
-    {1, { 15, R2Y(2), 70, PR_H}, { 85, R2Y(2),  85, PR_H}, "port:", NULL, 0, 0},               // shadowed
-    {1, { 15, R2Y(3), 70, PR_H}, { 85, R2Y(3), 260, PR_H}, "host:", dx_host, NV_DXHOST_LEN, 0},
-    {1, { 15, R2Y(4), 70, PR_H}, { 85, R2Y(4), 260, PR_H}, "login:", dx_login, NV_DXLOGIN_LEN, 0},
+    {1, {140, R2Y(1),  0, PR_H}, {140, R2Y(1), 650, PR_H}, NULL, dx_wlist, NV_DXWLIST_LEN, 0,0},
+    {1, { 15, R2Y(2), 70, PR_H}, { 85, R2Y(2),  85, PR_H}, "port:", NULL, 0, 0,0},               // shadowed
+    {1, { 15, R2Y(3), 70, PR_H}, { 85, R2Y(3), 260, PR_H}, "host:", dx_host, NV_DXHOST_LEN, 0,0},
+    {1, { 15, R2Y(4), 70, PR_H}, { 85, R2Y(4), 260, PR_H}, "login:", dx_login, NV_DXLOGIN_LEN, 0,0},
 
     // three overlapping sets, visibility depends on DXCLCMDPGA/B_BPR
 
-    {1, {350, R2Y(3), 40, PR_H}, {390, R2Y(3), 409, PR_H}, NULL, dxcl_cmds[0], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(4), 40, PR_H}, {390, R2Y(4), 409, PR_H}, NULL, dxcl_cmds[1], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(5), 40, PR_H}, {390, R2Y(5), 409, PR_H}, NULL, dxcl_cmds[2], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(6), 40, PR_H}, {390, R2Y(6), 409, PR_H}, NULL, dxcl_cmds[3], NV_DXCLCMD_LEN, 0},
+    {1, {350, R2Y(3), 40, PR_H}, {390, R2Y(3), 409, PR_H}, NULL, dxcl_cmds[0], NV_DXCLCMD_LEN, 0,0},
+    {1, {350, R2Y(4), 40, PR_H}, {390, R2Y(4), 409, PR_H}, NULL, dxcl_cmds[1], NV_DXCLCMD_LEN, 0,0},
+    {1, {350, R2Y(5), 40, PR_H}, {390, R2Y(5), 409, PR_H}, NULL, dxcl_cmds[2], NV_DXCLCMD_LEN, 0,0},
+    {1, {350, R2Y(6), 40, PR_H}, {390, R2Y(6), 409, PR_H}, NULL, dxcl_cmds[3], NV_DXCLCMD_LEN, 0,0},
 
-    {1, {350, R2Y(3), 40, PR_H}, {390, R2Y(3), 409, PR_H}, NULL, dxcl_cmds[4], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(4), 40, PR_H}, {390, R2Y(4), 409, PR_H}, NULL, dxcl_cmds[5], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(5), 40, PR_H}, {390, R2Y(5), 409, PR_H}, NULL, dxcl_cmds[6], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(6), 40, PR_H}, {390, R2Y(6), 409, PR_H}, NULL, dxcl_cmds[7], NV_DXCLCMD_LEN, 0},
+    {1, {350, R2Y(3), 40, PR_H}, {390, R2Y(3), 409, PR_H}, NULL, dxcl_cmds[4], NV_DXCLCMD_LEN, 0,0},
+    {1, {350, R2Y(4), 40, PR_H}, {390, R2Y(4), 409, PR_H}, NULL, dxcl_cmds[5], NV_DXCLCMD_LEN, 0,0},
+    {1, {350, R2Y(5), 40, PR_H}, {390, R2Y(5), 409, PR_H}, NULL, dxcl_cmds[6], NV_DXCLCMD_LEN, 0,0},
+    {1, {350, R2Y(6), 40, PR_H}, {390, R2Y(6), 409, PR_H}, NULL, dxcl_cmds[7], NV_DXCLCMD_LEN, 0,0},
 
-    {1, {350, R2Y(3), 40, PR_H}, {390, R2Y(3), 409, PR_H}, NULL, dxcl_cmds[8], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(4), 40, PR_H}, {390, R2Y(4), 409, PR_H}, NULL, dxcl_cmds[9], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(5), 40, PR_H}, {390, R2Y(5), 409, PR_H}, NULL, dxcl_cmds[10], NV_DXCLCMD_LEN, 0},
-    {1, {350, R2Y(6), 40, PR_H}, {390, R2Y(6), 409, PR_H}, NULL, dxcl_cmds[11], NV_DXCLCMD_LEN, 0},
+    {1, {350, R2Y(3), 40, PR_H}, {390, R2Y(3), 409, PR_H}, NULL, dxcl_cmds[8], NV_DXCLCMD_LEN, 0,0},
+    {1, {350, R2Y(4), 40, PR_H}, {390, R2Y(4), 409, PR_H}, NULL, dxcl_cmds[9], NV_DXCLCMD_LEN, 0,0},
+    {1, {350, R2Y(5), 40, PR_H}, {390, R2Y(5), 409, PR_H}, NULL, dxcl_cmds[10], NV_DXCLCMD_LEN, 0,0},
+    {1, {350, R2Y(6), 40, PR_H}, {390, R2Y(6), 409, PR_H}, NULL, dxcl_cmds[11], NV_DXCLCMD_LEN, 0,0},
 
 
     // "page 3" -- index 2
 
-    {2, {160, R2Y(0), 60, PR_H}, {220, R2Y(0),  90, PR_H}, "port:", NULL, 0, 0},               // shadowed
-    {2, {310, R2Y(0), 60, PR_H}, {360, R2Y(0), 300, PR_H}, "host:", rot_host, NV_ROTHOST_LEN, 0},
-    {2, {160, R2Y(1), 60, PR_H}, {220, R2Y(1),  90, PR_H}, "port:", NULL, 0, 0},               // shadowed
-    {2, {310, R2Y(1), 60, PR_H}, {360, R2Y(1), 300, PR_H}, "host:", rig_host, NV_RIGHOST_LEN, 0},
-    {2, {160, R2Y(2), 60, PR_H}, {220, R2Y(2),  90, PR_H}, "port:", NULL, 0, 0},               // shadowed
-    {2, {310, R2Y(2), 60, PR_H}, {360, R2Y(2), 300, PR_H}, "host:", flrig_host, NV_FLRIGHOST_LEN, 0},
+    {2, {160, R2Y(0), 60, PR_H}, {220, R2Y(0),  90, PR_H}, "port:", NULL, 0, 0,0},               // shadowed
+    {2, {310, R2Y(0), 60, PR_H}, {360, R2Y(0), 300, PR_H}, "host:", rot_host, NV_ROTHOST_LEN, 0,0},
+    {2, {160, R2Y(1), 60, PR_H}, {220, R2Y(1),  90, PR_H}, "port:", NULL, 0, 0,0},               // shadowed
+    {2, {310, R2Y(1), 60, PR_H}, {360, R2Y(1), 300, PR_H}, "host:", rig_host, NV_RIGHOST_LEN, 0,0},
+    {2, {160, R2Y(2), 60, PR_H}, {220, R2Y(2),  90, PR_H}, "port:", NULL, 0, 0,0},               // shadowed
+    {2, {310, R2Y(2), 60, PR_H}, {360, R2Y(2), 300, PR_H}, "host:", flrig_host, NV_FLRIGHOST_LEN, 0,0},
 
-    {2, {100, R2Y(4), 60, PR_H}, {160, R2Y(4), 580, PR_H}, "file:", adif_fn, NV_ADIFFN_LEN, 0},
+    {2, {100, R2Y(4), 60, PR_H}, {160, R2Y(4), 580, PR_H}, "file:", adif_fn, NV_ADIFFN_LEN, 0,0},
 
-    {2, {215, R2Y(5),  0, PR_H}, {215, R2Y(5), 580, PR_H}, NULL, adif_wlist, NV_ADIFWLIST_LEN, 0},
-    {2, {215, R2Y(6),  0, PR_H}, {215, R2Y(6), 580, PR_H}, NULL, onta_wlist, NV_ONTAWLIST_LEN, 0},
+    {2, {215, R2Y(5),  0, PR_H}, {215, R2Y(5), 580, PR_H}, NULL, adif_wlist, NV_ADIFWLIST_LEN, 0,0},
+    {2, {215, R2Y(6),  0, PR_H}, {215, R2Y(6), 580, PR_H}, NULL, onta_wlist, NV_ONTAWLIST_LEN, 0,0},
 
 
     // "page 4" -- index 3
 
-    {3, {10,  R2Y(0), 240, PR_H}, {250, R2Y(0), 100, PR_H}, "Map center longitude:", NULL, 0, 0}, // shadowed
+    {3, {10,  R2Y(0), 240, PR_H}, {250, R2Y(0), 100, PR_H}, "Map center longitude:", NULL, 0, 0,0}, // shadowed
 
-    {3, {350, R2Y(2),  70, PR_H}, {440, R2Y(2), 360,PR_H},  "name:", i2c_fn, NV_I2CFN_LEN, 0},
+    {3, {350, R2Y(2),  70, PR_H}, {440, R2Y(2), 360,PR_H},  "name:", i2c_fn, NV_I2CFN_LEN, 0,0},
 
-    {3, {100, R2Y(3), 240, PR_H}, {350, R2Y(3),  80, PR_H}, "BME280@76    dTemp:", NULL, 0, 0}, // shadowed
-    {3, {440, R2Y(3), 80,  PR_H}, {530, R2Y(3),  80, PR_H}, "dPres:", NULL, 0, 0},              // shadowed
-    {3, {100, R2Y(4), 240, PR_H}, {350, R2Y(4),  80, PR_H}, "BME280@77    dTemp:", NULL, 0, 0}, // shadowed
-    {3, {440, R2Y(4), 80,  PR_H}, {530, R2Y(4),  80, PR_H}, "dPres:", NULL, 0, 0},              // shadowed
+    {3, {100, R2Y(3), 240, PR_H}, {350, R2Y(3),  80, PR_H}, "BME280@76    dTemp:", NULL, 0, 0,0}, // shadowed
+    {3, {440, R2Y(3), 80,  PR_H}, {530, R2Y(3),  80, PR_H}, "dPres:", NULL, 0, 0,0},              // shadowed
+    {3, {100, R2Y(4), 240, PR_H}, {350, R2Y(4),  80, PR_H}, "BME280@77    dTemp:", NULL, 0, 0,0}, // shadowed
+    {3, {440, R2Y(4), 80,  PR_H}, {530, R2Y(4),  80, PR_H}, "dPres:", NULL, 0, 0,0},              // shadowed
 
-    {3, {10,  R2Y(6), 200, PR_H}, {250, R2Y(6),  80, PR_H}, "Brightness Min%:", NULL, 0, 0},    // shadowed
-    {3, {350, R2Y(6),  90, PR_H}, {450, R2Y(6),  80, PR_H}, "Max%:", NULL, 0, 0},               // shadowed
+    {3, {10,  R2Y(6), 200, PR_H}, {250, R2Y(6),  80, PR_H}, "Brightness Min%:", NULL, 0, 0,0},    // shadowed
+    {3, {350, R2Y(6),  90, PR_H}, {450, R2Y(6),  80, PR_H}, "Max%:", NULL, 0, 0,0},               // shadowed
 
 
 
@@ -401,9 +401,9 @@ static StringPrompt string_pr[N_SPR] = {
 
     // "page 6" -- index 5
 
-    {5, {CSEL_VX, CSEL_VYR, 0, PR_H}, {CSEL_VX, CSEL_VYR, 80, PR_H}, NULL, NULL, 0, 0},         // shadowed
-    {5, {CSEL_VX, CSEL_VYG, 0, PR_H}, {CSEL_VX, CSEL_VYG, 80, PR_H}, NULL, NULL, 0, 0},         // shadowed
-    {5, {CSEL_VX, CSEL_VYB, 0, PR_H}, {CSEL_VX, CSEL_VYB, 80, PR_H}, NULL, NULL, 0, 0},         // shadowed
+    {5, {CSEL_VX, CSEL_VYR, 0, PR_H}, {CSEL_VX, CSEL_VYR, 80, PR_H}, NULL, NULL, 0, 0,0},         // shadowed
+    {5, {CSEL_VX, CSEL_VYG, 0, PR_H}, {CSEL_VX, CSEL_VYG, 80, PR_H}, NULL, NULL, 0, 0,0},         // shadowed
+    {5, {CSEL_VX, CSEL_VYB, 0, PR_H}, {CSEL_VX, CSEL_VYB, 80, PR_H}, NULL, NULL, 0, 0,0},         // shadowed
 
     // "page 7" -- index 6
 
@@ -488,8 +488,9 @@ typedef enum {
     QRZBIOA_BPR,
     QRZBIOB_BPR,
     AUTOMAP_BPR,
-    X11_FULLSCRN_BPR,
+    UDPSETSDX_BPR,
     WEB_FULLSCRN_BPR,
+    X11_FULLSCRN_BPR,
 
     // page "6" -- color editor
 
@@ -600,7 +601,7 @@ static BoolPrompt bool_pr[N_BPR] = {
     {2, {10,  R2Y(1),  90, PR_H},  {100, R2Y(1),  60, PR_H}, false, "rigctld?", "No", "Yes", NOMATE},
     {2, {10,  R2Y(2),  90, PR_H},  {100, R2Y(2),  60, PR_H}, false, "flrig?",   "No", "Yes", NOMATE},
 
-    {2, {10,  R2Y(3),  90, PR_H},  {100, R2Y(3), 120, PR_H}, false, "Radio:", "Monitor", "Control", NOMATE},
+    {2, {10,  R2Y(3),  90, PR_H},  {100, R2Y(3), 150, PR_H}, false, "Radio:", "Monitor PTT","Control",NOMATE},
 
 
     {2, {10,  R2Y(4),  90, PR_H},  {100, R2Y(4), 300, PR_H}, false, "ADIF?", "No", NULL, NOMATE},
@@ -710,15 +711,14 @@ static BoolPrompt bool_pr[N_BPR] = {
 
     {4, { 10, R2Y(8), 190, PR_H},  {200, R2Y(8), 170, PR_H}, false, "Auto SpcWx map?", "No", "Yes", NOMATE},
 
+    {4, {400, R2Y(8), 190, PR_H},  {590, R2Y(8), 170, PR_H}, false, "UDP sets DX?", "No", "Yes", NOMATE},
 
 
-    {4, {400, R2Y(8), 190, PR_H},  {590, R2Y(8), 170, PR_H}, false, "Full scrn direct?", "No", "Yes", NOMATE},
-                                                // N.B. state box must be wide enough for "Won't fit"
 
     {4, { 10, R2Y(9), 190, PR_H},  {200, R2Y(9), 170, PR_H}, false, "Full scrn web?", "No", "Yes", NOMATE},
 
-
-
+    {4, {400, R2Y(9), 190, PR_H},  {590, R2Y(9), 170, PR_H}, false, "Full scrn direct?", "No", "Yes", NOMATE},
+                                                // N.B. state box must be wide enough for "Won't fit"
 
 
 
@@ -1687,8 +1687,9 @@ static void nextTabFocus (bool backwards)
         { NULL, &bool_pr[PANE_ROTPA_BPR] },
         { NULL, &bool_pr[QRZBIOA_BPR] },
         { NULL, &bool_pr[AUTOMAP_BPR] },
-        { NULL, &bool_pr[X11_FULLSCRN_BPR] },
+        { NULL, &bool_pr[UDPSETSDX_BPR] },
         { NULL, &bool_pr[WEB_FULLSCRN_BPR] },
+        { NULL, &bool_pr[X11_FULLSCRN_BPR] },
 
         // page 6
 
@@ -1705,7 +1706,7 @@ static void nextTabFocus (bool backwards)
         if (memcmp (&cur_focus[cur_page], &tab_fields[tab_pos], sizeof(Focus)) == 0)
             break;
     if (tab_pos == N_TAB_FIELDS) {
-        Serial.printf ("cur_focus[%d] not found\n", cur_page);
+        Serial.printf ("Setup: cur_focus[%d] not found??\n", cur_page);
         return;
     }
 
@@ -1728,7 +1729,7 @@ static void nextTabFocus (bool backwards)
         }
     }
 
-    Serial.printf ("new focus not found\n");
+    Serial.printf ("Setup: new focus not found??\n");
 }
 
 /* set focus on cur_page to the given string or bool prompt, opposite assumed to be NULL.
@@ -2050,7 +2051,7 @@ static void flagErrField (StringPrompt *sp, bool restore = false, const char *ms
 }
 
 /* update interaction if sp is one of LAT/LNG/GRID_SPR.
- * also set ll_edited.
+ * and set ll_edited.
  */
 static void checkLLGEdit(const StringPrompt *sp)
 {
@@ -2058,6 +2059,8 @@ static void checkLLGEdit(const StringPrompt *sp)
 
         // convert to grid if possible
         LatLong ll;
+        strtrim (string_pr[LAT_SPR].v_str);
+        strtrim (string_pr[LNG_SPR].v_str);
         if (latSpecIsValid (string_pr[LAT_SPR].v_str, ll.lat_d)
                         && lngSpecIsValid (string_pr[LNG_SPR].v_str, ll.lng_d)) {
             normalizeLL (ll);
@@ -2074,6 +2077,7 @@ static void checkLLGEdit(const StringPrompt *sp)
 
         // convert to ll if possible
         LatLong ll;
+        strtrim (sp->v_str);
         if (maidenhead2ll (ll, sp->v_str)) {
             formatLat (ll.lat_d, string_pr[LAT_SPR].v_str, string_pr[LAT_SPR].v_len);
             eraseSPValue (&string_pr[LAT_SPR]);
@@ -2978,12 +2982,12 @@ static void drawOnOffControls()
     // On Off labels
     tft.setTextColor (PR_C);
     tft.setCursor (OO_X0+2, OO_ONY);
-    tft.print (F("On"));
+    tft.print ("On");
     tft.setCursor (OO_X0+2, OO_OFFY);
     if (brDimmableOk())
-        tft.print (F("Dim"));
+        tft.print ("Dim");
     else
-        tft.print (F("Off"));
+        tft.print ("Off");
 
     // inc/dec hints
     drawVee (OO_X0+(OO_CI-OO_CW/6)/2, OO_Y0+1*OO_RH/2, OO_ASZ, 90, BUTTON_C);
@@ -3508,7 +3512,7 @@ static bool getWPACreds()
     static const char wpa_fn[] = "/etc/wpa_supplicant/wpa_supplicant.conf";
     FILE *wpa_fp = fopen (wpa_fn, "r");
     if (!wpa_fp) {
-        Serial.printf ("%s: %s\n", wpa_fn, strerror(errno));
+        Serial.printf ("Setup: %s: %s\n", wpa_fn, strerror(errno));
         return (false);
     }
 
@@ -3534,7 +3538,7 @@ static bool getWPACreds()
     static const char osr_fn[] = "/etc/os-release";
     FILE *osr_fp = fopen (osr_fn, "r");
     if (!osr_fp) {
-        Serial.printf ("%s: %s\n", osr_fn, strerror(errno));
+        Serial.printf ("Setup: %s: %s\n", osr_fn, strerror(errno));
         return (false);
     }
     bool is_debian = false;
@@ -4233,6 +4237,13 @@ static void initSetup()
         NVWriteFloat (NV_DX_LNG, 0.0F);
         NVWriteInt32 (NV_DX_TZ, 0);
     }
+
+    uint8_t udpsetsdx;
+    if (!NVReadUInt8 (NV_UDPSETSDX, &udpsetsdx)) {
+        udpsetsdx = 0;
+        NVWriteUInt8 (NV_UDPSETSDX, udpsetsdx);
+    }
+    bool_pr[UDPSETSDX_BPR].state = (udpsetsdx != 0);
 }
 
 
@@ -4242,8 +4253,10 @@ static bool askRun()
 {
     eraseScreen();
 
-    if (skip_skip)
+    if (skip_skip) {
+        Serial.printf ("Setup: skipping because -k\n");
         return (false);
+    }
 
     drawStringInBox ("Skip", skip_b, false, TX_C);
 
@@ -4251,7 +4264,7 @@ static bool askRun()
     tft.setCursor (tft.width()/6, tft.height()/5);
 
     // appropriate prompt
-    tft.print (F("Click anywhere to enter Setup ... "));
+    tft.print ("Click anywhere to enter Setup ... ");
 
     int16_t x = tft.getCursorX();
     int16_t y = tft.getCursorY();
@@ -4912,6 +4925,7 @@ static void saveParams2NV()
     NVWriteUInt8 (NV_AUTOMAP, autoMap());
     NVWriteUInt8 (NV_GRAYDPY, (uint8_t)getGrayDisplay());
     NVWriteUInt8 (NV_QRZID, getQRZId());
+    NVWriteUInt8 (NV_UDPSETSDX, UDPSetsDX());
 
     // save and engage user's X11 settings
     uint16_t x11flags = 0;
@@ -4994,8 +5008,16 @@ void clockSetup()
             validateStringPrompts (true);
 
         // main interaction loop
+        Serial.printf ("Setup: running\n");
         runSetup();
-    }
+        Serial.printf ("Setup: complete\n");
+
+        // inform cluster if location changed
+        if (ll_edited)
+            sendDXClusterDELLGrid();
+
+    } else
+        Serial.printf ("Setup: declined\n");
 
     // save, log and clean up shadowed params
     logAllPrompts();
@@ -5015,7 +5037,7 @@ bool latSpecIsValid (const char *lat_spec, float &lat)
     char ns = *endp;
     if (ns == 'S' || ns == 's')
         lat = -lat;
-    else if (ns != 'N' && ns != 'n' && ns != ' ' && ns != '\0')
+    else if (ns != 'N' && ns != 'n' && ns != '\0')
         return (false);
     if (lat < -90 || lat > 90)
         return (false);
@@ -5032,7 +5054,7 @@ bool lngSpecIsValid (const char *lng_spec, float &lng)
     char ew = *endp;
     if (ew == 'W' || ew == 'w')
         lng = -lng;
-    else if (ew != 'E' && ew != 'e' && ew != ' ' && ew != '\0')
+    else if (ew != 'E' && ew != 'e' && ew != '\0')
         return (false);
     if (lng < -180 || lng > 180)
         return (false);
@@ -5739,21 +5761,6 @@ QRZURLId getQRZId(void)
     return (QRZ_NONE);  // lint
 }
 
-/* actual drawing of a DXSpot dot
- */
-void drawSpotDot (int16_t raw_x, int16_t raw_y, uint16_t radius, LabelOnMapEnd txrx, uint16_t color)
-{
-    if (txrx == LOME_TXEND) {
-        // circle suggesting expanding wave
-        tft.fillCircleRaw (raw_x, raw_y, radius, color);
-        tft.drawCircleRaw (raw_x, raw_y, radius+1, RA8875_BLACK);
-    } else {
-        // square suggesting receiving array ??
-        tft.fillRectRaw (raw_x-radius, raw_y-radius, 2*radius, 2*radius, color);
-        tft.drawRectRaw (raw_x-radius-1, raw_y-radius-1, 2*radius+1, 2*radius+1, RA8875_BLACK);
-    }
-}
-
 /* return whether to use metric units
  */
 static bool useMetricUnits()
@@ -5787,4 +5794,11 @@ bool showATMhPa(void)
 bool showDistKm(void)
 {
     return (useMetricUnits());
+}
+
+/* return whether a UDP spot also sets DX
+ */
+bool UDPSetsDX(void)
+{
+    return (bool_pr[UDPSETSDX_BPR].state);
 }

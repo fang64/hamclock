@@ -143,7 +143,7 @@ static void prHM6 (const time_t t)
 
     char buf[20];
     if (h12 < 10)
-        snprintf (buf, sizeof(buf), "%d:%02d%s", h12, m, h < 12 ? _FX("AM") : _FX("PM"));
+        snprintf (buf, sizeof(buf), "%d:%02d%s", h12, m, h < 12 ? "AM" : "PM");
     else
         snprintf (buf, sizeof(buf), "%d:%02d%c", h12, m, h < 12 ? 'A' : 'P');
     tft.print (buf);
@@ -406,7 +406,7 @@ static void drawDigitalClock (time_t delocal_t)
         fatalError ("bad date fmt: %d", (int)getDateFormat());
     }
     if (de_time_fmt == DETIME_DIGITAL_12)
-        bl += snprintf (buf+bl, sizeof(buf)-bl, " %s", hr < 12 ? _FX("AM") : _FX("PM"));
+        bl += snprintf (buf+bl, sizeof(buf)-bl, " %s", hr < 12 ? "AM" : "PM");
     else
         bl += snprintf (buf+bl, sizeof(buf)-bl, " 24h");
     selectFontStyle (LIGHT_FONT, FAST_FONT);
@@ -422,13 +422,13 @@ static void runAuxTimeMenu()
 {
     #define _AM_INDENT 4
     MenuItem mitems[AUXT_N] = {
-        {MENU_1OFN, auxtime == AUXT_DATE, 1, _AM_INDENT, auxtime_names[AUXT_DATE]},
-        {MENU_1OFN, auxtime == AUXT_DOY, 1, _AM_INDENT, auxtime_names[AUXT_DOY]},
-        {MENU_1OFN, auxtime == AUXT_JD, 1, _AM_INDENT, auxtime_names[AUXT_JD]},
-        {MENU_1OFN, auxtime == AUXT_MJD, 1, _AM_INDENT, auxtime_names[AUXT_MJD]},
-        {MENU_1OFN, auxtime == AUXT_SIDEREAL, 1, _AM_INDENT, auxtime_names[AUXT_SIDEREAL]},
-        {MENU_1OFN, auxtime == AUXT_SOLAR, 1, _AM_INDENT, auxtime_names[AUXT_SOLAR]},
-        {MENU_1OFN, auxtime == AUXT_UNIX, 1, _AM_INDENT, auxtime_names[AUXT_UNIX]},
+        {MENU_1OFN, auxtime == AUXT_DATE, 1, _AM_INDENT, auxtime_names[AUXT_DATE], 0},
+        {MENU_1OFN, auxtime == AUXT_DOY, 1, _AM_INDENT, auxtime_names[AUXT_DOY], 0},
+        {MENU_1OFN, auxtime == AUXT_JD, 1, _AM_INDENT, auxtime_names[AUXT_JD], 0},
+        {MENU_1OFN, auxtime == AUXT_MJD, 1, _AM_INDENT, auxtime_names[AUXT_MJD], 0},
+        {MENU_1OFN, auxtime == AUXT_SIDEREAL, 1, _AM_INDENT, auxtime_names[AUXT_SIDEREAL], 0},
+        {MENU_1OFN, auxtime == AUXT_SOLAR, 1, _AM_INDENT, auxtime_names[AUXT_SOLAR], 0},
+        {MENU_1OFN, auxtime == AUXT_UNIX, 1, _AM_INDENT, auxtime_names[AUXT_UNIX], 0},
     };
 
     SBox menu_b = auxtime_b;
@@ -814,8 +814,10 @@ void drawCalendar(bool force)
 void initTime()
 {
     // get last UTC offset from ENVROM
-    utc_offset = 0;
-    NVReadInt32 (NV_UTC_OFFSET, &utc_offset);
+    if (!NVReadInt32 (NV_UTC_OFFSET, &utc_offset)) {
+        utc_offset = 0;
+        NVWriteInt32 (NV_UTC_OFFSET, utc_offset);
+    }
 
     // get desired aux time format
     uint8_t at;
@@ -875,7 +877,7 @@ time_t myNow()
     // beware recursion, eg vis nextRetry if now decides to ask for an update
     static bool reentry;
     if (reentry) {
-        Serial.printf ("myNow() detected recursion\n");
+        // Serial.printf ("myNow() detected recursion\n");
         return (prev_t);
     }
     reentry = true;
@@ -1226,20 +1228,20 @@ bool checkClockTouch (SCoord &s)
 
             // menu
             MenuItem mitems[_CT_N] = {
-                { MENU_LABEL, false, 0, _CT_INDENT1, " Change Time"},
-                { MENU_LABEL, false, 0, _CT_INDENT1, "Direction:"},
-                    { MENU_1OFN, prev_dir == _CT_DIR_FRW, 1, _CT_INDENT2, "Forward"},
-                    { MENU_1OFN, prev_dir == _CT_DIR_BKW, 1, _CT_INDENT2, "Backward"},
-                { MENU_LABEL, false, 2, _CT_INDENT1, "Amount:"},
-                    { MENU_01OFN, prev_mod == _CT_MOD_1MIN, 3, _CT_INDENT2, "1 minute"},
-                    { MENU_01OFN, prev_mod == _CT_MOD_10MINS, 3, _CT_INDENT2, "10 minutes"},
-                    { MENU_01OFN, prev_mod == _CT_MOD_1HOUR, 3, _CT_INDENT2, "1 hour"},
-                    { MENU_01OFN, prev_mod == _CT_MOD_2HOURS, 3, _CT_INDENT2, "2 hours"},
-                    { MENU_01OFN, prev_mod == _CT_MOD_1DAY, 3, _CT_INDENT2, "1 day"},
-                    { MENU_01OFN, prev_mod == _CT_MOD_1WEEK, 3, _CT_INDENT2, "1 week"},
-                    { MENU_01OFN, prev_mod == _CT_MOD_1MON, 3, _CT_INDENT2, "1 month"},
-                    { MENU_01OFN, prev_mod == _CT_MOD_1YEAR, 3, _CT_INDENT2, "1 year"},
-                { MENU_TOGGLE, false, 4, _CT_INDENT1, "Zero seconds"},
+                { MENU_LABEL, false, 0, _CT_INDENT1, " Change Time", 0},
+                { MENU_LABEL, false, 0, _CT_INDENT1, "Direction:", 0},
+                    { MENU_1OFN, prev_dir == _CT_DIR_FRW, 1, _CT_INDENT2, "Forward", 0},
+                    { MENU_1OFN, prev_dir == _CT_DIR_BKW, 1, _CT_INDENT2, "Backward", 0},
+                { MENU_LABEL, false, 2, _CT_INDENT1, "Amount:", 0},
+                    { MENU_01OFN, prev_mod == _CT_MOD_1MIN, 3, _CT_INDENT2, "1 minute", 0},
+                    { MENU_01OFN, prev_mod == _CT_MOD_10MINS, 3, _CT_INDENT2, "10 minutes", 0},
+                    { MENU_01OFN, prev_mod == _CT_MOD_1HOUR, 3, _CT_INDENT2, "1 hour", 0},
+                    { MENU_01OFN, prev_mod == _CT_MOD_2HOURS, 3, _CT_INDENT2, "2 hours", 0},
+                    { MENU_01OFN, prev_mod == _CT_MOD_1DAY, 3, _CT_INDENT2, "1 day", 0},
+                    { MENU_01OFN, prev_mod == _CT_MOD_1WEEK, 3, _CT_INDENT2, "1 week", 0},
+                    { MENU_01OFN, prev_mod == _CT_MOD_1MON, 3, _CT_INDENT2, "1 month", 0},
+                    { MENU_01OFN, prev_mod == _CT_MOD_1YEAR, 3, _CT_INDENT2, "1 year", 0},
+                { MENU_TOGGLE, false, 4, _CT_INDENT1, "Zero seconds", 0},
             };
 
             // run, do nothing if cancelled

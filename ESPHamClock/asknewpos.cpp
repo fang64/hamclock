@@ -256,7 +256,7 @@ static void initNPDialog (const SBox &box, NPField f[NPF_N], const LatLong &ll, 
 
     // finish setting up lat
     tft.setCursor (box.x+1, ROW2FY(box,0));
-    tft.print (F("Lat:"));
+    tft.print ("Lat:");
     f[NPF_LAT].x = box.x + 1 + 6*NP_FONTW;
     f[NPF_LAT].r = 0;
     drawNPField (box, f[NPF_LAT]);
@@ -264,14 +264,14 @@ static void initNPDialog (const SBox &box, NPField f[NPF_N], const LatLong &ll, 
 
     // finish setting up lng
     tft.setCursor (box.x+1, ROW2FY(box,1));
-    tft.print (F("Long:"));
+    tft.print ("Long:");
     f[NPF_LNG].x = box.x + 1 + 6*NP_FONTW;
     f[NPF_LNG].r = 1;
     drawNPField (box, f[NPF_LNG]);
 
     // grid
     tft.setCursor (box.x+1, ROW2FY(box,2));
-    tft.print (F("Grid:"));
+    tft.print ("Grid:");
     strcpy (f[NPF_GRID].str, grid);
     f[NPF_GRID].x = box.x + 1 + 6*NP_FONTW;
     f[NPF_GRID].r = 2;
@@ -294,16 +294,16 @@ static void initNPDialog (const SBox &box, NPField f[NPF_N], const LatLong &ll, 
     uint16_t x, y = ROW2FY(box,7);
     x = box.x + NP_FONTW;
     tft.setCursor (x, y);
-    tft.print (F("Delete"));
+    tft.print ("Delete");
     tft.drawRect (x-2, y-2, NP_FONTW*6+4, NP_FONTH+3, NP_TXCOLOR);
     x = box.x + box.w/2 - NP_FONTW;
     tft.setCursor (x, y);
-    tft.print (F("Ok"));
+    tft.print ("Ok");
     tft.drawRect (x-2, y-2, NP_FONTW*2+4, NP_FONTH+3, NP_TXCOLOR);
     x = box.x+box.w-7*NP_FONTW;
     tft.setCursor (x, y);
     tft.drawRect (x-2, y-2, NP_FONTW*6+4, NP_FONTH+3, NP_TXCOLOR);
-    tft.print (F("Cancel"));
+    tft.print ("Cancel");
 }
 
 /* check for a complete and consistent set of fields.
@@ -316,15 +316,15 @@ static bool allNPFieldsOK (const SBox &b, const NPField f[NPF_N], LatLong &ll, c
     bool ok = true;
 
     if (!maidenhead2ll (grid_ll, f[NPF_GRID].str)) {
-        showNPFieldError (b, f[NPF_GRID], strlen(f[NPF_GRID].str) > 0 ? _FX("Bad grid"):_FX("Missing grid"));
+        showNPFieldError (b, f[NPF_GRID], strlen(f[NPF_GRID].str) > 0 ? "Bad grid":"Missing grid");
         ok = false;
     }
     if (!latSpecIsValid(f[NPF_LAT].str, lt)) {
-        showNPFieldError (b, f[NPF_LAT], strlen(f[NPF_LAT].str) > 0 ? _FX("Bad lat") : _FX("Missing lat"));
+        showNPFieldError (b, f[NPF_LAT], strlen(f[NPF_LAT].str) > 0 ? "Bad lat" : "Missing lat");
         ok = false;
     }
     if (!lngSpecIsValid(f[NPF_LNG].str, lg)) {
-        showNPFieldError (b, f[NPF_LNG], strlen(f[NPF_LNG].str) > 0 ? _FX("Bad long") : _FX("Missing long"));
+        showNPFieldError (b, f[NPF_LNG], strlen(f[NPF_LNG].str) > 0 ? "Bad long" : "Missing long");
         ok = false;
     }
 
@@ -479,7 +479,7 @@ bool askNewPos (const SBox &b, LatLong &op_ll, char op_grid[MAID_CHARLEN])
 
         // see what happened
         int tap = processNPTap (kbc, focus_fn, b, s);
-        // Serial.printf (_FX("ask %d %c\n"), tap, isalnum(tap) ? tap : '*');
+        // Serial.printf ("ask %d %c\n", tap, isalnum(tap) ? tap : '*');
 
         // update action
         switch (tap) {

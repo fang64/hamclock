@@ -26,13 +26,13 @@ class WiFi WiFi;
 /* run shell cmd and return the first line of response.
  * return whether ok
  */
-static bool getCommand (bool verbose, const char cmd[], char line[], size_t line_len)
+static bool getCommand (const char cmd[], char line[], size_t line_len)
 {
         // Serial.printf ("getCommand: %s\n", cmd);
 
 	line[0] = '\0';
-        if (verbose)
-            printf ("** cmd=%s\n", cmd);
+        if (debugLevel (DEBUG_NET, 1))
+            printf ("** run=%s\n", cmd);
 	FILE *pp = popen (cmd, "r");
 	if (!pp)
 	    return (false);
@@ -44,11 +44,11 @@ static bool getCommand (bool verbose, const char cmd[], char line[], size_t line
         int exstatus = WEXITSTATUS(wstatus);
         if (fgets_ok && exited && exstatus == 0 && strlen(line) > 1) {
             line[strlen(line)-1] = '\0';        // rm \n
-            if (verbose)
+            if (debugLevel (DEBUG_NET, 1))
                 printf ("** back=%s\n", line);
             return (true);
         }
-        if (verbose) {
+        if (debugLevel (DEBUG_NET, 1)) {
             printf ("** cmd=%s\n", cmd);
             int signaled = WIFSIGNALED(wstatus);
             int signal = WTERMSIG(wstatus);
@@ -245,11 +245,11 @@ IPAddress WiFi::gatewayIP(void)
             return (a);
 
         strcpy (cmd,  "[ -x /sbin/ip ] && /sbin/ip route show default | awk '/default via/{print $3}'");
-	if (getCommand (false, cmd, back, sizeof(back)) && crackIP (back, a))
+	if (getCommand (cmd, back, sizeof(back)) && crackIP (back, a))
             return (a);
 
         strcpy (cmd,  "netstat -rn | awk '(/^0.0.0.0/ || /^default/) && !/::/{print $2}'");
-	if (getCommand (false, cmd, back, sizeof(back)) && crackIP (back, a))
+	if (getCommand (cmd, back, sizeof(back)) && crackIP (back, a))
             return (a);
 
         // default 0
@@ -266,7 +266,7 @@ IPAddress WiFi::dnsIP(void)
             return (a);
 
 	strcpy (cmd, "awk '/nameserver/{print $2}' /etc/resolv.conf | head -1");
-	if (getCommand (false, cmd, back, sizeof(back)) && crackIP (back, a))
+	if (getCommand (cmd, back, sizeof(back)) && crackIP (back, a))
             return (a);
 
         // default 0
@@ -302,7 +302,7 @@ int WiFi::RSSI(void)
             "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I";
         char ret[2048];
 
-        if (getCommand (false, cmd, ret, sizeof(ret))) {
+        if (getCommand (cmd, ret, sizeof(ret))) {
             int apple_rssi;
             char *rssi_kw = strstr (ret, "agrCtlRSSI: ");
             if (rssi_kw && sscanf (rssi_kw+11, "%d", &apple_rssi) == 1 && apple_rssi != 0)
@@ -369,7 +369,7 @@ std::string WiFi::macAddress(void)
         const int n_cmds = sizeof(cmds)/sizeof(cmds[0]);
 
         for (int i = 0; i < n_cmds; i++) {
-            if (getCommand (false, cmds[i], line, sizeof(line))) {
+            if (getCommand (cmds[i], line, sizeof(line))) {
                 // insure 5 :
                 unsigned int m1, m2, m3, m4, m5, m6;
                 if (sscanf (line, "%x:%x:%x:%x:%x:%x", &m1, &m2, &m3, &m4, &m5, &m6) == 6)

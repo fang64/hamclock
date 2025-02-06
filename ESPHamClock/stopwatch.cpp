@@ -958,7 +958,7 @@ static bool drawBCDEWxInfo(void)
 static void drawBCSpaceWxInfo (bool all)
 {
     if (checkForNewSpaceWx() || all)
-        drawSpaceStats(sw_col);   
+        drawNCDXFSpcWxStats(sw_col);   
 }
 
 /* mark each control or indicator box for debugging big clock layout
@@ -1746,30 +1746,30 @@ static void runBCMenu (const SCoord &s)
     #define SEC_INDENT 10
     #define TER_INDENT 16
     MenuItem mitems[MI_N] = {
-        {MENU_LABEL, false, 0, PRI_INDENT, "Format:"},
-            {MENU_1OFN, !(bc_bits & SW_BCDIGBIT), 1, SEC_INDENT, "Analog"},
-                {MENU_TOGGLE, !!(bc_bits & SW_ANWDBIT), 2, TER_INDENT, "+ Digital"},
-                {MENU_TOGGLE, !!(bc_bits & SW_ANNUMBIT), 2, TER_INDENT, "Numbers"},
-                {MENU_TOGGLE, !!(bc_bits & SW_ANCOLHBIT), 2, TER_INDENT, "Color hands"},
-            {MENU_1OFN, !!(bc_bits & SW_BCDIGBIT), 1, SEC_INDENT, "Digital"},
-                {MENU_1OFN, !!(bc_bits & SW_UTCBIT), 3, TER_INDENT, "UTC"},
-                {MENU_1OFN, !!(bc_bits & SW_LSTBIT), 3, TER_INDENT, "LST"},
+        {MENU_LABEL, false, 0, PRI_INDENT, "Format:", 0},
+            {MENU_1OFN, !(bc_bits & SW_BCDIGBIT), 1, SEC_INDENT, "Analog", 0},
+                {MENU_TOGGLE, !!(bc_bits & SW_ANWDBIT), 2, TER_INDENT, "+ Digital", 0},
+                {MENU_TOGGLE, !!(bc_bits & SW_ANNUMBIT), 2, TER_INDENT, "Numbers", 0},
+                {MENU_TOGGLE, !!(bc_bits & SW_ANCOLHBIT), 2, TER_INDENT, "Color hands", 0},
+            {MENU_1OFN, !!(bc_bits & SW_BCDIGBIT), 1, SEC_INDENT, "Digital", 0},
+                {MENU_1OFN, !!(bc_bits & SW_UTCBIT), 3, TER_INDENT, "UTC", 0},
+                {MENU_1OFN, !!(bc_bits & SW_LSTBIT), 3, TER_INDENT, "LST", 0},
                 {MENU_1OFN, (bc_bits & (SW_DB12HBIT|SW_UTCBIT|SW_LSTBIT)) == SW_DB12HBIT,
-                                3, TER_INDENT, "DE 12 hour"},
-                {MENU_1OFN, (bc_bits & (SW_DB12HBIT|SW_UTCBIT|SW_LSTBIT)) == 0, 3, TER_INDENT, "DE 24 hour"},
-        {MENU_LABEL, false, 0, PRI_INDENT, "Also show:"},
-            {MENU_TOGGLE, !(bc_bits & SW_NOSECBIT), 4, SEC_INDENT, "Seconds"},
-            {MENU_TOGGLE, !!(bc_bits & SW_BCDATEBIT), 5, SEC_INDENT, "Date info"},
-            {MENU_TOGGLE, sws_engine == SWE_COUNTDOWN, 6, SEC_INDENT, "Count down"},
-            {MENU_TOGGLE, alarm_daily.state != ALMS_OFF, 7, SEC_INDENT, "Daily Alarm"},
-            {MENU_TOGGLE, alarm_once.state != ALMS_OFF, 8, SEC_INDENT, "Once Alarm"},
+                                3, TER_INDENT, "DE 12 hour", 0},
+                {MENU_1OFN, (bc_bits & (SW_DB12HBIT|SW_UTCBIT|SW_LSTBIT)) == 0, 3, TER_INDENT,"DE 24 hour",0},
+        {MENU_LABEL, false, 0, PRI_INDENT, "Also show:", 0},
+            {MENU_TOGGLE, !(bc_bits & SW_NOSECBIT), 4, SEC_INDENT, "Seconds", 0},
+            {MENU_TOGGLE, !!(bc_bits & SW_BCDATEBIT), 5, SEC_INDENT, "Date info", 0},
+            {MENU_TOGGLE, sws_engine == SWE_COUNTDOWN, 6, SEC_INDENT, "Count down", 0},
+            {MENU_TOGGLE, alarm_daily.state != ALMS_OFF, 7, SEC_INDENT, "Daily Alarm", 0},
+            {MENU_TOGGLE, alarm_once.state != ALMS_OFF, 8, SEC_INDENT, "Once Alarm", 0},
             {isSatDefined() ? MENU_TOGGLE : MENU_IGNORE, !!(bc_bits & SW_BCSATBIT),
-                                9, SEC_INDENT, "Satellite"},
-            {MENU_01OFN, !!(bc_bits & SW_BCWXBIT), 10, SEC_INDENT, "DE WX"},
-            {MENU_01OFN, !!(bc_bits & SW_BCSPWXBIT), 10, SEC_INDENT, "Space WX"},
-        {MENU_BLANK, false, 11, PRI_INDENT, NULL},
-        {MENU_TOGGLE, false, 12, PRI_INDENT, "Exit Big Clock"},
-        {MENU_BLANK, false, 13, PRI_INDENT, NULL},
+                                9, SEC_INDENT, "Satellite", 0},
+            {MENU_01OFN, !!(bc_bits & SW_BCWXBIT), 10, SEC_INDENT, "DE WX", 0},
+            {MENU_01OFN, !!(bc_bits & SW_BCSPWXBIT), 10, SEC_INDENT, "Space WX", 0},
+        {MENU_BLANK, false, 11, PRI_INDENT, NULL, 0},
+        {MENU_TOGGLE, false, 12, PRI_INDENT, "Exit Big Clock", 0},
+        {MENU_BLANK, false, 13, PRI_INDENT, NULL, 0},
     };
 
     // box for menu anchored at s
@@ -2398,7 +2398,7 @@ void drawMainPageStopwatch (bool force)
 
 /* stopwatch_b has been touched from HamClock Main page: just enter stopwatch page.
  */
-void checkStopwatchTouch(TouchType tt)
+void checkStopwatchTouch()
 {
     Serial.println("SW: main enter");
 

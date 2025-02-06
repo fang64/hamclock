@@ -38,7 +38,7 @@ static void drawMPSetup (time_t t0)
         const uint16_t dark = RGB565(50,50,50);
 
         // title
-        const char *title = _FX("Lunar Elevation at DE and DX");
+        const char *title = "Lunar Elevation at DE and DX";
         selectFontStyle (LIGHT_FONT, SMALL_FONT);
         uint16_t tw = getTextWidth(title);
         tft.setCursor (map_b.x + (map_b.w-tw)/2, map_b.y + 30);
@@ -67,9 +67,9 @@ static void drawMPSetup (time_t t0)
         tft.setCursor (MP_X0 - 20, MP_E2Y(-M_PI_2F) - 4);
         tft.print ("-90");
         tft.setCursor(MP_X0-17, MP_E2Y(deg2rad(50)));
-        tft.print(F("Up"));
+        tft.print("Up");
         tft.setCursor(MP_X0-29, MP_E2Y(deg2rad(-45)));
-        tft.print(F("Down"));
+        tft.print("Down");
         const char estr[] = "Elevation";
         const int estr_l = strlen(estr);
         for (int i = 0; i < estr_l; i++) {
@@ -220,7 +220,7 @@ static void drawMPElPlot (time_t t0, time_t &t_start, time_t &t_end)
             prev_both_up = both_up_now;
         }
 
-        Serial.printf (_FX("MP: rough start %02d:%02d end %02d:%02d\n"),
+        Serial.printf ("MP: rough start %02d:%02d end %02d:%02d\n",
                                 hour(t_start), minute(t_start),
                                 hour(t_end), minute(t_end));
 }
@@ -262,7 +262,7 @@ static void drawMPBothUpTable (time_t t0, time_t t_start, time_t t_end)
             }
             better_end += 2*MP_US;              // return to last known !both_up_now
 
-            Serial.printf (_FX("MP: better start %02d:%02d end %02d:%02d\n"),
+            Serial.printf ("MP: better start %02d:%02d end %02d:%02d\n",
                                 hour(better_start), minute(better_start),
                                 hour(better_end), minute(better_end));
         }
@@ -272,25 +272,25 @@ static void drawMPBothUpTable (time_t t0, time_t t_start, time_t t_end)
         tft.setTextColor (RA8875_WHITE);
         tft.setCursor (map_b.x+MP_NI, map_b.y+5);
         if (always_both_up) {
-            tft.print (F("Both always up"));
+            tft.print ("Both always up");
             return;
         }
         if (never_both_up) {
-            tft.print (F("Never both up"));
+            tft.print ("Never both up");
             return;
         }
         int dt = better_end - better_start;
-        snprintf (buf, sizeof(buf), _FX("Next both up %02dh%02d"), dt/3600, (dt%3600)/60);
+        snprintf (buf, sizeof(buf), "Next both up %02dh%02d", dt/3600, (dt%3600)/60);
         tft.print (buf);
 
 
         // DE row
         int detz = getTZ (de_tz);
         if (better_start == t0)  {
-            snprintf (buf, sizeof(buf), _FX("DE    now    %02d:%02d"),
+            snprintf (buf, sizeof(buf), "DE    now    %02d:%02d",
                     hour(better_end+detz), minute(better_end+detz));
         } else {
-            snprintf (buf, sizeof(buf), _FX("DE   %02d:%02d   %02d:%02d"),
+            snprintf (buf, sizeof(buf), "DE   %02d:%02d   %02d:%02d",
                     hour(better_start+detz), minute(better_start+detz),
                     hour(better_end+detz), minute(better_end+detz));
         }
@@ -301,10 +301,10 @@ static void drawMPBothUpTable (time_t t0, time_t t_start, time_t t_end)
         // DX row
         int dxtz = getTZ (dx_tz);
         if (better_start == t0)  {
-            snprintf (buf, sizeof(buf), _FX("DX    now    %02d:%02d"),
+            snprintf (buf, sizeof(buf), "DX    now    %02d:%02d",
                     hour(better_end+dxtz), minute(better_end+dxtz));
         } else {
-            snprintf (buf, sizeof(buf), _FX("DX   %02d:%02d   %02d:%02d"),
+            snprintf (buf, sizeof(buf), "DX   %02d:%02d   %02d:%02d",
                     hour(better_start+dxtz), minute(better_start+dxtz),
                     hour(better_end+dxtz), minute(better_end+dxtz));
         }
@@ -314,10 +314,10 @@ static void drawMPBothUpTable (time_t t0, time_t t_start, time_t t_end)
 
         // UTC rows
         if (better_start == t0)  {
-            snprintf (buf, sizeof(buf), _FX("UTC   now    %02d:%02d"),
+            snprintf (buf, sizeof(buf), "UTC   now    %02d:%02d",
                     hour(better_end), minute(better_end));
         } else {
-            snprintf (buf, sizeof(buf), _FX("UTC  %02d:%02d   %02d:%02d"),
+            snprintf (buf, sizeof(buf), "UTC  %02d:%02d   %02d:%02d",
                     hour(better_start), minute(better_start),
                     hour(better_end), minute(better_end));
         }
@@ -345,26 +345,26 @@ static void drawMPPopup (const time_t t, const SBox &popup_b)
         tft.setTextColor (RA8875_WHITE);
         selectFontStyle (LIGHT_FONT, FAST_FONT);
         tft.setCursor (popup_b.x+4, popup_b.y+2);
-        tft.print (F("     Time   Az   El"));
+        tft.print ("     Time   Az   El");
 
         // draw time, el and az at each location
         char buf[100];
 
         int detz = getTZ (de_tz);
-        snprintf (buf, sizeof(buf), _FX("DE  %02d:%02d  %3.0f %4.0f"), hour(t+detz),
+        snprintf (buf, sizeof(buf), "DE  %02d:%02d  %3.0f %4.0f", hour(t+detz),
                 minute(t+detz), rad2deg(de_ac.az), rad2deg(de_ac.el));
         tft.setCursor (popup_b.x+4, popup_b.y+14);
         tft.setTextColor(DE_COLOR);
         tft.print (buf);
 
         int dxtz = getTZ (dx_tz);
-        snprintf (buf, sizeof(buf), _FX("DX  %02d:%02d  %3.0f %4.0f"), hour(t+dxtz),
+        snprintf (buf, sizeof(buf), "DX  %02d:%02d  %3.0f %4.0f", hour(t+dxtz),
                 minute(t+dxtz), rad2deg(dx_ac.az), rad2deg(dx_ac.el));
         tft.setCursor (popup_b.x+4, popup_b.y+24);
         tft.setTextColor(DX_COLOR);
         tft.print (buf);
 
-        snprintf (buf, sizeof(buf), _FX("UTC %02d:%02d"), hour(t), minute(t));
+        snprintf (buf, sizeof(buf), "UTC %02d:%02d", hour(t), minute(t));
         tft.setCursor (popup_b.x+4, popup_b.y+34);
         tft.setTextColor(RA8875_WHITE);
         tft.print (buf);

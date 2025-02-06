@@ -260,7 +260,7 @@ static bool retrievePSK (void)
 
         // skip header
         if (!httpSkipHeader (psk_client)) {
-            Serial.print (F("PSK: no header\n"));
+            Serial.print ("PSK: no header\n");
             goto out;
         }
 
@@ -371,7 +371,7 @@ static bool retrievePSK (void)
         }
 
     } else
-        Serial.print (F("PSK: Spots connection failed\n"));
+        Serial.print ("PSK: Spots connection failed\n");
 
 out:
     // reset counts if trouble
@@ -455,38 +455,38 @@ bool checkPSKTouch (const SCoord &s, const SBox &box)
 
     // runMenu() expects column-major entries
 
-    mitems[0] = {MENU_1OFN,  isrbn, 1, PRI_INDENT, "RBN"};
-    mitems[1] = {MENU_LABEL, false, 0, PRI_INDENT, "Spot:"};
-    mitems[2] = {MENU_LABEL, false, 0, PRI_INDENT, "What:"};
-    mitems[3] = {MENU_LABEL, false, 0, PRI_INDENT, "Show:"};
-    mitems[4] = {MENU_LABEL, false, 5, PRI_INDENT, "Age:"};
-    mitems[5] = {MENU_1OFN,  false, 6, 5, "1 hr"};
-    mitems[6] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_160M), 4, SEC_INDENT, findBandName(HAMBAND_160M)};
-    mitems[7] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_80M),  4, SEC_INDENT, findBandName(HAMBAND_80M)};
-    mitems[8] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_60M),  4, SEC_INDENT, findBandName(HAMBAND_60M)};
-    mitems[9] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_40M),  4, SEC_INDENT, findBandName(HAMBAND_40M)};
+    mitems[0] = {MENU_1OFN,  isrbn, 1, PRI_INDENT, "RBN", 0};
+    mitems[1] = {MENU_LABEL, false, 0, PRI_INDENT, "Spot:", 0};
+    mitems[2] = {MENU_LABEL, false, 0, PRI_INDENT, "What:", 0};
+    mitems[3] = {MENU_LABEL, false, 0, PRI_INDENT, "Show:", 0};
+    mitems[4] = {MENU_LABEL, false, 5, PRI_INDENT, "Age:", 0};
+    mitems[5] = {MENU_1OFN,  false, 6, 5, "1 hr", 0};
+    mitems[6] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_160M), 4, SEC_INDENT, findBandName(HAMBAND_160M), 0};
+    mitems[7] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_80M),  4, SEC_INDENT, findBandName(HAMBAND_80M), 0};
+    mitems[8] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_60M),  4, SEC_INDENT, findBandName(HAMBAND_60M), 0};
+    mitems[9] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_40M),  4, SEC_INDENT, findBandName(HAMBAND_40M), 0};
 
-    mitems[10] = {MENU_1OFN, ispsk,     1, PRI_INDENT, "PSK"};
-    mitems[11] = {MENU_1OFN, of_de,     2, PRI_INDENT, "of DE"};
-    mitems[12] = {MENU_1OFN, use_call,  3, PRI_INDENT, "Call"};
-    mitems[13] = {MENU_1OFN, show_dist, 7, PRI_INDENT, "MaxDst"};
-    mitems[14] = {MENU_1OFN, false,     6, PRI_INDENT, "15 min"};
-    mitems[15] = {MENU_1OFN, false,     6, PRI_INDENT, "6 hrs"};
-    mitems[16] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_30M),  4, SEC_INDENT, findBandName(HAMBAND_30M)};
-    mitems[17] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_20M),  4, SEC_INDENT, findBandName(HAMBAND_20M)};
-    mitems[18] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_17M),  4, SEC_INDENT, findBandName(HAMBAND_17M)};
-    mitems[19] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_15M),  4, SEC_INDENT, findBandName(HAMBAND_15M)};
+    mitems[10] = {MENU_1OFN, ispsk,     1, PRI_INDENT, "PSK", 0};
+    mitems[11] = {MENU_1OFN, of_de,     2, PRI_INDENT, "of DE", 0};
+    mitems[12] = {MENU_1OFN, use_call,  3, PRI_INDENT, "Call", 0};
+    mitems[13] = {MENU_1OFN, show_dist, 7, PRI_INDENT, "MaxDst", 0};
+    mitems[14] = {MENU_1OFN, false,     6, PRI_INDENT, "15 min", 0};
+    mitems[15] = {MENU_1OFN, false,     6, PRI_INDENT, "6 hrs", 0};
+    mitems[16] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_30M),  4, SEC_INDENT, findBandName(HAMBAND_30M), 0};
+    mitems[17] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_20M),  4, SEC_INDENT, findBandName(HAMBAND_20M), 0};
+    mitems[18] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_17M),  4, SEC_INDENT, findBandName(HAMBAND_17M), 0};
+    mitems[19] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_15M),  4, SEC_INDENT, findBandName(HAMBAND_15M), 0};
 
-    mitems[20] = {MENU_1OFN, iswspr,    1, PRI_INDENT, "WSPR"};
-    mitems[21] = {MENU_1OFN, !of_de,    2, PRI_INDENT, "by DE"};
-    mitems[22] = {MENU_1OFN, !use_call, 3, PRI_INDENT, "Grid"};
-    mitems[23] = {MENU_1OFN, !show_dist,7, PRI_INDENT, "Count"};
-    mitems[24] = {MENU_1OFN, false,     6, PRI_INDENT, "30 min"};
-    mitems[25] = {MENU_1OFN, false,     6, PRI_INDENT, "24 hrs"};
-    mitems[26] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_12M),  4, SEC_INDENT, findBandName(HAMBAND_12M)};
-    mitems[27] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_10M),  4, SEC_INDENT, findBandName(HAMBAND_10M)};
-    mitems[28] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_6M),   4, SEC_INDENT, findBandName(HAMBAND_6M)};
-    mitems[29] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_2M),   4, SEC_INDENT, findBandName(HAMBAND_2M)};
+    mitems[20] = {MENU_1OFN, iswspr,    1, PRI_INDENT, "WSPR", 0};
+    mitems[21] = {MENU_1OFN, !of_de,    2, PRI_INDENT, "by DE", 0};
+    mitems[22] = {MENU_1OFN, !use_call, 3, PRI_INDENT, "Grid", 0};
+    mitems[23] = {MENU_1OFN, !show_dist,7, PRI_INDENT, "Count", 0};
+    mitems[24] = {MENU_1OFN, false,     6, PRI_INDENT, "30 min", 0};
+    mitems[25] = {MENU_1OFN, false,     6, PRI_INDENT, "24 hrs", 0};
+    mitems[26] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_12M),  4, SEC_INDENT, findBandName(HAMBAND_12M), 0};
+    mitems[27] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_10M),  4, SEC_INDENT, findBandName(HAMBAND_10M), 0};
+    mitems[28] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_6M),   4, SEC_INDENT, findBandName(HAMBAND_6M), 0};
+    mitems[29] = {MENU_AL1OFN, TST_PSKBAND(HAMBAND_2M),   4, SEC_INDENT, findBandName(HAMBAND_2M), 0};
 
     // set age
     switch (psk_maxage_mins) {

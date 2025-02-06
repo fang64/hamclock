@@ -65,11 +65,6 @@ TwoWire::TwoWire()
         excam.port = -1;
         filename = NULL;
 
-        // 0 = none
-        // 1 = transactions
-        // 2 = " plus data
-        verbose = 0;
-
         pthread_mutex_init (&lock, NULL);
 }
 
@@ -190,7 +185,7 @@ bool TwoWire::openConnection(uint8_t dev)
 
         // done if either already open
         if (excam.connected || i2c_fd >= 0) {
-            if (verbose > 1)
+            if (debugLevel (DEBUG_IO, 2))
                 printf ("I2C: %s already open\n", filename);
             return (true);
         }
@@ -225,7 +220,7 @@ bool TwoWire::openConnection(uint8_t dev)
 
     #if defined(_NATIVE_I2C_LINUX) || defined(_NATIVE_I2C_FREEBSD)
         else if (GPIOOk()) {
-            if (verbose)
+            if (debugLevel(DEBUG_IO, 1))
                 printf ("I2C: no USB-I2C, trying native %s\n", filename);
             i2c_fd = ::open(filename, O_RDWR);
             if (i2c_fd >= 0) {
@@ -259,17 +254,17 @@ bool TwoWire::openConnection(uint8_t dev)
 void TwoWire::closeConnection()
 {
         if (i2c_fd >= 0) {
-            if (verbose)
+            if (debugLevel(DEBUG_IO, 1))
                 printf ("I2C: close native I2C\n");
             ::close (i2c_fd);
             i2c_fd = -1;
         } else if (excam.connected) {
-            if (verbose)
+            if (debugLevel(DEBUG_IO, 1))
                 printf ("I2C: close Excamera Labs I2C\n");
             close (excam.port);
             excam.port = -1;
             excam.connected = 0;
-        } else if (filename && verbose > 1) {
+        } else if (filename && debugLevel (DEBUG_IO, 2)) {
 	    printf ("I2C: %s already closed\n", filename);
         }
 }
@@ -296,7 +291,7 @@ void TwoWire::setDev (uint8_t dev)
         }
     #endif
 
-        if (ok && verbose)
+        if (ok && debugLevel (DEBUG_IO, 1))
             printf ("I2C: setDev(0x%02X) ok\n", dev_addr);
 }
 
@@ -323,7 +318,7 @@ void TwoWire::beginTransmission(uint8_t dev)
         setDev(dev);
 
         // init
-        if (verbose)
+        if (debugLevel (DEBUG_IO, 1))
             printf ("I2C: beginTransmission(0x%02X) ok\n", dev);
         transmitting = true;
         n_txdata = 0;
@@ -380,7 +375,7 @@ size_t TwoWire::write(const uint8_t *data, size_t quantity)
  */
 uint8_t TwoWire::endTransmission(bool sendStop)
 {
-        if (verbose > 1) {
+        if (debugLevel (DEBUG_IO, 2)) {
             printf ("I2C: endTransmission writing %d bytes to 0x%02X:", n_txdata, dev_addr);
             for (int i = 0; i < n_txdata; i++)
                 printf (" %02X", txdata[i]);
@@ -388,7 +383,7 @@ uint8_t TwoWire::endTransmission(bool sendStop)
         }
 
         if (!sendStop) {
-            if (verbose)
+            if (debugLevel (DEBUG_IO, 1))
                 printf ("I2C: endTransmission(!sendStop)\n");
             return (0); // feign success for now
         }
@@ -414,7 +409,7 @@ uint8_t TwoWire::endTransmission(bool sendStop)
             if (!ok) {
                 printf ("I2C: endTransmission write %d failed: %s\n", n_txdata, strerror(errno));
             } else {
-                if (verbose > 1)
+                if (debugLevel (DEBUG_IO, 2))
                     printf ("I2C: endTransmission write %d ok\n", n_txdata);
             }
 
@@ -440,7 +435,7 @@ uint8_t TwoWire::endTransmission(bool sendStop)
             if (!ok) {
                 printf ("I2C: endTransmission write %d failed: %s\n", n_txdata, strerror(errno));
             } else {
-                if (verbose > 1)
+                if (debugLevel (DEBUG_IO, 2))
                     printf ("I2C: endTransmission write %d ok\n", n_txdata);
             }
         }
@@ -455,7 +450,7 @@ uint8_t TwoWire::endTransmission(bool sendStop)
             if (!ok) {
                 printf ("I2C: endTransmission write %d failed\n", n_txdata);
             } else {
-                if (verbose > 1)
+                if (debugLevel (DEBUG_IO, 2))
                     printf ("I2C: endTransmission write %d ok\n", n_txdata);
             }
             i2c_stop (&excam);
@@ -488,7 +483,7 @@ uint8_t TwoWire::requestFrom(uint8_t dev, uint8_t nbytes)
         // insure correct dev
         setDev(dev);
 
-        if (verbose > 1 && n_txdata > 0) {
+        if (debugLevel (DEBUG_IO, 2) && n_txdata > 0) {
             printf ("I2C: requestFrom(0x%02X,%d) first writing %d bytes:", dev, nbytes, n_txdata);
             for (int i = 0; i < n_txdata; i++)
                 printf (" %02X", txdata[i]);
@@ -523,7 +518,7 @@ uint8_t TwoWire::requestFrom(uint8_t dev, uint8_t nbytes)
                                                         strerror(errno));
                     n_rxdata = 0;
                 } else {
-                    if (verbose > 1)
+                    if (debugLevel (DEBUG_IO, 2))
                         printf ("I2C: requestFrom(0x%02X) W %d R %d ok\n", dev, n_txdata, nbytes);
                     n_rxdata = nbytes;
                 }
@@ -549,7 +544,7 @@ uint8_t TwoWire::requestFrom(uint8_t dev, uint8_t nbytes)
                     printf ("I2C: requestFrom(0x%02X) R %d failed: %s\n", dev, nbytes, strerror(errno));
                     n_rxdata = 0;
                 } else {
-                    if (verbose > 1)
+                    if (debugLevel (DEBUG_IO, 2))
                         printf ("I2C: requestFrom(0x%02X) R %d ok\n", dev, nbytes);
                     n_rxdata = nbytes;
                 }
@@ -586,7 +581,7 @@ uint8_t TwoWire::requestFrom(uint8_t dev, uint8_t nbytes)
                                                         strerror(errno));
                     n_rxdata = 0;
                 } else {
-                    if (verbose > 1)
+                    if (debugLevel (DEBUG_IO, 2))
                         printf ("I2C: requestFrom(0x%02X) W %d R %d ok\n", dev, n_txdata, nbytes);
                     n_rxdata = nbytes;
                 }
@@ -615,7 +610,7 @@ uint8_t TwoWire::requestFrom(uint8_t dev, uint8_t nbytes)
                     printf ("I2C: requestFrom(0x%02X) R %d failed: %s\n", dev, nbytes, strerror(errno));
                     n_rxdata = 0;
                 } else {
-                    if (verbose > 1)
+                    if (debugLevel (DEBUG_IO, 2))
                         printf ("I2C: requestFrom(0x%02X) R %d ok\n", dev, nbytes);
                     n_rxdata = nbytes;
                 }
@@ -649,7 +644,7 @@ uint8_t TwoWire::requestFrom(uint8_t dev, uint8_t nbytes)
                 n_rxdata = 0;
             } else {
                 n_rxdata = nbytes;
-                if (verbose > 1)
+                if (debugLevel (DEBUG_IO, 2))
                     printf ("I2C: requestFrom(0x%02X) R %d ok\n", dev, nbytes);
             }
             i2c_stop (&excam);
@@ -677,7 +672,7 @@ int TwoWire::read(void)
 {
         // return in read order
         if (n_retdata < n_rxdata) {
-            if (verbose > 1)
+            if (debugLevel (DEBUG_IO, 2))
                 printf ("I2C: read(0x%02X) 0x%02X %d/%d\n", dev_addr, rxdata[n_retdata],n_retdata+1,n_rxdata);
             return (rxdata[n_retdata++]);
         } else {

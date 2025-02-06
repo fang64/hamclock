@@ -10,14 +10,15 @@
 // config
 #define RADIOPOLL_MS    1000                            // PTT polling period, ms
 #define RADIOLOOP_MS    250                             // overall thread polling period
-#define ERRDWELL_MS     4000                            // error message display time, ms
+#define ERRDWELL_MS     3000                            // error message display time, ms
 #define WARN_MS         15000                           // reporting interval between repeating errs, ms
+#define RETRY_MS        2000                            // time to wait after connection fail, ms  
 
 
 // shared thread comm variables
-static volatile int set_hl_Hz, set_fl_Hz;                // set by main, reset to 0 when sent
-static volatile int thread_onair;                        // set by thread, main calls setOnAirSW if valid
-static char * volatile thread_msg;                       // malloced by thread, freed/zerod by main
+static volatile int set_hl_Hz, set_fl_Hz;               // set by main, reset to 0 when sent
+static volatile int thread_onair;                       // set by thread, main calls setOnAirSW if valid
+static char * volatile thread_msg;                      // malloced by thread, freed/zerod by main
 static pthread_mutex_t msg_lock = PTHREAD_MUTEX_INITIALIZER;    // guard thread_msg
 
 
@@ -577,8 +578,11 @@ static void *radioThread (void *unused)
             if (!hl_client.connected()) {
                 if (tryHamlibConnect (hl_client))
                     postMsgToMain ("HAMLIB connection successful");
-                else if (timesUp (&hlwarn_ms, WARN_MS))
-                    postMsgToMain ("HAMLIB no connection");
+                else {
+                    if (timesUp (&hlwarn_ms, WARN_MS))
+                        postMsgToMain ("HAMLIB no connection");
+                    usleep (RETRY_MS*1000);
+                }
             }
 
             // check for setting new frequency -- set by human clicking a spot so post all errors
@@ -618,8 +622,11 @@ static void *radioThread (void *unused)
             if (!fl_client.connected()) {
                 if (tryFlrigConnect (fl_client))
                     postMsgToMain ("FLRIG connection successful");
-                else if (timesUp (&flwarn_ms, WARN_MS))
-                    postMsgToMain ("FLRIG no connection");
+                else {
+                    if (timesUp (&flwarn_ms, WARN_MS))
+                        postMsgToMain ("FLRIG no connection");
+                    usleep (RETRY_MS*1000);
+                }
             }
 
             // check for setting new frequency -- set by human clicking a spot so post all errors

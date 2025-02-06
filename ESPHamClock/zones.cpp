@@ -28058,7 +28058,7 @@ void updateZoneSCoords (ZoneID id)
                 break;
 
             default:
-                fatalError (_FX("updateZoneSCoords() map_proj %d"), map_proj);
+                fatalError ("updateZoneSCoords() map_proj %d", map_proj);
             }
         }
     }
@@ -28216,13 +28216,13 @@ void drawZone (ZoneID id, uint16_t color, int n_only)
                     tft.drawLineRaw (sp1.x, sp1.y, sc1.x, sc1.y, lw, color);
             }
 
-            #ifdef DEBUG_ZONES_BB       // #define this in HamClock.h for initEarthMap() also
-            if (!all_zones) {
-                drawSBox (zp->bound_b[0], RA8875_RED);
-                if (zp->bound_b[1].x)
-                    drawSBox (zp->bound_b[1], RA8875_GREEN);
+            if (debugLevel (DEBUG_ZONES, 1)) {
+                if (!all_zones) {
+                    drawSBox (zp->bound_b[0], RA8875_RED);
+                    if (zp->bound_b[1].x)
+                        drawSBox (zp->bound_b[1], RA8875_GREEN);
+                }
             }
-            #endif
         }
 
         // add label only if drawing all

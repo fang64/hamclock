@@ -40,7 +40,7 @@
 #define ELSTEP          5                               // small el manual step size
 #define ELSTEP2         10                              // large el manual step size
 #define ERR_DWELL       5000                            // error message display period, ms
-#define BEAM_W          15                              // angular width of map beam
+#define BEAM_W          10                              // angular width of map beam, degrees
 
 // possible axis states
 typedef enum {
@@ -434,7 +434,7 @@ static void drawStopButton (bool stop)
         tft.setTextColor (RA8875_WHITE);
     }
     tft.setCursor (stop_b.x+7, stop_b.y+3);
-    tft.print (F("Stop"));
+    tft.print ("Stop");
 }
 
 /* draw info for one axis in box.
@@ -628,17 +628,24 @@ static void drawGimbalBeam()
     if (lw == 0)
         return;
 
+    // show full if long path unless showing sat
+    float end_b = show_lp && !isSatDefined() ? 2*M_PIF : M_PIF;
+
     float ca, B;
     uint16_t col = getMapColor (ROTATOR_CSPR);
     float wave_step = deg2rad (4.0F/tft.SCALESZ);               // show wave front lines
     float az_0 = el_state != ELS_NONE && el_now > 90 ? az_now + 180 : az_now; // account for up over
-    for (float b = 0; b < M_PIF; b += wave_step) {              // show only forward direction
+    for (float b = 0; b < end_b; b += wave_step) {
         SCoord s1, s2 = {0, 0};
-        for (int i = 0; i <= BEAM_W; i++) {
+        for (int i = 0; i <= BEAM_W; i++) {                     // inclusive to get symmetric about center
             float beam_az = az_0 + (i-BEAM_W/2.0F);
             solveSphere (deg2rad(beam_az), b, sdelat, cdelat, &ca, &B);
             ll2sRaw (asinf(ca), fmodf(de_ll.lng+B+5*M_PIF,2*M_PIF)-M_PIF, s1, lw);
-            if (s2.x != 0 && segmentSpanOkRaw (s1, s2, lw))
+            if (b > M_PIF) {
+                // show long path dotted
+                if ((i%2) == 0)
+                    tft.drawPixelRaw (s1.x, s1.y, col);
+            } else if (s2.x != 0 && segmentSpanOkRaw (s1, s2, lw))
                 tft.drawLineRaw (s1.x, s1.y, s2.x, s2.y, lw, col);
             s2 = s1;
         }
@@ -807,7 +814,7 @@ static void initGimbalGUI(const SBox &box)
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
     tft.setTextColor(BRGRAY);
     tft.setCursor (box.x+15, AZ_Y+CHAR_H);
-    tft.print(F("Az"));
+    tft.print("Az");
 
     // az controls
     drawArrow (azccw_b, AR_LEFT);
@@ -819,7 +826,7 @@ static void initGimbalGUI(const SBox &box)
     if (el_state != ELS_NONE) {
         tft.setTextColor(BRGRAY);
         tft.setCursor (box.x+15, EL_Y+CHAR_H);
-        tft.print(F("El"));
+        tft.print("El");
 
         drawArrow (elup_b, AR_UP);
         drawArrow (elup2_b, AR_UP);
@@ -844,7 +851,7 @@ static void toggleAutoTrack(void)
 {
     auto_track = !auto_track;
     if (auto_track) {
-        Serial.println (F("GBL: track on"));
+        Serial.println ("GBL: track on");
         // this is the only command that automatically turns off Stop
         if (user_stop)
             user_stop = false;
@@ -852,7 +859,7 @@ static void toggleAutoTrack(void)
         setAzEl();  // "unstop"
     } else {
         // always Stop when turning off Auto
-        Serial.println (F("GBL: track off"));
+        Serial.println ("GBL: track off");
         user_stop = true;
         stopGimbalNow();
     }
@@ -862,10 +869,10 @@ static void toggleStop(void)
 {
     user_stop = !user_stop;
     if (user_stop) {
-        Serial.println (F("GBL: stop on"));
+        Serial.println ("GBL: stop on");
         stopGimbalNow();
     } else {
-        Serial.println (F("GBL: stop off"));
+        Serial.println ("GBL: stop off");
         setAzEl();  // "unstop"
     }
 }
@@ -1012,7 +1019,7 @@ void updateGimbal (const SBox &box)
 
             // no sat or no el so point at DX, time does not matter
             float dist, bear;
-            propDEPath (false, dx_ll, &dist, &bear);
+            propDEPath (show_lp, dx_ll, &dist, &bear);          // honor desired short/long path
             az_target = rad2deg(bear);
             if (el_state != ELS_NONE && el_now > 90)
                 az_target = fmodf (az_target + 180 + 720, 360);

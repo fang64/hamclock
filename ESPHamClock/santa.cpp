@@ -204,7 +204,7 @@ void drawSanta()
         break;
 
     default:
-        fatalError (_FX("drawSanta() map_proj %d"), map_proj);
+        fatalError ("drawSanta() map_proj %d", map_proj);
     }
 
 

@@ -13,7 +13,6 @@
 #include "HamClock.h"
 
 
-
 // layout 
 #define DXC_COLOR       RA8875_GREEN
 #define CLRBOX_DX       10                      // dx clear control box center from left
@@ -21,15 +20,11 @@
 #define CLRBOX_R        4                       // clear box radius
 #define SPOTMRNOP       (tft.SCALESZ+4)         // raw spot marker radius when no path
 
-// times
-#define KEEPALIVE_DT    600                     // send something if last_heard idle this long, secs
+// timing
 #define BGCHECK_DT      1000                    // background checkDXCluster period, millis
 #define MAXUSE_DT       (5*60)                  // remove all spots memory if pane not used this long, secs
 #define MAXKEEP_DT      3600                    // max age on dxc_spots list, secs
 #define DXCMSG_DT       500                     // delay before sending each cluster message, millis
-static time_t last_heard;                       // last time anything arrived from the cluster
-static uint32_t request_m;                      // millis() when to request new spots
-#define REQUEST_DT      2000                    // millis after start to request new spots
 
 // connection info
 static WiFiClient dxc_client;                   // persistent TCP connection while displayed ...
@@ -54,6 +49,8 @@ static ScrollState dxc_ss;                      // scrolling info
 static bool dxc_showbio;                        // whether click shows bio
 static time_t scrolledaway_tm;                  // time when user scrolled away from top of list
 static bool dxc_spots_changed;                  // set to rebuild display because dxc_spots changed
+static bool dxc_updateDE;                       // request to send DE location when possible
+static bool new_connection;                     // set to commence initial server handshake
 
 
 // type
@@ -132,13 +129,13 @@ static void drawAllVisDXCSpots (const SBox &box)
 
 /* handy check whether New Spot symbol needs changing on/off
  */
-static void checkNewSpotSymbol (const SBox &box, bool was_at_newest)
+static void checkNewSpotSymbol (bool was_at_newest)
 {
     if (was_at_newest && !dxc_ss.atNewest()) {
         scrolledaway_tm = myNow();                              // record when moved off top
         ROTHOLD_SET(PLOT_CH_DXCLUSTER);                         // disable rotation
     } else if (!was_at_newest && dxc_ss.atNewest()) {
-        dxc_ss.drawNewSpotsSymbol (box, false, false);          // turn off entirely
+        dxc_ss.drawNewSpotsSymbol (false, false);               // turn off entirely
         rebuildDXWatchList ();
         scrolledaway_tm = 0;
         ROTHOLD_CLR(PLOT_CH_DXCLUSTER);                         // resume rotation
@@ -155,7 +152,7 @@ static void scrollDXCUp (const SBox &box)
         dxc_ss.scrollUp();
         drawAllVisDXCSpots(box);
     }
-    checkNewSpotSymbol (box, was_at_newest);
+    checkNewSpotSymbol (was_at_newest);
 }
 
 /* shift the visible list down, if possible.
@@ -168,7 +165,7 @@ static void scrollDXCDown (const SBox &box)
         dxc_ss.scrollDown ();
         drawAllVisDXCSpots (box);
     }
-    checkNewSpotSymbol (box, was_at_newest);
+    checkNewSpotSymbol (was_at_newest);
 }
 
 /* set bio, radio and DX from given row, known to be defined
@@ -192,13 +189,16 @@ static void logDXSpot (const char *label, const DXSpot &spot)
 
 /* add a potentially new spot to dxc_spots[].
  * set dxc_spots_changed if dxc_spots changed in either content or count.
+ * set DX too if asked and desired.
  */
-static void addDXClusterSpot (DXSpot &new_spot)
+static void addDXClusterSpot (DXSpot &new_spot, bool set_dx)
 {
-    // discard if too old
-    time_t ancient = myNow() - MAXKEEP_DT;
+    // just discard if already too old
+    time_t now = myNow();
+    time_t ancient = now - MAXKEEP_DT;
     if (new_spot.spotted < ancient) {
-        dxcLog ("%s already more than %d mins old\n", new_spot.tx_call, MAXKEEP_DT/60);
+        dxcLog ("%s %g: age %ld already > %d mins\n", new_spot.tx_call, new_spot.kHz, 
+            (long)((now - new_spot.spotted)/60), MAXKEEP_DT/60);
         return;
     }
 
@@ -214,7 +214,7 @@ static void addDXClusterSpot (DXSpot &new_spot)
     for (int i = 0; i < n_dxspots; i++) {
         DXSpot &spot = dxc_spots[i];
         if (spot.spotted < ancient) {
-            dxcLog ("aging out %s\n", spot.tx_call);
+            dxcLog ("%s %g: aged out\n", spot.tx_call, spot.kHz);
             memmove (&dxc_spots[i], &dxc_spots[i+1], (--n_dxspots - i) * sizeof(DXSpot));
             dxc_spots_changed = true;
         } else {
@@ -222,11 +222,11 @@ static void addDXClusterSpot (DXSpot &new_spot)
             if (!strcmp (spot.tx_call, new_spot.tx_call) && findHamBand (spot.kHz) == new_band) {
                 same_spot = true;
                 if (new_spot.spotted > spot.spotted) {
-                    // printf ("updating %s %g\n", spot.tx_call, new_spot.kHz);
+                    dxcLog ("%s %g: updated\n", spot.tx_call, new_spot.kHz);
                     spot = new_spot;
                     dxc_spots_changed = true;           // update GUI with new age
                 } else {
-                    // printf ("%s %g: already superseded by a newer spot\n", spot.tx_call, spot.kHz);
+                    dxcLog ("%s %g: superseded\n", spot.tx_call, spot.kHz);
                 }
             }
         }
@@ -244,6 +244,14 @@ static void addDXClusterSpot (DXSpot &new_spot)
     if (!dxc_spots)
         fatalError ("No memory for %d DX spots", n_dxspots+1);
     dxc_spots[n_dxspots++] = new_spot;
+
+    // set new DX if desired
+    if (set_dx && UDPSetsDX()) {
+        newDX (new_spot.tx_ll, new_spot.tx_grid, new_spot.tx_call);
+        SCoord s;
+        ll2s (new_spot.tx_ll, s, 5);
+        tft.setMouse (s.x, s.y);
+    }
 
     // note
     dxc_spots_changed = true;
@@ -287,7 +295,7 @@ static void incLostConn(void)
  */
 static bool checkLostConnRate()
 {
-    uint32_t t0 = myNow();                  // time now
+    uint32_t t0 = (uint32_t)myNow();        // time now in same units as those saved
     uint32_t t_maxconn;                     // time when the limit was last reached
     uint8_t n_lostconn;                     // n connections lost so far since t_maxconn
 
@@ -399,6 +407,46 @@ static bool isHostMulticast (const char *host)
     return (first_octet >= 224 && first_octet <= 239);  // will always be false if URL
 }
 
+/* send the next getDXClCommands() if more to send or restart.
+ * return whether all have been sent.
+ * N.B. although not implemented herein, it is expected we are not called in a tight loop in order
+ *   that commands are spaced out.
+ */
+static bool sendNextUserCommand (bool restart)
+{
+    static int next_cmd;                            // next getDXClCommands() index to send
+
+    // skip if RO
+    if (cl_type == CT_READONLY)
+        return (false);
+
+    // collect
+    const char *dx_cmds[N_DXCLCMDS];
+    bool dx_on[N_DXCLCMDS];
+    getDXClCommands (dx_cmds, dx_on);
+
+    // restart if desired
+    if (restart)
+        next_cmd = 0;
+
+    // send next until last
+    while (next_cmd < N_DXCLCMDS && (!dx_on[next_cmd] || strlen(dx_cmds[next_cmd]) == 0))
+        next_cmd++;
+    if (next_cmd < N_DXCLCMDS)
+        dxcSendMsg("%s\n", dx_cmds[next_cmd++]);
+
+    // all?
+    return (next_cmd == N_DXCLCMDS);
+}
+
+/* return whether the given line is the Spider query for setting location.
+ * we get this prompt from a spider only when it does not already know our location.
+ */
+static bool queryForQRA (const char line[])
+{
+    return (strcistr (line, "Please enter your location with set/location or set/qra") != NULL);
+}
+
 /* try to connect to the cluster.
  * if success: dxc_client or udp_server is live and return true,
  * else: both are closed, display error msg in box, return false.
@@ -478,18 +526,22 @@ static bool connectDXCluster (const SBox &box)
             dxcLog ("logging in as %s\n", login);
             dxcSendMsg ("%s\n", login);
 
-            // look for clue about type of cluster along the way
+            // look for first prompt and watch for clue about type of cluster along the way
             uint16_t bl;
             char buf[200];
             const size_t bufl = sizeof(buf);
             cl_type = CT_UNKNOWN;
             bool rx_gt = false;
-            while (getTCPLine (dxc_client, buf, bufl, &bl)) {
+            while (cl_type == CT_UNKNOWN && rx_gt == false && getTCPLine (dxc_client, buf, bufl, &bl)) {
                 dxcLog ("< %s\n", buf);
 
                 strtolower(buf);
                 detectMultiConnection (buf);
-                if (strstr (buf, "dx") && strstr (buf, "spider"))
+
+                if (queryForQRA (buf)) {
+                    dxc_updateDE = true;
+                    cl_type = CT_DXSPIDER;
+                } else if (strstr (buf, "dx") && strstr (buf, "spider"))
                     cl_type = CT_DXSPIDER;
                 else if (strstr (buf, " cc "))
                     cl_type = CT_VE7CC;
@@ -497,13 +549,11 @@ static bool connectDXCluster (const SBox &box)
                     cl_type = CT_ARCLUSTER;
 
                 // could just wait for timeout but usually ok to stop if find what looks like a prompt
-                if (buf[bl-1] == '>') {
+                if (buf[bl-1] == '>')
                     rx_gt = true;
-                    break;
-                }
             }
 
-            // if no id string but do see > assume it's M0CKE's fire host
+            // if no id string but do see > assume it's M0CKE's fire hose
             if (cl_type == CT_UNKNOWN && rx_gt)
                 cl_type = CT_READONLY;
 
@@ -518,32 +568,9 @@ static bool connectDXCluster (const SBox &box)
                 dxcLog ("Cluster is CC\n");
             else {
                 incLostConn();
-                showDXClusterErr (box, "Connection failed");
+                showDXClusterErr (box, "Unknown cluster type");
                 return (false);
             }
-
-            // send our location unless RO
-            if (cl_type != CT_READONLY) {
-                if (!sendDXClusterDELLGrid()) {
-                    incLostConn();
-                    showDXClusterErr (box, "Error sending DE grid");
-                    return (false);
-                }
-            }
-
-            // send user commands unless RO
-            if (cl_type != CT_READONLY) {
-                const char *dx_cmds[N_DXCLCMDS];
-                bool dx_on[N_DXCLCMDS];
-                getDXClCommands (dx_cmds, dx_on);
-                for (int i = 0; i < N_DXCLCMDS; i++) {
-                    if (dx_on[i] && strlen(dx_cmds[i]) > 0)
-                        dxcSendMsg("%s\n", dx_cmds[i]);
-                }
-            }
-
-            // arrange to request recent spots -- Keith wants a short delay
-            request_m = millis() + REQUEST_DT;
 
             // confirm still ok
             if (!dxc_client) {
@@ -592,48 +619,22 @@ static void showDXCHost (const SBox &box, uint16_t c)
     tft.print (host);
 }
 
-/* send something passive just to keep the connection alive
- */
-static void sendDXClusterHeartbeat()
-{
-    if (cl_type == CT_DXSPIDER) {
-        const char *hbcmd = "ping";
-        dxcSendMsg ("%s\n", hbcmd);
-    }
-}
-
 /* send our lat/long and grid to dxc_client, depending on cluster type.
- * return whether successful.
- * N.B. can be called any time so be prepared to do nothing fast if not appropriate.
  */
-bool sendDXClusterDELLGrid()
+static void sendDELLGrid()
 {
-    // easy check
-    if (!isDXClusterConnected())
-        return (false);
-
     // silently succeeds if RO
     if (cl_type == CT_READONLY)
-        return (true);
+        return;
 
-    // handy DE grid as string
+    // DE grid as string
     char maid[MAID_CHARLEN];
     getNVMaidenhead (NV_DE_GRID, maid);
 
-    // handy DE lat/lon in common format
-    char llstr[30];
-    snprintf (llstr, sizeof(llstr), "%.0f %.0f %c %.0f %.0f %c",
-            floorf(fabsf(de_ll.lat_d)), floorf(fmodf(60*fabsf(de_ll.lat_d), 60)), de_ll.lat_d<0?'S':'N',
-            floorf(fabsf(de_ll.lng_d)), floorf(fmodf(60*fabsf(de_ll.lng_d), 60)), de_ll.lng_d<0?'W':'E');
-
     if (cl_type == CT_DXSPIDER || cl_type == CT_VE7CC) {
 
-        // set grid and DE ll
+        // set grid
         dxcSendMsg ("set/qra %s\n", maid);
-        dxcSendMsg ("set/location %s\n", llstr);
-
-        // ok!
-        return (true);
 
     } else if (cl_type == CT_ARCLUSTER) {
 
@@ -643,16 +644,7 @@ bool sendDXClusterDELLGrid()
         // set grid
         dxcSendMsg ("set station grid %s\n", maid);
 
-        // set ll
-        dxcSendMsg ("set station latlon %s\n", llstr);
-
-        // ok!
-        return (true);
-
     }
-
-    // fail
-    return (false);
 }
 
 /* prepare a fresh box but preserve any existing spots
@@ -690,13 +682,10 @@ static bool initDXCluster(const SBox &box)
     // connect to dx cluster
     if (connectDXCluster(box)) {
 
-        // ok: show host in green
+        // show host in green
         showDXCHost (box, RA8875_GREEN);
 
-        // reinit times
-        last_heard = myNow();
-
-        // max age
+        // get max age
         if (!NVReadUInt8 (NV_DXCAGE, &dxc_age)) {
             dxc_age = dxc_ages[1];
             NVWriteUInt8 (NV_DXCAGE, dxc_age);
@@ -705,10 +694,15 @@ static bool initDXCluster(const SBox &box)
         // determine dxc_showbio
         uint8_t bio = 0;
         if (getQRZId() != QRZ_NONE) {
-            if (!NVReadUInt8 (NV_DXCBIO, &bio))
+            if (!NVReadUInt8 (NV_DXCBIO, &bio)) {
                 bio = 0;
+                NVWriteUInt8 (NV_DXCBIO, bio);
+            }
         }
         dxc_showbio = (bio != 0);
+
+        // note for background
+        new_connection = true;
 
         // ok
         return (true);
@@ -727,7 +721,7 @@ static void runDXClusterMenu (const SBox &box)
     // set up the MENU_TEXT field 
     MenuText mtext;                                             // menu text prompt context
     char wl_state[WLA_MAXLEN];                                  // wl state, menu may change
-    setupWLMenuText (WLID_DX, mtext, box, wl_state);
+    setupWLMenuText (WLID_DX, mtext, wl_state);
 
     // build the possible age labels
     char dxages_str[N_DXCAGES][10];
@@ -816,7 +810,8 @@ static void runDXClusterMenu (const SBox &box)
     free (mtext.text);
 }
 
-/* get next line from dxc_client, or inject from local debug file
+/* get next line from dxc_client, or inject from local debug file.
+ * return whether line is ready.
  */
 static bool getNextDXCLine (char line[], size_t ll)
 {
@@ -834,43 +829,51 @@ static bool getNextDXCLine (char line[], size_t ll)
 
     // read from injection else normal
     if (fp) {
+        // DX de IK0CHU:     3575.0  II0WWA       22.24 World Wide Award 2025    2224Z
         if (fgets (line, ll, fp)) {
             line[strlen(line)-1] = '\0';                // rm nl like getTCPLine()
             return (true);
         } else {
             // start over
-            dxcLog ("%s: %s", inject_fn, strerror (errno));
+            dxcLog ("%s: EOF", inject_fn);
             fclose (fp);
             fp = NULL;
             return (false);
         }
     } else {
-        return (dxc_client.available() && getTCPLine (dxc_client, line, ll, NULL));
+        bool ok = dxc_client.available() && getTCPLine (dxc_client, line, ll, NULL);
+        if (ok && queryForQRA (line))
+            dxc_updateDE = true;
+        return (ok);
     }
 }
 
-/* get next UDP packet from udp_server.
- * N.B. caller may assume packet will be '\0' terminated.
+/* get next UDP packet up to packet_size from udp_server.
+ * return length or 0 if nothing or trouble..
  * N.B. we do not block, we return whether new packet is immediately ready.
  */
-static bool getUDPPacket (uint8_t packet[], size_t packet_size)
+static int getUDPPacket (uint8_t packet[], int packet_size)
 {
-    size_t psize = udp_server.parsePacket();
-    if (psize > packet_size-1) {                        // allow for appending EOS
-        dxcLog ("UDP size %d > available %d\n", (int)psize, (int)(packet_size-1));
-        return (false);
-    } else if (psize > 0) {
-        if ((size_t)udp_server.read (packet, psize) == psize) {
-            packet[psize] = '\0';                       // already allowed for extra char
-            return (true);
-        } else {
-            fatalError ("bogus UDP packet size %d", (int)psize);
-            return (false);
-        }
-    } else {
-        // nothing heard
-        return (false);
+    // get expected size
+    int psize = udp_server.parsePacket();
+
+    // always read, even if have to ditch it
+    if (psize > packet_size) {
+        uint8_t big_buf[10000];
+        dxcLog ("UDP size %d > available %d\n", udp_server.read (big_buf, sizeof(big_buf)), packet_size);
+        return (0);
     }
+
+    // ok, should fit in packet
+    if (psize > 0) {
+        int n_read = udp_server.read (packet, psize);
+        if (n_read == psize)
+            return (psize);
+        fatalError ("bogus UDP packet size %d != %d", n_read, psize);
+    }
+
+    // nothing heard
+    return (0);
 }
 
 
@@ -915,14 +918,14 @@ bool updateDXCluster (const SBox &box, bool fresh)
         if (dxc_spots_changed) {
             rebuildDXWatchList();
             dxc_spots_changed = false;
-            dxc_ss.drawNewSpotsSymbol (box, false, false);      // insure off
+            dxc_ss.drawNewSpotsSymbol (false, false);           // insure off
             scrolledaway_tm = 0;
         }
         ROTHOLD_CLR(PLOT_CH_DXCLUSTER);                         // resume rotation
     } else {
         // show "new spots" symbol if added more spots since scrolled away
         if (showingNewSpot())
-            dxc_ss.drawNewSpotsSymbol (box, true, false);       // show passively
+            dxc_ss.drawNewSpotsSymbol (true, false);            // show passively
         ROTHOLD_SET(PLOT_CH_DXCLUSTER);                         // disable rotation
     }
 
@@ -962,25 +965,34 @@ void checkDXCluster()
         // drain ALL pending UDP packets
 
         uint8_t packet[2000];
-        while (getUDPPacket (packet, sizeof(packet))) {
+        int p_len;
+        while ((p_len = getUDPPacket (packet, sizeof(packet)-1)) > 0) {         // allow for adding EOS
+
+            // add EOS
+            if (debugLevel (DEBUG_DXC, 1))
+                dxcLog ("UDP: read packet containing %d bytes\n", p_len);
+            packet[p_len] = '\0';
+
             // auto-check several popular formats
             DXSpot spot;
             uint8_t *bp = packet;
             if (wsjtxIsStatusMsg (&bp)) {
                 if (wsjtxParseStatusMsg (bp, spot)) {
                     logDXSpot ("WSJT-X", spot);
-                    addDXClusterSpot (spot);
+                    addDXClusterSpot (spot, true);
                 }
             } else if (crackN1MMSpot ((char *)packet, spot)) {
                 logDXSpot ("N1MM", spot);
-                addDXClusterSpot (spot);
+                addDXClusterSpot (spot, true);
             } else if (crackDXLogSpot ((char *)packet, spot)) {
                 logDXSpot ("DXLog", spot);
-                addDXClusterSpot (spot);
+                addDXClusterSpot (spot, true);
+            } else if (crackLog4OMSpot ((char *)packet, spot)) {
+                logDXSpot ("Log4OM", spot);
+                addDXClusterSpot (spot, true);
+            } else {
+                dxcLog ("received unrecognized UDP packet\n");
             }
-
-            // any new data counts even if invalid
-            last_heard = myNow();
         }
     }
 
@@ -997,12 +1009,6 @@ void checkDXCluster()
 
         } else {
 
-            // check if time to request new spots one time
-            if (request_m && millis() > request_m) {
-                requestRecentSpots();
-                request_m = 0;
-            }
-
             // don't block if nothing waiting
             char line[120];
             while (getNextDXCLine (line, sizeof(line))) {
@@ -1013,26 +1019,34 @@ void checkDXCluster()
                 // look alive
                 updateClocks(false);
 
-                // any new data counts even if not valid
-                last_heard = myNow();
-
                 // crack and add
                 DXSpot new_spot;
                 if (crackClusterSpot (line, new_spot))
-                    addDXClusterSpot (new_spot);        // already logged above
+                    addDXClusterSpot (new_spot, false);        // already logged above
+            }
+            
+            // send fresh location whenever requested
+            if (dxc_updateDE) {
+                sendDELLGrid();
+                dxc_updateDE = false;
             }
 
-            // check for no network or server closing the connection
+            // new connections first send all user commands then request recent spots subject to those cmds.
+            if (new_connection) {
+                static bool first_user_sent;
+                if (sendNextUserCommand (new_connection && !first_user_sent)) {
+                    requestRecentSpots();
+                    first_user_sent = false;
+                    new_connection = false;
+                } else
+                    first_user_sent = true;
+            }
+
+            // check connection still ok
             if (!dxc_client) {
                 dxcLog ("bg lost connection\n");
                 incLostConn();
                 closeDXCluster();
-            }
-
-            // send something if spider quiet for too long
-            if (cl_type == CT_DXSPIDER && myNow() - last_heard > KEEPALIVE_DT) {
-                last_heard = myNow();                   // avoid head banging
-                sendDXClusterHeartbeat();
             }
         }
     }
@@ -1226,4 +1240,11 @@ void dxcLog (const char *fmt, ...)
 
     // print with prefix
     Serial.printf ("DXC: %s", msg);
+}
+
+/* public interface to request sending DE location when possible (cluster need not be connected now)
+ */
+void sendDXClusterDELLGrid (void)
+{
+    dxc_updateDE = true;
 }

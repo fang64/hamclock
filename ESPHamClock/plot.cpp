@@ -251,7 +251,7 @@ uint16_t color, float y_min, float y_max, char *label_str)
         tft.print (label_str);
     }
 
-    // printFreeHeap (F("plotXYstr"));
+    // printFreeHeap ("plotXYstr");
 
     // ok
     return (true);
@@ -305,9 +305,9 @@ void plotWX (const SBox &box, uint16_t color, const WXInfo &wi)
 
         selectFontStyle (LIGHT_FONT, SMALL_FONT);
         if (showATMhPa())
-            snprintf (buf, sizeof(buf), _FX("%.0f%% %.0f"), wi.humidity_percent, wi.pressure_hPa);
+            snprintf (buf, sizeof(buf), "%.0f%% %.0f", wi.humidity_percent, wi.pressure_hPa);
         else
-            snprintf (buf, sizeof(buf), _FX("%.0f%% %.2f"), wi.humidity_percent, wi.pressure_hPa/33.8639);
+            snprintf (buf, sizeof(buf), "%.0f%% %.2f", wi.humidity_percent, HPA2INHG(wi.pressure_hPa));
         w = maxStringW (buf, box.w-attr_w-PCHG_W-PCHG_LW-2*PCHG_LG);
         tft.setCursor (box.x+(box.w-attr_w-w-PCHG_W-PCHG_LW-2*PCHG_LG)/2, box.y+dy);
         tft.print (buf);
@@ -350,9 +350,9 @@ void plotWX (const SBox &box, uint16_t color, const WXInfo &wi)
 
         selectFontStyle (LIGHT_FONT, SMALL_FONT);
         if (showATMhPa())
-            snprintf (buf, sizeof(buf), _FX("%.0f%% %.0f hPa"), wi.humidity_percent, wi.pressure_hPa);
+            snprintf (buf, sizeof(buf), "%.0f%% %.0f hPa", wi.humidity_percent, wi.pressure_hPa);
         else
-            snprintf (buf, sizeof(buf), _FX("%.0f%% %.2f in"), wi.humidity_percent, wi.pressure_hPa/33.8639);
+            snprintf (buf, sizeof(buf), "%.0f%% %.2f in", wi.humidity_percent,HPA2INHG(wi.pressure_hPa));
         w = maxStringW (buf, box.w-attr_w);
         tft.setCursor (box.x+(box.w-attr_w-w)/2, box.y+dy);
         tft.print (buf);
@@ -363,11 +363,11 @@ void plotWX (const SBox &box, uint16_t color, const WXInfo &wi)
     // wind
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
     f = (showDistKm() ? 3.6 : 2.237) * wi.wind_speed_mps; // kph or mph
-    snprintf (buf, sizeof(buf), _FX("%s @ %.0f %s"), wi.wind_dir_name, f, showDistKm() ? "kph" : "mph");
+    snprintf (buf, sizeof(buf), "%s @ %.0f %s", wi.wind_dir_name, f, showDistKm() ? "kph" : "mph");
     w = maxStringW (buf, box.w-attr_w);
     if (buf[strlen(buf)-1] != 'h') {
         // try shorter string in case of huge speed
-        snprintf (buf, sizeof(buf),_FX("%s @ %.0f%s"), wi.wind_dir_name, f, showDistKm() ? "k/h" : "m/h");
+        snprintf (buf, sizeof(buf),"%s @ %.0f%s", wi.wind_dir_name, f, showDistKm() ? "k/h" : "m/h");
         w = maxStringW (buf, box.w-attr_w);
     }
     tft.setCursor (box.x+(box.w-attr_w-w)/2, box.y+dy);
@@ -389,7 +389,7 @@ void plotWX (const SBox &box, uint16_t color, const WXInfo &wi)
         tft.print (wi.attribution[i]);
     }
 
-    // printFreeHeap (F("plotWX"));
+    // printFreeHeap ("plotWX");
 }
 
 
@@ -505,7 +505,7 @@ void plotBandConditions (const SBox &box, int busy, const BandCdtnMatrix *bmp, c
     // center title across the top
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
     tft.setTextColor(RA8875_WHITE);
-    const char *title = _FX("VOACAP DE-DX");
+    const char *title = "VOACAP DE-DX";
     uint16_t tw = getTextWidth (title);
     tft.setCursor (box.x+(box.w-tw)/2, box.y + TOP_B);
     tft.print ((char*)title);
@@ -577,7 +577,7 @@ bool plotNOAASWx (const SBox &box)
     tft.setTextColor(NOAASPW_COLOR);
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
     uint16_t h = box.h/5-2;                             // text row height
-    const char *title = _FX("NOAA SpaceWx");
+    const char *title = "NOAA SpaceWx";
     uint16_t bw = getTextWidth (title);
     tft.setCursor (box.x+(box.w-bw)/2, box.y+h);
     tft.print (title);
@@ -611,7 +611,7 @@ bool plotNOAASWx (const SBox &box)
 void plotMessage (const SBox &box, uint16_t color, const char *message)
 {
     // log
-    Serial.printf (_FX("PlotMsg: %s\n"), message);
+    Serial.printf ("PlotMsg: %s\n", message);
 
     // prep font
     selectFontStyle (BOLD_FONT, FAST_FONT);

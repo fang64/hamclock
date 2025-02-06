@@ -14,12 +14,25 @@ ESP::ESP()
         sn = 0;
 }
 
-void ESP::restart(void)
+void ESP::restart(bool minus_K)
 {
+        // add non-persistent -K to our_argv if desired (ok if more than once)
+        char **use_argv = our_argv;
+        if (minus_K) {
+            // copy our_argv to add -K
+            int argc;
+            for (argc = 0; our_argv[argc] != NULL; argc++)
+                continue;
+            use_argv = (char **) malloc ((argc+2)*sizeof(char*)); // +1 -k +1 NULL
+            memcpy (use_argv, our_argv, argc*sizeof(char*));
+            use_argv[argc++] = strdup("-K");    // dup just to avoid "char* = const char*" warning
+            use_argv[argc] = NULL;
+        }
+
         // log
         printf ("Restarting -- args will be:\n");
-        for (int i = 0; our_argv[i] != NULL; i++)
-            printf ("  argv[%d]: %s\n", i, our_argv[i]);
+        for (int i = 0; use_argv[i] != NULL; i++)
+            printf ("  argv[%d]: %s\n", i, use_argv[i]);
         printf ("see you there!\n\n");
 
         // close all but basic fd
@@ -27,9 +40,9 @@ void ESP::restart(void)
             (void) ::close(i);
 
         // go
-        execvp (our_argv[0], our_argv);
+        execvp (use_argv[0], use_argv);
 
-        printf ("execvp(%s): %s\n", our_argv[0], strerror(errno));
+        printf ("execvp(%s): %s\n", use_argv[0], strerror(errno));
         exit(1);
 }
 

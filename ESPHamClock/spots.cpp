@@ -170,6 +170,9 @@ void drawSpotPathOnMap (const DXSpot &spot)
  */
 void drawSpotOnList (const SBox &box, const DXSpot &spot, int row, uint16_t bg_col)
 {
+    if (debugLevel (DEBUG_SCROLL, 1))
+        Serial.printf ("row %2d: drawing\n", row);
+
     selectFontStyle (LIGHT_FONT, FAST_FONT);
     char line[50];
 
@@ -237,6 +240,14 @@ int16_t app_color)
         }
     }
 
+    // erase unused rows below min_i
+    for (int row = ss.getDisplayRow(--min_i); row >= 0 && row < ss.max_vis; row = ss.getDisplayRow(--min_i)) {
+        if (debugLevel (DEBUG_SCROLL, 1))
+            Serial.printf ("row %2d: erasing\n", row);
+        const uint16_t y = box.y + LISTING_Y0 + row*LISTING_DY - LISTING_OS;
+        tft.fillRect (box.x+1, y, box.w-2, LISTING_DY - 2, RA8875_BLACK);
+    }
+
     // scroll controls red if any more red spots in their directions
     uint16_t up_color = app_color;
     uint16_t dw_color = app_color;
@@ -297,4 +308,19 @@ int qsDXCDist (const void *v1, const void *v2)
     float d1 = simpleSphereDist (s1->rx_ll, s1->tx_ll);
     float d2 = simpleSphereDist (s2->rx_ll, s2->tx_ll);
     return (roundf(1000*(d1 - d2)));            // want farthest (largest) first
+}
+
+/* actual drawing of a DXSpot dot
+ */
+void drawSpotDot (int16_t raw_x, int16_t raw_y, uint16_t radius, LabelOnMapEnd txrx, uint16_t color)
+{
+    if (txrx == LOME_TXEND) {
+        // circle suggesting expanding wave
+        tft.fillCircleRaw (raw_x, raw_y, radius, color);
+        tft.drawCircleRaw (raw_x, raw_y, radius+1, RA8875_BLACK);
+    } else {
+        // square suggesting receiving array ??
+        tft.fillRectRaw (raw_x-radius, raw_y-radius, 2*radius, 2*radius, color);
+        tft.drawRectRaw (raw_x-radius-1, raw_y-radius-1, 2*radius+1, 2*radius+1, RA8875_BLACK);
+    }
 }

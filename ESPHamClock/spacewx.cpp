@@ -28,11 +28,19 @@ static KpData kp_cache;
 static NOAASpaceWxData noaasw_cache = {0, false, {'R', 'S', 'G'}, {}};
 static AuroraData aurora_cache;
 
-#define X(a,b,c,d,e,f,g) {a,b,c,d,e,f,g},       // expands SPCWX_DATA to each array initialization in {}
+#define X(a,b,c,d,e,f,g,h) {a,b,c,d,e,f,g,h},     // expands SPCWX_DATA to each array initialization in {}
 SpaceWeather_t space_wx[SPCWX_N] = {
     SPCWX_DATA
 };
 #undef X
+
+
+/* bit mask of user's NXDXF_b SPCWX_t, or Auto (ie, sort based on impact) if none.
+ * N.B. user selection relies on ranks being set
+ */
+static uint32_t spcwx_chmask;
+#define SPCWX_AUTO 0                            // spcwx_chmask value that means sort based on impact
+
 
 
 // handy conversion from space_wx value to it ranking contribution
@@ -130,24 +138,13 @@ static bool initSWFit(void)
  */
 static void sortSpaceWx()
 {
-    // try one time to init all space_wx m and b first time, note and always bale if fail.
-    static bool set_mb, mb_ok;
-    if (!set_mb) {
-        set_mb = true;
-        mb_ok = initSWFit();
-        if (!mb_ok)
-            Serial.println ("RANKSW: no ranking available -- using default");
-    }
-    if (!mb_ok)
-        return;                 // use default ranking
-
     // copy space_wx and sort best first
     StackMalloc sw_mem (sizeof(space_wx));
     SpaceWeather_t *sw_sort = (SpaceWeather_t *) sw_mem.getMem();
     memcpy (sw_sort, space_wx, sizeof(space_wx));
     qsort (sw_sort, SPCWX_N, sizeof(SpaceWeather_t), swQSF);
     
-    // set and record rank of each entry
+    // set and log rank of each entry, 0 is best
     Serial.println ("RANKSW: rank      name    value score");
     for (int i = 0; i < SPCWX_N; i++) {
         SPCWX_t sp_i = sw_sort[i].sp;
@@ -158,128 +155,167 @@ static void sortSpaceWx()
     }
 }
 
-/* given touch location s known to be within NCDXF_b, insure that space stat is in a visible Pane.
- * N.B. coordinate with drawSpaceStats()
+/* present menu of all Space Weather choices in NCDXF_b, allow op to choose up to four or Auto.
  */
-void doSpaceStatsTouch (const SCoord &s)
+static void runNCDXFSpcWxMenu (void)
 {
-    // list of plot choices ordered by rank
-    PlotChoice pcs[NCDXF_B_NFIELDS];
-    for (int i = 0; i < NCDXF_B_NFIELDS; i++) {
-        for (int j = 0; j < SPCWX_N; j++) {
-            if (space_wx[j].rank == i) {
-                pcs[i] = space_wx[j].pc;
-                break;
-            }
+    // build menu of all SPCWX_N plus gap plus Auto
+    MenuItem mitems[SPCWX_N+2];
+    for (int i = 0; i < SPCWX_N; i++)
+        mitems[i] = {MENU_0OFN, (spcwx_chmask & (1<<i)) != 0, 1, 1, space_wx[i].name, 0};
+    mitems[SPCWX_N]   = {MENU_BLANK, 0, 0, 0, 0, 0};
+    mitems[SPCWX_N+1] = {MENU_TOGGLE, spcwx_chmask == SPCWX_AUTO, 2, 1, "Auto", 0};
+            
+    // its box  
+    SBox menu_b = NCDXF_b;                      // copy, not ref!
+    menu_b.x += 1;  
+    menu_b.y += 5;
+    menu_b.w = 0;                               // shrink wrap
+                
+    // run          
+    SBox ok_b;      
+    MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_NOCANCEL, 1, NARRAY(mitems), mitems};
+    if (runMenu (menu)) {
+                
+        // reset mask which means Auto
+        spcwx_chmask = SPCWX_AUTO;
+
+        // set additional bits and ascending rank to implement chosen params unless explicit Auto
+        int rank = 0;
+        if (!mitems[SPCWX_N+1].set) {
+            for (int i = 0; i < SPCWX_N; i++) {
+                if (mitems[i].set) {
+                    space_wx[i].rank = rank++;
+                    spcwx_chmask |= (1<<i);
+                } else {
+                    space_wx[i].rank = SPCWX_N;   // impossible rank
+                }
+            }       
         }
+
+        if (rank > NCDXF_B_NFIELDS)
+            Serial.printf ("SPCWX: NDXCF table using only first %d selections\n", NCDXF_B_NFIELDS);
+        else if (rank == 0) {
+            Serial.printf ("SPCWX: NCDXF table is now Auto\n");
+            sortSpaceWx();
+        }
+
+        // save mask
+        NVWriteUInt32 (NV_SPCWXCHOICE, spcwx_chmask);
+        Serial.printf ("SPCWX: choice mask 0x%08x\n", spcwx_chmask);
     }
 
-    // do it
-    doNCDXFStatsTouch (s, pcs);
+    // redraw box if for no other reason than to erase menu
+    drawNCDXFSpcWxStats(RA8875_BLACK);
+}
+
+/* handle touch location s known to be within NCDXF_b showing space weather stats.
+ * if within a numeric value: insure the space stat is in a visible Pane.
+ * else in parameter name:    offer menu of desired parameters or Auto
+ * N.B. coordinate layout with drawNCDXFStats()
+ */
+void doNCDXFSpcWxTouch (const SCoord &s)
+{
+    // decide which row, counting down from 0
+    const uint16_t y_top = s.y - NCDXF_b.y;
+    const uint16_t h = NCDXF_b.h / NCDXF_B_NFIELDS;
+    const uint16_t r = y_top / h;
+
+    // decide whether s is in number or name
+    if (y_top > r*h + 3*h/4) {
+
+        // s is in the thin title area so run menu to select stats or Auto
+        runNCDXFSpcWxMenu();
+
+    } else {
+
+        // s is in larger name portion so engage data pane whose rank == row
+        for (int i = 0; i < SPCWX_N; i++)
+            if (space_wx[i].rank == r)
+                setPlotVisible (space_wx[i].pc);
+    }
+
 }
 
 /* draw the NCDXF_B_NFIELDS highest ranking space_wx in NCDXF_b.
  * use the given color for everything unless black then use the associated pane colors.
  */
-void drawSpaceStats(uint16_t color)
+void drawNCDXFSpcWxStats(uint16_t color)
 {
-    // arrays for drawNCDXFStats()
+    // handy
     static const char err[] = "Err";
+
+    // arrays for drawNCDXFStats()
     char titles[NCDXF_B_NFIELDS][NCDXF_B_MAXLEN];
     char values[NCDXF_B_NFIELDS][NCDXF_B_MAXLEN];
     uint16_t colors[NCDXF_B_NFIELDS];
 
-    // assign by rank, 0 first
+    // assign by rank down from top, 0 first
     for (int i = 0; i < NCDXF_B_NFIELDS; i++) {
+        // reset in case not all used
+        titles[i][0] = values[i][0] = '\0';
         for (int j = 0; j < SPCWX_N; j++) {
             if (space_wx[j].rank == i) {
 
-                switch ((SPCWX_t)j) {
+                // set title i for param j, using common error else per-param value
 
-                case SPCWX_SSN:
-                    strcpy (titles[i], "SSN");
-                    if (!space_wx[SPCWX_SSN].value_ok)
-                        strcpy (values[i], err);
-                    else
+                strcpy (titles[i], space_wx[j].name);
+                if (!space_wx[j].value_ok) {
+                    strcpy (values[i], err);
+                    colors[i] = RA8875_RED;
+                } else {
+
+                    switch ((SPCWX_t)j) {
+
+                    case SPCWX_SSN:
                         snprintf (values[i], sizeof(values[i]), "%.0f", space_wx[SPCWX_SSN].value);
-                    colors[i] = SSN_COLOR;
-                    break;
+                        colors[i] = SSN_COLOR;
+                        break;
 
-                case SPCWX_XRAY:
-                    strcpy (titles[i], "X-Ray");
-                    if (!space_wx[SPCWX_XRAY].value_ok)
-                        strcpy (values[i], err);
-                    else
+                    case SPCWX_XRAY:
                         xrayLevel (values[i], space_wx[SPCWX_XRAY]);
-                    colors[i] = RGB565(255,134,0);      // XRAY_LCOLOR is too alarming
-                    break;
+                        colors[i] = RGB565(255,134,0);      // XRAY_LCOLOR is too alarming
+                        break;
 
-                case SPCWX_FLUX:
-                    strcpy (titles[i], "SFI");
-                    if (!space_wx[SPCWX_FLUX].value_ok)
-                        strcpy (values[i], err);
-                    else
+                    case SPCWX_FLUX:
                         snprintf (values[i], sizeof(values[i]), "%.0f", space_wx[SPCWX_FLUX].value);
-                    colors[i] = SFLUX_COLOR;
-                    break;
+                        colors[i] = SFLUX_COLOR;
+                        break;
 
-                case SPCWX_KP:
-                    strcpy (titles[i], "Kp");
-                    if (!space_wx[SPCWX_KP].value_ok)
-                        strcpy (values[i], err);
-                    else
+                    case SPCWX_KP:
                         snprintf (values[i], sizeof(values[i]), "%.1f", space_wx[SPCWX_KP].value);
-                    colors[i] = KP_COLOR;
-                    break;
+                        colors[i] = KP_COLOR;
+                        break;
 
-                case SPCWX_SOLWIND:
-                    strcpy (titles[i], "Sol Wind");
-                    if (!space_wx[SPCWX_SOLWIND].value_ok)
-                        strcpy (values[i], err);
-                    else
+                    case SPCWX_SOLWIND:
                         snprintf (values[i], sizeof(values[i]), "%.1f", space_wx[SPCWX_SOLWIND].value);
-                    colors[i] = SWIND_COLOR;
-                    break;
+                        colors[i] = SWIND_COLOR;
+                        break;
 
-                case SPCWX_DRAP:
-                    strcpy (titles[i], "DRAP");
-                    if (!space_wx[SPCWX_DRAP].value_ok)
-                        strcpy (values[i], err);
-                    else
+                    case SPCWX_DRAP:
                         snprintf (values[i], sizeof(values[i]), "%.0f", space_wx[SPCWX_DRAP].value);
-                    colors[i] = DRAPPLOT_COLOR;
-                    break;
+                        colors[i] = DRAPPLOT_COLOR;
+                        break;
 
-                case SPCWX_BZ:
-                    strcpy (titles[i], "Bz");
-                    if (!space_wx[SPCWX_BZ].value_ok)
-                        strcpy (values[i], err);
-                    else
+                    case SPCWX_BZ:
                         snprintf (values[i], sizeof(values[i]), "%.1f", space_wx[SPCWX_BZ].value);
-                    colors[i] = BZBT_BZCOLOR;
-                    break;
+                        colors[i] = BZBT_BZCOLOR;
+                        break;
 
-                case SPCWX_NOAASPW:
-                    strcpy (titles[i], "NOAA SpWx");
-                    if (!space_wx[SPCWX_NOAASPW].value_ok)
-                        strcpy (values[i], err);
-                    else
+                    case SPCWX_NOAASPW:
                         snprintf (values[i], sizeof(values[i]), "%.0f", space_wx[SPCWX_NOAASPW].value);
-                    colors[i] = NOAASPW_COLOR;
-                    break;
+                        colors[i] = NOAASPW_COLOR;
+                        break;
 
-                case SPCWX_AURORA:
-                    strcpy (titles[i], "Aurora");
-                    if (!space_wx[SPCWX_AURORA].value_ok)
-                        strcpy (values[i], err);
-                    else
+                    case SPCWX_AURORA:
                         snprintf (values[i], sizeof(values[i]), "%.0f", space_wx[SPCWX_AURORA].value);
-                    colors[i] = AURORA_COLOR;
-                    break;
+                        colors[i] = AURORA_COLOR;
+                        break;
 
-                case SPCWX_N:
-                    break;              // lint
+                    case SPCWX_N:
+                        break;              // lint
 
+                    }
                 }
             }
         }
@@ -1297,9 +1333,26 @@ bool checkForNewSpaceWx()
     // check whether any changed
     bool any_new = sf || kp || xr || bz || dr || sw || ss || na || au;
 
-    // if so redo ranking
-    if (any_new)
+    // if so redo ranking unless Auto
+    if (any_new && spcwx_chmask == SPCWX_AUTO)
         sortSpaceWx();
 
     return (any_new);
+}
+
+/* one-time setup
+ */
+void initSpaceWX(void)
+{
+    // init all space_wx m and b
+    bool mb_ok = initSWFit();
+    if (!mb_ok)
+        Serial.println ("RANKSW: no ranking available -- using default");
+
+    // init user selection ranking
+    if (!NVReadUInt32 (NV_SPCWXCHOICE, &spcwx_chmask)) {
+        spcwx_chmask = SPCWX_AUTO;
+        NVWriteUInt32 (NV_SPCWXCHOICE, spcwx_chmask);
+    }
+    Serial.printf ("SPCWX: initial choice mask 0x%08x\n", spcwx_chmask);
 }

@@ -166,26 +166,6 @@ static void setCallColors (CallColors_t &cu, uint16_t *fg, uint16_t *bg, uint8_t
     }
 }
 
-/* common test for setOnAirHW() and setOnAirSW().
- * N.B. only draw when aggregate state changes to avoid flashing.
- */
-static void setOnAir(void)
-{
-    if (onair_hw || onair_sw) {
-        // set on-air if not already
-        if (cs_info.now_showing != CT_ONAIR) {
-            cs_info.now_showing = CT_ONAIR;
-            updateCallsign (true);
-            Serial.printf ("CALL: on-air\n");
-        }
-    } else if (cs_info.now_showing == CT_ONAIR) {
-        // restore preferred call/title 
-        cs_info.now_showing = cs_info.ct_prefer;                // updateCallsign fixes if CT_BOTH
-        updateCallsign (true);
-        Serial.printf ("CALL: back to %s\n", cs_info.now_showing == CT_CALL ? "call" : "title");
-    }
-}
-
 /* draw callsign using cs_info.
  * draw everything if all, else just fg text as when just changing text color.
  */
@@ -262,6 +242,25 @@ static void drawCallsign (bool all)
     }
 }
 
+/* common test for setOnAirHW() and setOnAirSW(), latch state to avoid repetitive drawing.
+ */
+static void setOnAir(void)
+{
+    if (onair_hw || onair_sw) {
+        // set on-air if not already
+        if (cs_info.now_showing != CT_ONAIR) {
+            cs_info.now_showing = CT_ONAIR;
+            Serial.printf ("CALL: turn on-air On\n");
+            drawCallsign (true);
+        }
+    } else if (cs_info.now_showing == CT_ONAIR) {
+        // restore to prefer or just pick one if BOTH
+        cs_info.now_showing = cs_info.ct_prefer == CT_BOTH ? CT_CALL : cs_info.ct_prefer;
+        Serial.printf ("CALL: turn on-air Off\n");
+        drawCallsign (true);
+    }
+}
+
 /* run a menu overlaying the callsign area to allow editing title and ON AIR message.
  */
 static void runCallsignMenu (void)
@@ -302,12 +301,12 @@ static void runCallsignMenu (void)
     title_mt.label_fp = NULL;
 
     MenuItem mitems[] = {
-        {MENU_LABEL,                        false, 0, 2, "Show: "},                  // 0
-        {MENU_1OFN, cs_info.ct_prefer == CT_CALL,  1, 2, "call"},                    // 1
-        {MENU_1OFN, cs_info.ct_prefer == CT_TITLE, 1, 2, "title"},                   // 2
-        {MENU_1OFN, cs_info.ct_prefer == CT_BOTH,  1, 2, "rotate"},                  // 3
-        {MENU_TEXT,                         false, 2, 2, title_mt.label, &title_mt}, // 4
-        {ptt ? MENU_TEXT : MENU_IGNORE,     false, 3, 2, onair_mt.label, &onair_mt}, // 5
+        {MENU_LABEL,                        false, 0, 2, "Show: ", 0},                  // 0
+        {MENU_1OFN, cs_info.ct_prefer == CT_CALL,  1, 2, "call", 0},                    // 1
+        {MENU_1OFN, cs_info.ct_prefer == CT_TITLE, 1, 2, "title", 0},                   // 2
+        {MENU_1OFN, cs_info.ct_prefer == CT_BOTH,  1, 2, "rotate", 0},                  // 3
+        {MENU_TEXT,                         false, 2, 2, title_mt.label, &title_mt},    // 4
+        {ptt ? MENU_TEXT : MENU_IGNORE,     false, 3, 2, onair_mt.label, &onair_mt},    // 5
     };
 
     SBox menu_b = cs_info.box;                          // copy, not ref!
@@ -360,14 +359,6 @@ static void runCallsignMenu (void)
  */
 void updateCallsign (bool force_draw)
 {
-    // always insure now_showing is CALL or TITLE (e.g. it could be BOTH if set from ct_prefer)
-    if (cs_info.now_showing != CT_CALL && cs_info.now_showing != CT_TITLE) {
-        if (cs_info.ct_prefer == CT_CALL || cs_info.ct_prefer == CT_TITLE)
-            cs_info.now_showing = cs_info.ct_prefer;
-        else
-            cs_info.now_showing = CT_CALL;
-    }
-
     // check for call/title rotation unless on-air
     if (cs_info.ct_prefer == CT_BOTH && cs_info.now_showing != CT_ONAIR) {
         time_t now = myNow();

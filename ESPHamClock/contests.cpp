@@ -6,8 +6,8 @@
 
 
 #define CONTEST_COLOR   RGB565(205,91,69)       // X11 coral3
-#define TO_COLOR        RA8875_BLACK            // titles-only background
 #define TD_COLOR        CONTEST_COLOR           // titles-with-dates background
+#define NOW_COLOR       RGB565(40,140,40)       // background when contest is happening now
 #define CREDITS_Y0      SUBTITLE_Y0             // dy of credits row
 #define START_DY        LISTING_Y0              // dy of first contest row
 #define CONTEST_DY      12                      // dy of each successive row -- a bit tighter than LISTING_DY
@@ -63,6 +63,9 @@ static void drawContestsPane (const SBox &box)
     // erase
     prepPlotBox (box);
 
+    // handy UTC
+    time_t now = myNow();
+
     // title
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
     tft.setTextColor(CONTEST_COLOR);
@@ -88,10 +91,12 @@ static void drawContestsPane (const SBox &box)
         for (int i = min_i; i <= max_i; i++) {
             ContestEntry &ce = contests[i];
             int r = cts_ss.getDisplayRow(i);
-            // printf ("************ min %d max %d i %d r %d\n", min_i, max_i, i, r);
             if (show_date) {
                 uint16_t y = y0 + r*2*CONTEST_DY;
-                tft.fillRect (box.x+1, y-2, box.w-2, 2*CONTEST_DY, (r&1) ? TD_COLOR : TO_COLOR);
+                if (now > ce.start_t && now < ce.end_t)
+                    tft.fillRect (box.x+1, y-4, box.w-2, 2*CONTEST_DY+1, NOW_COLOR);
+                else if (i < max_i)
+                    tft.drawLine (box.x+1, y+2*CONTEST_DY-3, box.x+box.w-2, y+2*CONTEST_DY-3, 2, TD_COLOR);
                 uint16_t w = getTextWidth (ce.title);
                 tft.setCursor (box.x + (box.w-w)/2, y);
                 tft.print (ce.title);
@@ -101,7 +106,8 @@ static void drawContestsPane (const SBox &box)
                 tft.print (ce.date_str);
             } else {
                 uint16_t y = y0 + r*CONTEST_DY;
-                tft.fillRect (box.x+1, y-2, box.w-2, CONTEST_DY, TO_COLOR);
+                if (now > ce.start_t && now < ce.end_t)
+                    tft.fillRect (box.x+1, y-2, box.w-2, CONTEST_DY, NOW_COLOR);
                 uint16_t w = getTextWidth (ce.title);
                 tft.setCursor (box.x + (box.w-w)/2, y);
                 tft.print (ce.title);
@@ -272,11 +278,11 @@ static bool runContestMenu (const SCoord &s, const SBox &box)
 
     // build menu
     MenuItem mitems[] = {
-        {title_mft,    false,         0, indent, cname},                        // 0
-        {showdtz_mft,  show_date,     1, indent, "Show dates"},                 // 1
-        {showdtz_mft,  show_detz,     2, indent, "Use DE TZ"},                  // 2
-        {alarm_mft,    alarm_is_set,  3, indent, "Set alarm"},                  // 3
-        {web_mft,      false,         4, indent, "Show web page"},              // 4
+        {title_mft,    false,         0, indent, cname, 0},                        // 0
+        {showdtz_mft,  show_date,     1, indent, "Show dates", 0},                 // 1
+        {showdtz_mft,  show_detz,     2, indent, "Use DE TZ", 0},                  // 2
+        {alarm_mft,    alarm_is_set,  3, indent, "Set alarm", 0},                  // 3
+        {web_mft,      false,         4, indent, "Show web page", 0},              // 4
     };
     const int n_mi = NARRAY(mitems);
 
@@ -336,17 +342,18 @@ static bool retrieveContests (const SBox &box)
 
     // download and load contests[]
     Serial.println(contest_page);
-    resetWatchdog();
     if (wifiOk() && ctst_client.connect(backend_host, backend_port)) {
 
         // look alive
-        resetWatchdog();
         updateClocks(false);
+
+        // handy UTC
+        time_t now = myNow();
 
         // fetch page and skip header
         httpHCGET (ctst_client, backend_host, contest_page);
         if (!httpSkipHeader (ctst_client)) {
-            Serial.print (F("CTS: failed\n"));
+            Serial.printf ("CTS: %s failed\n", contest_page);
             goto out;
         }
 
@@ -372,7 +379,7 @@ static bool retrieveContests (const SBox &box)
 
         // first line is credit
         if (!getTCPLine (ctst_client, line1, sizeof(line1), NULL)) {
-            Serial.print (F("CTS: no credit line\n"));
+            Serial.printf ("CTS: %s no credit line\n", contest_page);
             goto out;
         }
         credit = strdup (line1);
@@ -386,7 +393,8 @@ static bool retrieveContests (const SBox &box)
         // read 2 lines per contest: info and url
         while (getTCPLine (ctst_client, line1, sizeof(line1), NULL)
                                         && getTCPLine (ctst_client, line2, sizeof(line2), NULL)) {
-            // Serial.printf (_FX("CTS line %d: %s\n%s\n"), cts_ss.n_data, line1, line2);
+            if (debugLevel (DEBUG_CONTESTS, 1))
+                Serial.printf ("CTS line %d: %s\n%s\n", cts_ss.n_data, line1, line2);
 
             // split line1 into the two unix UTC times and the title
             char *ut1 = line1;
@@ -400,68 +408,108 @@ static bool retrieveContests (const SBox &box)
                 Serial.printf ("CTS: line has no title: %s\n", line1);
                 continue;
             }
+
+            // skip if already over
+            time_t end_t = atol(ut2);
+            if (now > end_t) {
+                Serial.printf ("CTS %s is already passed %ld\n", title, (long)end_t);
+                continue;
+            }
+
+            // clean up title to fix in box
             scrubContestTitleLine (++title, box);
 
             // looks good, add to contests[]
             contests = (ContestEntry*) realloc (contests, (cts_ss.n_data+1) * sizeof(ContestEntry));
             if (!contests)
-                fatalError (_FX("No memory for %d contests"), cts_ss.n_data+1);
+                fatalError ("No memory for %d contests", cts_ss.n_data+1);
             ContestEntry &ce = contests[cts_ss.n_data++];
 
-            // save start, title and url 
-            ce.start_t = atol (ut1);
-            ce.title = strdup (title);
-            ce.url = strdup (line2);
+            // save times, title and url 
+            if (debugLevel (DEBUG_CONTESTS, 2)) {
+                // inject as recent times
+                ce.start_t = myNow() - 180 + 60*cts_ss.n_data;
+                ce.end_t = myNow() + 60*cts_ss.n_data;
+            } else {
+                ce.start_t = atol (ut1);
+                ce.end_t = end_t;
+            }
+            ce.title = strdup (title);                  // N.B. must free()
+            ce.url = strdup (line2);                    // N.B. must free()
 
             // format date string. N.B. we REUSE line2 (ut1 and ut2 are in line1)
-            formatTimeLine (box, ce.start_t, atol(ut2), line2, sizeof(line2));
-            ce.date_str = strdup (line2);
+            formatTimeLine (box, ce.start_t, ce.end_t, line2, sizeof(line2));
+            ce.date_str = strdup (line2);               // N.B. must free()
         }
     }
 
 out:
 
-    Serial.printf (_FX("CTS: Found %d\n"), cts_ss.n_data);
+    Serial.printf ("CTS: Found %d\n", cts_ss.n_data);
 
     ctst_client.stop();
 
     return (ok);
 }
 
-/* collect Contest info into the contests[] array and show in the given pane box
+/* remove contests that are over and reset display if any were removed.
  */
-bool updateContests (const SBox &box)
+static bool rmPastContests (void)
 {
-    // update if settings change or it's time
+    bool any_past = false;
+    time_t now = myNow();
 
-    static time_t next_update;
-    static bool my_show_date;
-    static bool my_show_detz;
-    static PlotPane my_pane = PANE_NONE;
-    static bool last_ok;
-
-    if (!last_ok || myNow() > next_update || my_show_date != show_date || my_show_detz != show_detz
-                 || my_pane != findPaneChoiceNow(PLOT_CH_CONTESTS)) {
-
-        my_show_date = show_date;
-        my_show_detz = show_detz;
-        my_pane = findPaneChoiceNow(PLOT_CH_CONTESTS);
-
-        last_ok = retrieveContests (box);
-        next_update = myNow() + CONTESTS_INTERVAL;
+    for (int i = 0; i < cts_ss.n_data; i++) {
+        ContestEntry *cp = &contests[i];
+        if (cp->end_t <= now) {
+            memmove (cp, cp+1, (--cts_ss.n_data - i) * sizeof(ContestEntry));
+            any_past = true;
+        }
     }
 
-    if (last_ok) {
-
+    if (any_past)
         cts_ss.scrollToNewest();
-        drawContestsPane (box);
+
+    return (any_past);
+}
+
+
+
+/* collect Contest info into the contests[] array and show in the given pane box
+ */
+bool updateContests (const SBox &box, bool fresh)
+{
+    // retrieve once an hour at a random minute
+    static int retrieve_hour = -1;              // init with any impossible value
+    static int retrieve_min = -1;               // init with any negative value
+
+    // pick a random minute first time through
+    if (retrieve_min < 0) {
+        retrieve_min = random (60);
+        Serial.printf ("CTS: updating at %d mins past the hour\n", retrieve_min);
+    }
+
+    bool ok = true;
+
+    if (fresh || (retrieve_hour != hour() && retrieve_min == minute())) {
+
+        retrieve_hour = hour();
+
+        ok = retrieveContests (box);
+        cts_ss.scrollToNewest();
+    }
+
+    if (ok) {
+
+        if (rmPastContests() || fresh)
+            drawContestsPane (box);
 
     } else {
 
-        plotMessage (box, CONTEST_COLOR, _FX("Contests error"));
+        plotMessage (box, CONTEST_COLOR, "Contests error");
     }
 
-    return (last_ok);
+    return (ok);
 }
 
 /* return true if user is interacting with the contest pane, false if wants to change pane.
@@ -486,7 +534,7 @@ bool checkContestsTouch (const SCoord &s, const SBox &box)
 
         // run the menu, then minimal update
         if (runContestMenu (s, box))
-            updateContests (box);
+            scheduleNewPlot (PLOT_CH_CONTESTS);
         else
             drawContestsPane (box);
 
@@ -505,8 +553,8 @@ void scrubContestTitleLine (char *line, const SBox &box)
 {
     // look for a few common phases
     char *phrase;
-    if ((phrase = strstr (line, _FX("Parks on the Air"))) != NULL)
-        strcpy (phrase, _FX("POTA"));
+    if ((phrase = strstr (line, "Parks on the Air")) != NULL)
+        strcpy (phrase, "POTA");
 
     // keep chopping off at successive right-most space until fits within box
     uint16_t lw;                                        // line width in pixels

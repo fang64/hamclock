@@ -37,17 +37,20 @@ bool crackClusterSpot (char line[], DXSpot &spot)
         return (false);
     }
 
-    // assign time augmented with current date
+    // spot does not include date so assume same as current
     tmElements_t tm;
-    time_t n0 = myNow();
-    breakTime (n0, tm);
+    time_t now = myNow();
+    breakTime (now, tm);
     tm.Hour = hr;
     tm.Minute = mn;
     spot.spotted = makeTime (tm);
 
-    // the spot does not indicate the date so assume future times are from yesterday
-    if (spot.spotted > n0)
-        spot.spotted -= SECSPERDAY;
+    // accommodate future from roundoff or we just rolled through midnight before spot did
+    if (spot.spotted > now) {
+        dxcLog ("%s %g: correcting future time %02d:%02d %ld > %ld\n", spot.tx_call, spot.kHz,
+                        tm.Hour, tm.Minute, (long)spot.spotted, (long)now);
+        spot.spotted = now;
+    }
 
     // find locations and grids
     bool ok = call2LL (spot.rx_call, spot.rx_ll) && call2LL (spot.tx_call, spot.tx_ll);
@@ -217,18 +220,17 @@ bool wsjtxParseStatusMsg (uint8_t *msg, DXSpot &spot)
     }
 
     // looks good, create new record
-    DXSpot new_spot;
-    memset (&new_spot, 0, sizeof(new_spot));
-    strncpy (new_spot.tx_call, dx_call, sizeof(new_spot.tx_call)-1);        // preserve EOS
-    strncpy (new_spot.rx_call, de_call, sizeof(new_spot.rx_call)-1);        // preserve EOS
-    strncpy (new_spot.tx_grid, dx_grid, sizeof(new_spot.tx_grid)-1);        // preserve EOS
-    strncpy (new_spot.rx_grid, de_grid, sizeof(new_spot.rx_grid)-1);        // preserve EOS
-    new_spot.kHz = hz*1e-3F;
-    new_spot.rx_ll = ll_de;
-    new_spot.tx_ll = ll_dx;
+    memset (&spot, 0, sizeof(spot));
+    strncpy (spot.tx_call, dx_call, sizeof(spot.tx_call)-1);        // preserve EOS
+    strncpy (spot.rx_call, de_call, sizeof(spot.rx_call)-1);        // preserve EOS
+    strncpy (spot.tx_grid, dx_grid, sizeof(spot.tx_grid)-1);        // preserve EOS
+    strncpy (spot.rx_grid, de_grid, sizeof(spot.rx_grid)-1);        // preserve EOS
+    spot.kHz = hz*1e-3F;
+    spot.rx_ll = ll_de;
+    spot.tx_ll = ll_dx;
 
     // time is now
-    new_spot.spotted = myNow();
+    spot.spotted = myNow();
 
     // good!
     return (true);
@@ -294,7 +296,7 @@ static bool extractXMLElementContent (const char xml[], const char key[], char c
 
 /* common parsing for N1MM and DXLog
  */
-static bool crackUDPSpot (const char *whoami, const char xml[], DXSpot &spot)
+static bool crackXMLSpot (const char *whoami, const char xml[], DXSpot &spot)
 {
     // fresh
     memset (&spot, 0, sizeof(spot));
@@ -382,7 +384,7 @@ static bool crackUDPSpot (const char *whoami, const char xml[], DXSpot &spot)
  */
 bool crackN1MMSpot (const char xml[], DXSpot &spot)
 {
-    return (crackUDPSpot ("N1MM", xml, spot));
+    return (crackXMLSpot ("N1MM", xml, spot));
 }
 
 
@@ -399,5 +401,39 @@ bool crackN1MMSpot (const char xml[], DXSpot &spot)
  */
 bool crackDXLogSpot (const char xml[], DXSpot &spot)
 {
-    return (crackUDPSpot ("DXLog.net", xml, spot));
+    return (crackXMLSpot ("DXLog.net", xml, spot));
+}
+
+
+/*********************************************************************************************************
+ *
+ * Log4OM
+ *   https://www.log4om.com/l4ong/usermanual/Log4OMNG_ENU.pdf
+ *
+ *********************************************************************************************************/
+
+/* crack the given string presumed to contain and ADIF message from Log4OM.
+ * if ok fill in spot and return true else dxcLog and return false.
+ */
+bool crackLog4OMSpot (const char string[], DXSpot &spot)
+{
+    GenReader gr(string, strlen (string));
+    DXSpot *spots = NULL;
+    int n_good, n_bad;
+    n_good = readADIFFile (gr, spots, false, n_bad);
+    bool ok = false;
+    if (n_good > 0) {
+        if (n_good > 1)
+            dxcLog ("UDP: Log4OM: using only first of %d ADIF records\n", n_good);
+        spot = spots[0];
+        ok = true;
+    } else {
+        if (n_bad > 0)
+            dxcLog ("UDP: Log4OM: packet contained %d bad ADIF records\n", n_bad);
+        else
+            dxcLog ("UDP: Log4OM: packet contained no valid ADIF records\n");
+    }
+    if (spots)
+        free (spots);
+    return (ok);
 }
