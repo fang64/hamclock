@@ -397,8 +397,9 @@ static void initWiFi (bool verbose)
         tftMsg (verbose, 0, "DNS: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
 
         int rssi;
-        if (readWiFiRSSI(rssi)) {
-            tftMsg (verbose, 0, "Signal strength: %d dBm", rssi);
+        bool is_dbm;
+        if (readWiFiRSSI(rssi,is_dbm)) {
+            tftMsg (verbose, 0, "Signal strength: %d %s", rssi, is_dbm ? "dBm" : "%");
             tftMsg (verbose, 0, "Channel: %d", WiFi.channel());
         }
 
@@ -765,7 +766,7 @@ static bool retrieveBandConditions (char *config)
 
     // start by cleaning cache.
     // N.B. make sure search string match name we use below
-    cleanCache ("bc-", BC_INTERVAL);
+    (void) cleanCache ("bc-", BC_INTERVAL);
 
     // build query
     time_t t = nowWO();
@@ -2075,6 +2076,7 @@ void updateWiFi(void)
             if (pc == PLOT_CH_DXCLUSTER) fresh_redraw[PLOT_CH_DXCLUSTER] = true;
             if (pc == PLOT_CH_ADIF)      fresh_redraw[PLOT_CH_ADIF] = true;
             if (pc == PLOT_CH_ONTA)      fresh_redraw[PLOT_CH_ONTA] = true;
+            if (pc == PLOT_CH_CONTESTS)  fresh_redraw[PLOT_CH_CONTESTS] = true;
 
             // go now
             next_update[pp] = 0;

@@ -348,10 +348,9 @@ static void usage (const char *errfmt, ...)
             fprintf (stderr, "Version %s\n", hc_version);
             fprintf (stderr, "Built as %s\n", our_make);
             fprintf (stderr, "Options:\n");
-            fprintf (stderr, " -0   : remove eeprom file to restore all default values\n");
+            fprintf (stderr, " -0   : restore all original default Setup values\n");
             fprintf (stderr, " -a x : set debug name=level, bogus name gives list\n");
-            fprintf (stderr, " -b h : set backend host:port to h; default is %s:%d\n", backend_host,
-                                    backend_port);
+            fprintf (stderr, " -b h : set backend host:port to h; default is %s:%d\n", backend_host, backend_port);
             fprintf (stderr, " -d d : set working directory to d; default is %s\n", defaultAppDir().c_str());
             fprintf (stderr, " -e p : set RESTful web server port to p or -1 to disable; default is %d\n",
                                     RESTFUL_PORT);
@@ -408,7 +407,7 @@ static void crackArgs (int ac, char *av[])
         bool cl_set = false;
         int max_lw = 0;
 
-         while (--ac && **++av == '-') {
+        while (--ac && **++av == '-') {
             char *s = *av;
             while (*++s) {
                 switch (*s) {
@@ -418,28 +417,32 @@ static void crackArgs (int ac, char *av[])
                 case 'a': {
                         if (ac < 2)
                             usage ("missing name=level for -a");
-                        char *eq = strchr (*++av, '=');
-                        if (!eq)
+                        char *mya = strdup(*++av);              // copy so we don't modify av[]
+                        char *mya_eq = strchr (mya, '=');
+                        if (mya_eq) {
+                            *mya_eq = '\0';                     // put EOS after name
+                            if (!setDebugLevel (mya, atoi(mya_eq+1))) {
+                                prDebugs();
+                                exit(1);
+                            }
+                        } else 
                             usage ("no = in -a arg");
-                        if (!setDebugLevel (*av, atoi(eq+1))) {
-                            prDebugs();
-                            exit(1);
-                        }
                         ac--;
                     }
                     break;
                 case 'b': {
                         if (ac < 2)
-                            usage ("missing host name for -b");
-                        char *bh = strdup(*++av);           // copy so we don't modify av[]
-                        backend_host = bh;
-                        char *colon = strchr (bh, ':');
-                        if (colon) {
-                            *colon = '\0';
-                            backend_port = atoi(colon+1);
+                            usage ("missing host:port for -b");
+                        char *myb = strdup(*++av);              // copy so we don't modify av[]
+                        char *myb_colon = strchr (myb, ':');
+                        if (myb_colon) {
+                            *myb_colon = '\0';                  // put EOS after host
+                            backend_host = myb;
+                            backend_port = atoi(myb_colon+1);
                             if (backend_port < 1 || backend_port > 65535)
                                 usage ("-b port must be [1,65355]");
-                        }
+                        } else
+                            usage ("no : in -b arg");
                         ac--;
                     }
                     break;
@@ -605,31 +608,12 @@ static void crackArgs (int ac, char *av[])
             setX11FullScreen (full_screen);
 }
 
-/* remove the given arg from our_argv IN PLACE.
- * return whether argv_not was indeed removed.
- */
-static bool rmOurArgv (const char *argv_not)
-{
-        bool found_not = false;
-        char **to_argv = our_argv;
-        for (char **from_argv = our_argv; *from_argv != NULL; from_argv++) {
-            if (strcmp (argv_not, *from_argv) == 0) {
-                found_not = true;
-                printf ("removing %s\n", argv_not);
-            } else
-                *to_argv++ = *from_argv;
-        }
-        *to_argv = NULL;
-
-        return (found_not);
-}
-
 /* Every normal C program requires a main().
  * This is provided as magic in the Arduino IDE so here we must do it ourselves.
  */
 int main (int ac, char *av[])
 {
-        // save our args for identical restart or remote update
+        // save our args for restart or remote update
 	our_argv = av;
 
         // always want stdout synchronous 
@@ -638,14 +622,10 @@ int main (int ac, char *av[])
         // check args
         crackArgs (ac, av);
 
-        // log args after cracking so they honor proper diag file
+        // log args after cracking so they get into the proper diag file
         printf ("\nNew program args:\n");
         for (int i = 0; i < ac; i++)
             printf ("  argv[%d] = %s\n", i, av[i]);
-
-	// but now rm -K, see ESP::restart(bool minus_K)
-        if (rmOurArgv ("-K"))
-            ac -= 1;
 
         // log some sys info
         logSys();

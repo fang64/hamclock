@@ -13,36 +13,27 @@ WiFiClient::WiFiClient()
 	socket = -1;
 	n_peek = 0;
         next_peek = 0;
-        eof = false;
 }
 
 // constructor handed an open socket to use
 WiFiClient::WiFiClient(int fd)
 {
-        // init
-	socket = -1;
-	n_peek = 0;
-        next_peek = 0;
-        eof = false;
-
         if (fd >= 0 && debugLevel (DEBUG_NET, 1))
             printf ("WiFiCl: new WiFiClient inheriting fd %d\n", fd);
 
+        // init
 	socket = fd;
 	n_peek = 0;
         next_peek = 0;
-        eof = false;
 }
 
-// return whether this socket is active and make sure it's closed if not
+// return whether this socket is active
 WiFiClient::operator bool()
 {
-        bool is_active = socket != -1 && !eof;
-        if (debugLevel (DEBUG_NET, 3))
-            printf ("WiFiCl: bool fd %d: active?%d eof?%d\n", socket, is_active, eof);
-        if (!is_active)
-            stop();
-	return (is_active);
+        bool active = socket >= 0;
+        if (active && debugLevel (DEBUG_NET, 2))
+            printf ("WiFiCl: fd %d is active\n", socket);
+	return (active);
 }
 
 int WiFiClient::connect_to (int sockfd, struct sockaddr *serv_addr, int addrlen, int to_ms)
@@ -154,7 +145,6 @@ bool WiFiClient::connect(const char *host, int port)
 	socket = sockfd;
 	n_peek = 0;
         next_peek = 0;
-        eof = false;
 
         return (true);
 }
@@ -184,7 +174,7 @@ void WiFiClient::stop()
 	    socket = -1;
 	    n_peek = 0;
             next_peek = 0;
-	} else if (debugLevel (DEBUG_NET, 3))
+	} else if (debugLevel (DEBUG_NET, 2))
             printf ("WiFiCl: fd %d already stopped\n", socket);
 }
 
@@ -195,8 +185,8 @@ bool WiFiClient::connected()
 
 int WiFiClient::available()
 {
-        // none if closed or eof
-        if (socket < 0 || eof)
+        // none if closed
+        if (socket < 0)
             return (0);
 
         // simple if unread bytes already available
@@ -210,9 +200,9 @@ int WiFiClient::available()
         // read more
 	int nr = ::read(socket, peek, sizeof(peek));
 	if (nr > 0) {
-            if (debugLevel (DEBUG_NET, 1))
-                printf ("WiFiCl: read(%d) %d\n", socket, nr);
             if (debugLevel (DEBUG_NET, 2))
+                printf ("WiFiCl: read(%d) %d\n", socket, nr);
+            if (debugLevel (DEBUG_NET, 3))
                 logBuffer (peek, nr);
 	    n_peek = nr;
             next_peek = 0;
@@ -220,7 +210,6 @@ int WiFiClient::available()
 	} else if (nr == 0) {
             if (debugLevel (DEBUG_NET, 1))
                 printf ("WiFiCl: read(%d) EOF\n", socket);
-            eof = true;
 	    stop();
 	    return (0);
         } else {
@@ -265,9 +254,9 @@ int WiFiClient::write (const uint8_t *buf, int n)
             }
 	}
 
-        if (debugLevel (DEBUG_NET, 1))
-            printf ("WiFiCl: write(%d) %d\n", socket, n);
         if (debugLevel (DEBUG_NET, 2))
+            printf ("WiFiCl: write(%d) %d\n", socket, n);
+        if (debugLevel (DEBUG_NET, 3))
             logBuffer (buf, n);
 
 	return (n);
@@ -408,41 +397,4 @@ bool WiFiClient::pending(int ms)
 	    return (false);
 	}
         return (s != 0);
-}
-
-/* read n bytes unless EOF. return whether ok.
- */
-bool WiFiClient::readArray (char buf[], int n)
-{
-        // first use any in peek[]
-        if (n_peek > next_peek) {
-            int n_more = n_peek - next_peek;
-            int n_use = n < n_more ? n : n_more;
-            memcpy (buf, peek+next_peek, n_use);
-            next_peek += n_use;
-            buf += n_use;
-            n -= n_use;
-        }
-
-        // if need more bypass peek[] which will now be empty
-        while (n > 0) {
-            if (!pending(5000))
-                return (false);
-            int nr = ::read (socket, buf, n);
-            if (nr < 0) {
-                printf ("WiFiCl: read(%d,%d): %s\n", socket, n, strerror(errno));
-                return (false);
-            }
-            if (nr == 0) {
-                if (debugLevel (DEBUG_NET, 1))
-                    printf ("WiFiCl: readArray(%d) EOF\n", socket);
-                eof = true;
-                stop();
-                return (false);
-            }
-            buf += nr;
-            n -= nr;
-        }
-
-        return (true);
 }

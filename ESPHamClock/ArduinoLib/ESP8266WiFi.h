@@ -23,7 +23,7 @@ class WiFi {
 	IPAddress subnetMask(void);
 	IPAddress gatewayIP(void);
 	IPAddress dnsIP(void);
-	int RSSI(void);
+	bool RSSI(int &value, bool &is_dbm);
 	int status(void);
 	int mode (int m);
 	std::string macAddress(void);

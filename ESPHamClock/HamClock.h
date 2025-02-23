@@ -989,7 +989,7 @@ extern void drawTZ (TZInfo &tzi);
 extern bool inBox (const SCoord &s, const SBox &b);
 extern bool inCircle (const SCoord &s, const SCircle &c);
 extern bool boxesOverlap (const SBox &b1, const SBox &b2);
-extern void doReboot(bool minus_k);
+extern void doReboot (bool minus_K, bool minus_0);
 extern void printFreeHeap (const __FlashStringHelper *label);
 extern void getWorstMem (int *heap, int *stack);
 extern void resetWatchdog(void);
@@ -1020,6 +1020,8 @@ extern void shadowString (const char *str, bool shadow, uint16_t color, uint16_t
 extern bool overMapScale (const SCoord &s);
 extern uint16_t getGoodTextColor (uint16_t bg_c);
 extern void drawDEFormatMenu(void);
+extern bool postDiags (void);
+
 
 
 #if defined(__GNUC__)
@@ -1274,7 +1276,7 @@ extern void doNCDXFBoxTouch (const SCoord &s);
  *
  */
 extern FILE *openCachedFile (const char *fn, const char *url, int max_age, int min_size);
-extern void cleanCache (const char *contains, int max_age);
+extern bool cleanCache (const char *contains, int max_age);
 
 
 
@@ -1399,6 +1401,7 @@ typedef struct {
     char *date_str;                             // malloced date string as user wants to see it
     char *title;                                // malloced title
     char *url;                                  // malloced web page URL
+    bool was_active;                            // set once now > start_t
 } ContestEntry;
 
 extern bool updateContests (const SBox &box, bool fresh);
@@ -1693,8 +1696,8 @@ typedef struct {
 } FS_Info;
 
 extern FS_Info *getConfigDirInfo (int *n_info, char **fs_name, long long *fs_size, long long *fs_used);
-
-extern void checkFSFull(void);
+extern bool getFSSize (long long &cap, long long &used);
+extern bool checkFSFull (bool &really);
 
 
 
@@ -1853,6 +1856,7 @@ typedef enum {
 #define PROPBAND_NONE           PROPBAND_N      // handy alias for none
 
 // CoreMaps enum and corresponding CoreMapInfo
+// N.B. add only to the end of this table to preserve prior eeprom settings
 #define COREMAPS                                                                        \
     X(CM_COUNTRIES, 7*SECSPERDAY,       "Countries", PROPBAND_NONE, false, false)       \
     X(CM_TERRAIN,   7*SECSPERDAY,       "Terrain",   PROPBAND_NONE, false, false)       \
@@ -1862,7 +1866,8 @@ typedef enum {
     X(CM_AURORA,    AURORA_INTERVAL,    "Aurora",    PROPBAND_NONE, false, false)       \
     X(CM_WX,        DXWX_INTERVAL,      "Weather",   PROPBAND_NONE, false, false)       \
     X(CM_PMTOA,     BC_INTERVAL,        "TOA",       PROPBAND_NONE, false, false)       \
-    X(CM_PMREL,     BC_INTERVAL,        "REL",       PROPBAND_NONE, false, false)
+    X(CM_PMREL,     BC_INTERVAL,        "REL",       PROPBAND_NONE, false, false)       \
+    X(CM_CLOUDS,    CLOUDS_INTERVAL,    "Clouds",    PROPBAND_NONE, false, false)
 
 #define X(a,b,c,d,e,f)  a,                      // expands COREMAPS to each enum followed by comma
 typedef enum {
@@ -1875,7 +1880,7 @@ typedef enum {
 
 // macro to test whether the given core map style is just a file (not an active query)
 #define CM_ISFILE(cm)     ((cm) == CM_COUNTRIES || (cm) == CM_TERRAIN || (cm) == CM_DRAP \
-                            || (cm) == CM_AURORA || (cm) == CM_WX || (cm) == CM_MUF_RT)
+                            || (cm) == CM_AURORA || (cm) == CM_WX || (cm) == CM_MUF_RT || (cm) == CM_CLOUDS)
 
 typedef struct {
     int maxage;                                 // cache file max age, seconds
@@ -2501,10 +2506,18 @@ class ScrollState {
 
     public:
 
-        void init (int mv, int tv, int nd) {
+        typedef enum {
+            DIR_TOPDOWN,                                // new items are added at the top
+            DIR_BOTUP,                                  // new items are added at the bottom
+            DIR_FROMSETUP,                              // as per scrollTopToBottom()
+            DIR_UNDEF                                   // no yet defined
+        } ScrollDir;
+
+        void init (int mv, int tv, int nd, ScrollDir sd) {
             max_vis = mv;
             top_vis = tv;
             n_data = nd;
+            dir = sd;
         };
 
         void drawScrollUpControl (const SBox &box, uint16_t arrow_color, uint16_t number_color) const;
@@ -2524,12 +2537,13 @@ class ScrollState {
 
         void scrollToNewest (void);
         bool findDataIndex (int display_row, int &array_index) const;
-        int getVisIndices (int &min_i, int &max_i) const;
+        int getVisDataIndices (int &min_i, int &max_i) const;
         int getDisplayRow (int array_index) const;
 
         int max_vis;        // maximum rows in the displayed list
         int top_vis;        // index into the data array being dislayed at the front of the list
         int n_data;         // the number of entries in the data array
+        ScrollDir dir = DIR_UNDEF;
 
     private:
 
@@ -2537,6 +2551,7 @@ class ScrollState {
         void moveTowardsNewer();
         int nMoreAbove (void) const;
         int nMoreBeneath (void) const;
+        bool scrollT2B(void) const;
         SBox newsym_b;
         uint16_t newsym_color;
 };
@@ -2834,6 +2849,9 @@ extern void drawDigit (const SBox &b, int digit, uint16_t lt, uint16_t bg, uint1
 #define AURORA_AUTOMAP_ON       50.0F                   // automap on threshold, percent
 #define AURORA_AUTOMAP_OFF      25.0F                   // automap off threshold, percent
 
+// clouds info
+#define CLOUDS_INTERVAL         3000                    // cloud map interval, seconds
+
 
 /* consolidated space weather enum and stats. #define X to extract desired components.
  * N.B. max name chars NCDXF_B_MAXLEN-1
@@ -3097,7 +3115,8 @@ extern uint16_t getTextWidth (const char str[]);
 extern char *expandENV (const char *fn);
 extern uint16_t maxStringW (char *str, uint16_t maxw);
 extern const char *strcistr (const char *haystack, const char *needle);
-extern int qsString (const void *v1, const void *v2);
+extern int qsAString (const void *v1, const void *v2);
+extern int qsDString (const void *v1, const void *v2);
 extern int strtokens (char *str, char *tokens[], int max_tokens);
 extern void quietStrncpy (char *to, const char *from, int len);
 extern void formatSexa (float dt_hrs, int &a, char &sep, int &b);
@@ -3280,10 +3299,12 @@ extern char *xrayLevel (char *buf, const SpaceWeather_t &xray);
  */
 
 
-#define MIN_WIFI_RSSI (-75)                     // minimum acceptable signal strength, dBm
+#define MIN_WIFI_DBM            (-75)           // minimum acceptable signal strength, dBm
+#define MIN_WIFI_PERCENT        (10)            // minimum acceptable signal strength, percent
 
 extern void runWiFiMeter (bool warn, bool &ignore_on);
-extern bool readWiFiRSSI(int &rssi);
+extern bool readWiFiRSSI(int &rssi, bool &is_dbm);
+
 
 
 

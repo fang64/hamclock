@@ -231,13 +231,27 @@ char live_html[] =  R"_raw_html_(
 
         // send the given key and optionl control and shift modifier codes to the hamclock
         function sendKey (k, c, s) {
-            if (event_verbose)
-                console.log('sending ' + k);
+
+            // a real space would send 'char= ' which doesn't parse so we invent Space name
+            if (k === ' ')
+                k = 'Space';
+
+            // accept only certain non-alphanumeric keys
+            if ((k.length == 1 && (k.charCodeAt(0) < 33 || k.charCodeAt(0) > 126))
+                            || (k.length > 1 && !nonan_chars.find (e => { if (e == k) return true; }))) {
+                if (event_verbose)
+                    console.log('ignoring ' + k);
+                return;
+            }
+            
+            // package up and send
             var msg = 'set_char?char=' + k + '&mod=';
             if (c)
                 msg += 'C';
             if (s)
                 msg += 'S';
+            if (event_verbose)
+                console.log('sending ' + msg);
             sendWSMsg (msg);
         }
 
@@ -251,16 +265,11 @@ char live_html[] =  R"_raw_html_(
             // now that user has done something check if they want to go full screen
             checkFullScreen();
 
-            // local copy for possible modification
-            var key = event.key;
+            // handy
+            const key = event.key;
 
-            // a real space would send 'char= ' which doesn't parse so we invent Space name
-            if (key === ' ')
-                key = 'Space';
-
-            // accept only certain non-alphanumeric keys
-            if (event.metaKey
-                        || (key.length > 1 && !nonan_chars.find (e => { if (e == key) return true; }))) {
+            // ignore meta
+            if (event.metaKey) {
                 if (event_verbose)
                     console.log('ignoring ' + key);
                 return;
@@ -539,7 +548,7 @@ char live_html[] =  R"_raw_html_(
                 sendWSMsg (msg);
             });
 
-            document.addEventListener('paste', e=>{
+            document.addEventListener('paste', e => {
                 let str = e.clipboardData.getData('text/plain');
                 for (let i = 0; i < str.length; i++) {
                     sendKey(str[i]);

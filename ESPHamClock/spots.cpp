@@ -224,7 +224,7 @@ int16_t app_color)
     bool any_older = false;
     bool any_newer = false;
     int min_i, max_i;
-    if (ss.getVisIndices (min_i, max_i) > 0) {
+    if (ss.getVisDataIndices (min_i, max_i) > 0) {
         for (int i = 0; i < ss.n_data; i++) {
             const DXSpot &spot = spots[i];
             if (i < min_i) {

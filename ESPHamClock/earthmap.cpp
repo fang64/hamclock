@@ -1154,8 +1154,8 @@ static void drawMapMenu()
 
     enum MIName {     // menu items -- N.B. must be in same order as mitems[]
         MI_STY_TTL,
-            MI_STR_CRY, MI_STY_TER, MI_STY_DRA, MI_STY_MUF, MI_STY_MRT, MI_STY_AUR, MI_STY_WXX,
-            MI_STY_TOA, MI_STY_REL,
+            MI_STY_CTY, MI_STY_TER, MI_STY_DRA, MI_STY_MUF, MI_STY_MRT, MI_STY_AUR, MI_STY_WXX,
+            MI_STY_CLO, MI_STY_TOA, MI_STY_REL,
         MI_GRD_TTL,
             MI_GRD_NON, MI_GRD_TRO, MI_GRD_LLG, MI_GRD_MAI, MI_GRD_AZM, MI_GRD_CQZ, MI_GRD_ITU,
         MI_PRJ_TTL,
@@ -1176,6 +1176,7 @@ static void drawMapMenu()
             {MENU_AL1OFN, IS_CMROT(CM_MUF_RT),    1, SEC_INDENT, cm_info[CM_MUF_RT].name, 0},
             {MENU_AL1OFN, IS_CMROT(CM_AURORA),    1, SEC_INDENT, cm_info[CM_AURORA].name, 0},
             {MENU_AL1OFN, IS_CMROT(CM_WX),        1, SEC_INDENT, cm_info[CM_WX].name, 0},
+            {MENU_AL1OFN, IS_CMROT(CM_CLOUDS),    1, SEC_INDENT, cm_info[CM_CLOUDS].name, 0},
             {MENU_IGNORE, false,                  1, SEC_INDENT, NULL, 0}, // see below
             {MENU_IGNORE, false,                  1, SEC_INDENT, NULL, 0}, // see below
         {MENU_LABEL, false, 0, PRI_INDENT, "Grid:", 0},
@@ -1246,7 +1247,7 @@ static void drawMapMenu()
         // build new map_rotset
         uint16_t prev_rotset = map_rotset;
         map_rotset = 0;
-        if (mitems[MI_STR_CRY].set)
+        if (mitems[MI_STY_CTY].set)
             scheduleNewCoreMap (CM_COUNTRIES);
         if (mitems[MI_STY_TER].set)
             scheduleNewCoreMap (CM_TERRAIN);
@@ -1260,6 +1261,8 @@ static void drawMapMenu()
             scheduleNewCoreMap (CM_AURORA);
         if (mitems[MI_STY_WXX].set)
             scheduleNewCoreMap (CM_WX);
+        if (mitems[MI_STY_CLO].set)
+            scheduleNewCoreMap (CM_CLOUDS);
         if (mitems[MI_STY_TOA].set)
             scheduleNewCoreMap (CM_PMTOA);
         if (mitems[MI_STY_REL].set)

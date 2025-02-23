@@ -8,8 +8,11 @@
 
 #define MAXBITS 15
 
-const char inflate_copyright[] =
-   " inflate 1.3.1.1 Copyright 1995-2024 Mark Adler ";
+/* removed compiler warning about unused variable
+ * const char inflate_copyright[] =
+ * " inflate 1.3.1.1 Copyright 1995-2024 Mark Adler ";
+ */
+
 /*
   If you use the zlib library in a product, an acknowledgment is welcome
   in the documentation of your product. If for some reason you cannot

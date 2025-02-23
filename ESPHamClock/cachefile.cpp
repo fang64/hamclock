@@ -1,25 +1,73 @@
-/* open a cached file backed by a backend file.
+/* manage cached text files.
  */
 
 #include "HamClock.h"
 
+
+
+/* return whether the given file is at least the minimum size
+ */
+static bool fileSizeOk (const char *path, int min_size)
+{
+    struct stat sbuf;
+    if (stat (path, &sbuf) < 0)
+        Serial.printf ("Cache: size stat(%s) %s\n", path, strerror(errno));
+    else if (sbuf.st_size < min_size)
+        Serial.printf ("Cache: %s too small %ld < %d\n", path, (long)sbuf.st_size, min_size);
+    else {
+        const char *basename = strrchr (path, '/');
+        if (basename)
+            path = basename + 1;
+        Serial.printf ("Cache: %s size ok: %ld >= %d\n", path, (long)sbuf.st_size, min_size);
+        return (true);
+    }
+    return (false);
+}
+
+/* return whether the given file is no older than the given age in seconds
+ */
+static bool fileAgeOk (const char *path, int max_age)
+{
+    struct stat sbuf;
+    if (stat (path, &sbuf) < 0)
+        Serial.printf ("Cache: age stat(%s) %s\n", path, strerror(errno));
+    else {
+        int age = myNow() - sbuf.st_mtime;
+        if (age > max_age)
+            Serial.printf ("Cache: %s too old %d > %d\n", path, age, max_age);
+        else {
+            const char *basename = strrchr (path, '/');
+            if (basename)
+                path = basename + 1;
+            Serial.printf ("Cache: %s age ok: %d <= %d\n", path, age, max_age);
+            return (true);
+        }
+    }
+    return (false);
+}
+
+
+/* open the given local file or download fresh if too old or too small.
+ * if download fails retain fn as long as it's large enough, tolerating too old.
+ */
 FILE *openCachedFile (const char *fn, const char *url, int max_age, int min_size)
 {
     // try local first
-    char local_path[1000];
-    snprintf (local_path, sizeof(local_path), "%s/%s", our_dir.c_str(), fn);
-    FILE *fp = fopen (local_path, "r");
+    char fn_path[1000];
+    snprintf (fn_path, sizeof(fn_path), "%s/%s", our_dir.c_str(), fn);
+    FILE *fp = fopen (fn_path, "r");
     if (fp) {
-        // file exists, now check the age and finite size
-        struct stat sbuf;
-        if (fstat (fileno(fp), &sbuf) == 0 && myNow() - sbuf.st_mtime < max_age && sbuf.st_size > min_size) {
-            Serial.printf ("Cache: using cached %s of %s: age %ld < %d\n", fn, url,
-                                                (long)(myNow() - sbuf.st_mtime), max_age);
+        // file exists, now check the age and size
+        if (fileSizeOk (fn_path, min_size) && fileAgeOk (fn_path, max_age)) {
+            // still good!
             return (fp);
         } else {
+            // open again after download
             fclose (fp);
+            Serial.printf ("Cache: %s not suitable -- downloading %s\n", fn, url);
         }
-    }
+    } else
+        Serial.printf ("Cache: %s not found -- downloading %s\n", fn, url);
 
     // download
     WiFiClient cache_client;
@@ -46,40 +94,54 @@ FILE *openCachedFile (const char *fn, const char *url, int max_age, int min_size
             goto out;
         }
 
-        // copy
-        char buf[1024];
-        while (getTCPLine (cache_client, buf, sizeof(buf), NULL))
-            fprintf (fp, "%s\n", buf);
+        // friendly
+        if (fchown (fileno(fp), getuid(), getgid()) < 0)
+            Serial.printf ("Cache: chown(%s,%d,%d) %s\n", tmp_path, getuid(), getgid(), strerror(errno));
 
-        // check io before closing
-        bool ok = !ferror (fp);
+        // download
+        char buf[1024];
+        bool io_ok = true;
+        while (io_ok && getTCPLine (cache_client, buf, sizeof(buf), NULL)) {
+            if (fprintf (fp, "%s\n", buf) < 1) {
+                io_ok = false;
+                Serial.printf ("Cache: write(%s) %s\n", tmp_path, strerror(errno));
+            }
+        }
         fclose (fp);
 
-        // rename if ok, else remove tmp
-        if (ok && rename (tmp_path, local_path) == 0) {
-            Serial.printf ("Cache: download %s ok\n", url);
-        } else {
-            (void) unlink (tmp_path);
-            Serial.printf ("Cache: download %s failed\n", url);
+        // tmp replaces fn_path if io and size ok
+        if (io_ok && fileSizeOk (tmp_path, min_size)) {
+            if (rename (tmp_path, fn_path) == 0)
+                Serial.printf ("Cache: fresh %s installed\n", fn);
+            else
+                Serial.printf ("Cache: rename(%s,%s) %s\n", tmp_path, fn_path, strerror(errno));
+        }
+
+        // clean up tmp
+        if (access (tmp_path, F_OK) == 0) {
+            if (unlink (tmp_path) < 0)
+                Serial.printf ("Cache: unlink(%s): %s\n", tmp_path, strerror(errno));
         }
     }
 
   out:
-    
+
     // insure socket is closed
     cache_client.stop();
 
-    // try again whether new or reusing old
-    fp = fopen (local_path, "r");
-    if (fp)
+    // open again but now tolerate too old if must
+    fp = fopen (fn_path, "r");
+    if (fp && fileSizeOk (fn_path, min_size))
         return (fp);
-    Serial.printf ("Cache: %s: %s\n", fn, strerror(errno));
+
+    Serial.printf ("Cache: updating %s failed\n", fn);
     return (NULL);
 }
 
 /* remove files that contain the given string and older than 2x the given age in seconds.
+ * return whether any where removed.
  */
-void cleanCache (const char *contains, int max_age)
+bool cleanCache (const char *contains, int max_age)
 {
     // 2x just to let it linger
     max_age *= 2;
@@ -88,7 +150,7 @@ void cleanCache (const char *contains, int max_age)
     DIR *dirp = opendir (our_dir.c_str());
     if (dirp == NULL) {
         Serial.printf ("Cache: %s: %s\n", our_dir.c_str(), strerror(errno));
-        return;
+        return (false);
     }
 
     // malloced list of malloced names to be removed (so we don't modify dir while scanning)
@@ -127,13 +189,20 @@ void cleanCache (const char *contains, int max_age)
     closedir (dirp);
 
     // remove files and clean up rm_files along the way
+    bool rm_any = false;
     for (int i = 0; i < n_rm; i++) {
         RMFile &rmf = rm_files[i];
-        Serial.printf ("Cache: rm %s %ld > %d s old\n", rmf.bfn, rmf.age, max_age);
-        if (unlink (rmf.ffn) < 0)
+        if (unlink (rmf.ffn) == 0) {
+            Serial.printf ("Cache: rm %s %ld > %d s old\n", rmf.bfn, rmf.age, max_age);
+            rm_any = true;
+        } else {
             Serial.printf ("Cache: unlink(%s): %s\n", rmf.ffn, strerror(errno));
+        }
         free (rmf.ffn);
         free (rmf.bfn);
     }
     free (rm_files);
+
+    // return whether any were removed
+    return (rm_any);
 }

@@ -89,15 +89,16 @@ static MCPPoller onair_poller;                  // pin polling control
 SBox desrss_b, dxsrss_b;
 
 
-// rotate message below call sign through several display options
+// messages below call sign rotate through several display options
 typedef enum {
-    WDSP_RSSI,                                  // show RSSI
-    WDSP_LIP,                                   // show local IP
-    WDSP_PIP,                                   // show public IP
-    WDSP_CPUTEMP,                               // show CPU temperature
-    WDSP_N,                                     // n values
-} WiFiDisplay_t;
-static WiFiDisplay_t wdsp = WDSP_RSSI;
+    ROTM_RSSI,                                  // show RSSI
+    ROTM_LIP,                                   // show local IP
+    ROTM_PIP,                                   // show public IP
+    ROTM_CPUTEMP,                               // show CPU temperature
+    ROTM_FSUSE,                                 // show file system usage
+    ROTM_N,                                     // n values
+} RotMsg_t;
+static RotMsg_t rot_msg = ROTM_RSSI;
 
 // WiFi touch control
 TouchType wifi_tt;
@@ -135,7 +136,7 @@ const char *detime_names[DETIME_N] = {
 static void drawVersion(bool force);
 static void checkTouch(void);
 static void drawUptime(bool force);
-static void drawWiFiInfo(void);
+static void drawRotatingMessage(void);
 static void toggleLockScreen(void);
 static void setDXPrefixOverride (const char *ovprefix);
 static void unsetDXPrefixOverride (void);
@@ -176,6 +177,10 @@ static void showDefines(void)
 
     #if defined(_IS_FREEBSD)
         _PR_MAC(_IS_FREEBSD);
+    #endif
+
+    #if defined(_IS_NETBSD)
+        _PR_MAC(_IS_NETBSD);
     #endif
 
     #if defined(_IS_LINUX_RPI)
@@ -655,7 +660,7 @@ void loop()
 
         // other goodies
         drawUptime(false);
-        drawWiFiInfo();
+        drawRotatingMessage();
         drawVersion(false);
         followBrightness();
         checkOnAirPin();
@@ -665,7 +670,6 @@ void loop()
         updateNMEALoc();
         updateCallsign (false);
         pollRadio();
-        checkFSFull();
 
         // check for touch events
         checkTouch();
@@ -938,18 +942,19 @@ static void checkTouch()
         initScreen();
     } else if (inBox (s, wifi_b)) {
         // depends on what is currently displayed
-        switch (wdsp) {
-        case WDSP_RSSI:
+        switch (rot_msg) {
+        case ROTM_RSSI:
             runWiFiMeter (false, rssi_ignore);
             break;
-        case WDSP_LIP:
-            break;
-        case WDSP_PIP:
-            break;
-        case WDSP_CPUTEMP:
+        case ROTM_CPUTEMP:
             plotCPUTempHistory();
             break;
-        case WDSP_N:
+        case ROTM_FSUSE:        // fallthru
+        case ROTM_LIP:  // fallthru
+        case ROTM_PIP:
+            // sorry, nothing fun
+            break;
+        case ROTM_N:
             break;
         }
     } else if (overRSS(s)) {
@@ -1176,7 +1181,7 @@ bool waiting4DXPath()
 static void checkOnAirPin()
 {
     // force on for debugging else read IO line which is grounded when active
-    bool on_now = debugLevel (DEBUG_RADIO, 5) || !readMCPPoller (onair_poller);
+    bool on_now = debugLevel (DEBUG_RIG, 5) || !readMCPPoller (onair_poller);
     setOnAirHW (on_now);
 }
 
@@ -1240,9 +1245,9 @@ static void drawVersion(bool force)
     tft.print (line);
 }
 
-/* draw wifi signal strength or IP or CPU temp occasionally below cs_info
+/* draw one of several possible rotating message beneath the call sign.
  */
-static void drawWiFiInfo()
+static void drawRotatingMessage()
 {
     // just once every few seconds is fine
     static uint32_t prev_ms;
@@ -1253,36 +1258,37 @@ static void drawWiFiInfo()
     tft.setTextColor (GRAY);
 
     // rotate through the possibilities until one works, ie, puts something into str[]
-    // N.B. we assume at least one case will set this!
+    // N.B. we assume at least one case will do this!
     char str[40] = "";                          // \0 until known
+    bool show_red = false;                      // warning
 
     do {
 
         // next
-        wdsp = (WiFiDisplay_t)((((int)wdsp)+1) % WDSP_N);
+        rot_msg = (RotMsg_t)((((int)rot_msg)+1) % ROTM_N);
 
-        switch (wdsp) {
+        switch (rot_msg) {
 
-        case WDSP_RSSI: {
+        case ROTM_RSSI: {
 
             static int prev_logv;               // only log large changes
 
             // read
             int rssi;
-            if (millis() > 30000 && readWiFiRSSI(rssi)) {       // initial ignore, reports of flakeness
-
-                // Serial.printf ("**************************** %d\n", rssi);
+            bool is_dbm;
+            if (millis() > 30000 && readWiFiRSSI(rssi, is_dbm)) {    // initial ignore, reports of flakeness
 
                 // blend, or use as-is if first time
                 rssi_avg = prev_logv == 0 ? rssi : roundf(rssi*RSSI_ALPHA + rssi_avg*(1-RSSI_ALPHA));
+                bool ok = (is_dbm && rssi_avg >= MIN_WIFI_DBM) || (!is_dbm && rssi_avg >= MIN_WIFI_PERCENT);
 
                 // show meter if too low unless ignored
-                if (!rssi_ignore && rssi_avg < MIN_WIFI_RSSI)
+                if (!rssi_ignore && !ok)
                     runWiFiMeter (true, rssi_ignore);
 
                 // display value
-                snprintf (str, sizeof(str), "WiFi %4d dBm", rssi_avg);
-                tft.setTextColor (rssi_avg < MIN_WIFI_RSSI ? RA8875_RED : GRAY);
+                snprintf (str, sizeof(str), "WiFi %4d%s", rssi_avg, is_dbm ? " dBm" : "%");
+                show_red = !ok;
 
                 // log if changed more than a few db
                 if (abs(rssi_avg-prev_logv) > 3) {
@@ -1294,7 +1300,7 @@ static void drawWiFiInfo()
 
             break;
 
-        case WDSP_LIP: {
+        case ROTM_LIP: {
 
             IPAddress ip = WiFi.localIP();
             bool net_ok = ip[0] != '\0';
@@ -1308,7 +1314,7 @@ static void drawWiFiInfo()
 
             break;
 
-        case WDSP_PIP:
+        case ROTM_PIP:
 
             if (showPIP()) {
                 if (remote_addr[0]) {
@@ -1321,7 +1327,7 @@ static void drawWiFiInfo()
 
             break;
 
-        case WDSP_CPUTEMP: {
+        case ROTM_CPUTEMP: {
 
             float T;
             if (getCPUTemp (T)) {
@@ -1334,7 +1340,22 @@ static void drawWiFiInfo()
 
             break;
 
-        case WDSP_N:
+        case ROTM_FSUSE: {
+
+            long long cap, used;
+            if (getFSSize (cap, used)) {
+                bool really_is_full;
+                snprintf (str, sizeof(str), "Disk %lld%% full", 100*used/cap);
+                show_red = checkFSFull (really_is_full);
+                if (really_is_full)
+                    fatalError ("Disk is full");
+            }
+            }
+
+            break;
+
+
+        case ROTM_N:
             // lint -- never get here
             break;
 
@@ -1344,6 +1365,7 @@ static void drawWiFiInfo()
 
     // show
     selectFontStyle (LIGHT_FONT, FAST_FONT);
+    tft.setTextColor (show_red ? RA8875_RED : GRAY);
     uint16_t sw = getTextWidth(str);
     fillSBox (wifi_b, RA8875_BLACK);
     tft.setCursor (wifi_b.x+(wifi_b.w-sw)/2, wifi_b.y+1);
@@ -1699,11 +1721,11 @@ void drawScreenLock()
         uint16_t hw = lkscrn_b.w/2;
 
         tft.fillRect (lkscrn_b.x, lkscrn_b.y+hh, lkscrn_b.w, hh, RA8875_WHITE);
-        tft.drawLine (lkscrn_b.x+hw, lkscrn_b.y+hh+2, lkscrn_b.x+hw, lkscrn_b.y+hh+hh/2, RA8875_BLACK);
+        tft.drawLine (lkscrn_b.x+hw, lkscrn_b.y+hh+2, lkscrn_b.x+hw, lkscrn_b.y+hh+hh/2, 2, RA8875_BLACK);
         tft.drawCircle (lkscrn_b.x+hw, lkscrn_b.y+hh, hw, RA8875_WHITE);
 
         if (!screenIsLocked())
-            tft.fillRect (lkscrn_b.x+hw, lkscrn_b.y, hw+1, hh, RA8875_BLACK);
+            tft.fillRect (lkscrn_b.x+hw+2, lkscrn_b.y, hw, hh, RA8875_BLACK);
     }
 }
 
@@ -2088,7 +2110,7 @@ bool timesUp (uint32_t *prev, uint32_t atleast_dt)
  * include the ip in the name which identifies us using our public IP address.
  * return whether all ok.
  */
-static bool postDiags (void)
+bool postDiags (void)
 {
     WiFiClient pd_client;
     bool ok = false;
@@ -2237,7 +2259,7 @@ static void runShutdownMenu(void)
 
     // boxes
     uint16_t menu_x = locked ? 150 : 114;       // just one entry if locked
-    uint16_t menu_y = locked ? 120 : 34;        // just one entry if locked
+    uint16_t menu_y = locked ? 120 : 37;        // just one entry if locked
     SBox menu_b = {menu_x, menu_y, 0, 0};       // shrink wrap size
     SBox ok_b;
 
@@ -2265,16 +2287,20 @@ static void runShutdownMenu(void)
         }
 
         if (mitems[3].set) {
-            bool ok = postDiags();
-            const char *str = ok ? "Success" : "Fail";
-            menuMsg (menu_b, ok ? RA8875_GREEN : RA8875_RED, str);
+            if (RUSure (menu_b, mitems[3].label)) {
+                menuMsg (menu_b, RA8875_WHITE, "posting...");
+                if (postDiags())
+                    menuMsg (menu_b, RA8875_GREEN, "posting complete");
+                else
+                    menuMsg (menu_b, RA8875_RED, "posting failed");
+            }
         }
 
         if (mitems[4].set) {
             if (RUSure (menu_b, mitems[4].label) && askPasswd ("restart", true)) {
                 Serial.print ("Restarting\n");
                 eraseScreen();  // fast touch feedback
-                doReboot(false);
+                doReboot(false, false);
             }
         }
 
@@ -2355,10 +2381,10 @@ static void runShutdownMenu(void)
 
 /* reboot
  */
-void doReboot(bool minus_k)
+void doReboot(bool minus_K, bool minus_0)
 {
     defaultState();
-    ESP.restart(minus_k);
+    ESP.restart (minus_K, minus_0);
     for(;;);
 }
 
@@ -2499,7 +2525,7 @@ void fatalError (const char *fmt, ...)
                 if ((typed_ok && select_restart) || (kbc == CHAR_NONE && inBox(s, r_b))) {
                     drawStringInBox (r_msg, r_b, true, RA8875_WHITE);
                     Serial.print ("Fatal error: rebooting\n");
-                    doReboot(false);
+                    doReboot(false, false);
                 }
 
                 if ((typed_ok && !select_restart) || (kbc == CHAR_NONE && inBox(s, x_b))) {

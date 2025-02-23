@@ -141,11 +141,18 @@ void quietStrncpy (char *to, const char *from, int len)
     snprintf (to, len, "%.*s", len-1, from);
 }
 
-/* qsort-style comparison of two strings
+/* qsort-style comparison of two strings in ascending order (a b c d : a will be first in result)
  */
-int qsString (const void *v1, const void *v2)
+int qsAString (const void *v1, const void *v2)
 {
     return (strcmp (*(char**)v1, *(char**)v2));
+}
+
+/* qsort-style comparison of two strings in descending order (a b c d : a will be last in result)
+ */
+int qsDString (const void *v1, const void *v2)
+{
+    return (strcmp (*(char**)v2, *(char**)v1));
 }
 
 

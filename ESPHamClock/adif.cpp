@@ -406,7 +406,7 @@ void updateADIF (const SBox &box, bool refresh)
     // restart if fresh
     if (refresh) {
         resetADIFMem();
-        adif_ss.init ((box.h - LISTING_Y0)/LISTING_DY, 0, 0);
+        adif_ss.init ((box.h - LISTING_Y0)/LISTING_DY, 0, 0, adif_ss.DIR_FROMSETUP);
         adif_ss.initNewSpotsSymbol (box, ADIF_COLOR);
         adif_ss.scrollToNewest();
         showing_set_adif = false;
@@ -529,7 +529,7 @@ bool getADIFPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll)
     // scan listed spots for one located at ms
     uint16_t y0 = plot_b[pp].y + LISTING_Y0;
     int min_i, max_i;
-    if (adif_ss.getVisIndices (min_i, max_i) > 0) {
+    if (adif_ss.getVisDataIndices (min_i, max_i) > 0) {
         for (int i = min_i; i <= max_i; i++) {
             listrow_b.y = y0 + adif_ss.getDisplayRow(i) * LISTING_DY;
             if (inBox (ms, listrow_b)) {

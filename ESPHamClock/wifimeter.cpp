@@ -5,6 +5,8 @@
 
 #define WN_MIN_DB   (-80)                       // minimum graphed dBm
 #define WN_MAX_DB   (-20)                       // max graphed dBm
+#define WN_MIN_PC   0                           // minimum graphed percentage
+#define WN_MAX_PC   100                         // max graphed percentage
 #define WN_TRIS     10                          // current rssi triangle marker half-size
 #define WN_MMTRIS   5                           // min/max rssi triangle marker half-size
 #define MM_COLOR    RA8875_WHITE                // min/max triangle color
@@ -12,34 +14,53 @@
 #define BUTTON_H    35                          // button height
 #define BUTTON_M    40                          // button l-r margin
 
-// handy conversion of RSSI to graphics x
-#define RSSI_X(R)   ((uint16_t)(rssi_b.x + rssi_b.w*(CLAMPF((R),WN_MIN_DB,WN_MAX_DB) - WN_MIN_DB)/(WN_MAX_DB-WN_MIN_DB)))
 
 // state
 static bool wifi_meter_up;              // whether visible now
 static int rssi_min, rssi_max;          // range seen so far
+static int min_plot, max_plot, min_ok;  // WN_MIN_DB/PC or WN_MAX_DB/PC or MIN_WIFI_DBM/PC depending on units
+
+// handy conversion of RSSI to graphics x
+#define RSSI_X(B,R)   ((uint16_t)(B.x + B.w*(CLAMPF((R),min_plot,max_plot) - min_plot)/(max_plot-min_plot)))
 
 
 /* given a screen coord x, return its wifi power color for drawing in the given box
+ * color scale runs from red @ min_plot, yellow @ min_ok and green @ max_plot.
+ * HSV_2_RGB565 hue 0 is red, 255/3 = 85 is green
  */
 static uint16_t getWiFiMeterColor (const SBox &box, uint16_t x)
 {
-    // make color scale from red @ WN_MIN_DB, yellow @ MIN_WIFI_RSSI and green @ WN_MAX_DB.
-    // use power scale because we don't want to assume MIN_WIFI_RSSI is midway.
-    static float pwr;
-    if (pwr == 0) {
-        // first call, find power that puts yellow at MIN_WIFI_RSSI, where is halfway from red to green
-        pwr = logf (0.5F) / logf ((float)(MIN_WIFI_RSSI-WN_MIN_DB)/(WN_MAX_DB-WN_MIN_DB));
-        // printf ("*************** pwr %g\n", pwr);
-    }
-
     if (x <= box.x)
         return (RA8875_RED);
     if (x >= box.x + box.w)
         return (RA8875_GREEN);
-    float frac = powf((float)(x - box.x)/box.w, pwr);
-    uint8_t h = 85*frac;                // hue 0 is red, 255/3 = 85 is green
-    return (HSV_2_RGB565(h,255,255));
+
+    if (min_plot == WN_MIN_DB) {
+        // dBm use power scale because we don't want to assume min_ok is midway.
+        static float pwr;
+        if (pwr == 0) {
+            // first call, find power that puts yellow at min_ok, where is halfway from red to green
+            pwr = logf (0.5F) / logf ((float)(min_ok-min_plot)/(max_plot-min_plot));
+            // printf ("*************** pwr %g\n", pwr);
+        }
+
+        float frac = powf((float)(x - box.x)/box.w, pwr);
+        uint8_t h = 85*frac;
+        return (HSV_2_RGB565(h,255,255));
+
+    } else {
+        // linear percentage
+        int ok_x = RSSI_X(box, min_ok);
+        if (x < ok_x) {
+            // red .. yellow (h=42)
+            uint8_t h = 42 * (x - box.x) / (RSSI_X(box, min_ok) - box.x);
+            return (HSV_2_RGB565(h,255,255));
+        } else {
+            // yellow (h=42).. green (h=85)
+            uint8_t h = 42 + (85 - 42) * (x - RSSI_X(box, min_ok)) / (box.x+box.w - RSSI_X(box, min_ok));
+            return (HSV_2_RGB565(h,255,255));
+        }
+    }
 }
 
 
@@ -61,26 +82,35 @@ static void drawCMarker (uint16_t y, uint16_t x, uint16_t color)
 }
 
 
-/* read wifi signal strength.
+/* read wifi signal strength and whether it is dBm or percentage.
  * also set min and max so it's updated even when we're not up.
  * return whether ok.
  */
-bool readWiFiRSSI(int &rssi)
+bool readWiFiRSSI(int &rssi, bool &is_dbm)
 {
-    int r = WiFi.RSSI();
+    int value;
+    if (!WiFi.RSSI (value, is_dbm))
+        return (false);
 
-    // r = WN_MIN_DB + millis()*random(WN_MAX_DB-WN_MIN_DB)/100000;     // RBF
+    if (is_dbm) {
+        if (value < 10) {                       // 10 is crazy hi
+            rssi = value;
+            if (rssi_min == 0 || value < rssi_min)
+                rssi_min = rssi;
+            if (rssi_max == 0 || value > rssi_max)
+                rssi_max = rssi;
+            return (true);
 
-    if (r < 10) {                       // 10 is crazy hi
-        rssi = r;
-        if (rssi_min == 0 || r < rssi_min)
+        } else {
+            return (false);
+        }
+    } else {
+        rssi = value;
+        if (rssi_min == 0 || value < rssi_min)
             rssi_min = rssi;
-        if (rssi_max == 0 || r > rssi_max)
+        if (rssi_max == 0 || value > rssi_max)
             rssi_max = rssi;
         return (true);
-
-    } else {
-        return (false);
     }
 }
 
@@ -95,6 +125,25 @@ void runWiFiMeter(bool warn, bool &ignore_on)
     eraseScreen();
     closeGimbal();
 
+    // units
+    int rssi;
+    bool is_dbm;
+    const char *units;
+    if (!readWiFiRSSI(rssi, is_dbm))
+        fatalError ("no wifi to plot");
+    if (is_dbm) {
+        min_plot = WN_MIN_DB;
+        max_plot = WN_MAX_DB;
+        min_ok = MIN_WIFI_DBM;
+        units = " dBm";                         // note leading blank
+    } else {
+        min_plot = WN_MIN_PC;
+        max_plot = WN_MAX_PC;
+        min_ok = MIN_WIFI_PERCENT;
+        units = "%";
+    }
+
+    // layout
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
     uint16_t y = 35;
 
@@ -102,7 +151,7 @@ void runWiFiMeter(bool warn, bool &ignore_on)
     if (warn) {
         tft.setCursor (75, y);
         tft.setTextColor(RA8875_WHITE);
-        tft.printf ("WiFi signal strength is too low -- recommend at least %d dBm", MIN_WIFI_RSSI);
+        tft.printf ("WiFi signal strength is too low -- recommend at least %d%s", min_ok, units);
     } else {
         tft.setCursor (100, y);
         tft.setTextColor(RA8875_WHITE);
@@ -166,25 +215,25 @@ void runWiFiMeter(bool warn, bool &ignore_on)
     tft.setTextColor(RA8875_WHITE);
     for (uint16_t i = rssi_b.x; i < rssi_b.x + rssi_b.w; i++)
         tft.fillRect (i, rssi_b.y, 1, rssi_b.h, getWiFiMeterColor (rssi_b,i));
-    for (int rssi = WN_MIN_DB+10; rssi < WN_MAX_DB; rssi += 10) {
-        uint16_t x = RSSI_X(rssi);
+    for (int rssi = min_plot+10; rssi < max_plot; rssi += 10) {
+        uint16_t x = RSSI_X(rssi_b, rssi);
         tft.drawLine (x, rssi_b.y, x, rssi_b.y+rssi_b.h/5, RA8875_BLACK);
     }
 
     // draw labels
     tft.setCursor (rssi_b.x - 20, rssi_b.y + rssi_b.h + 2*WN_TRIS + 25);
-    tft.print (WN_MIN_DB); tft.print (" dBm");
+    tft.print (min_plot); tft.print (units);
     tft.setCursor (rssi_b.x + rssi_b.w - 20, rssi_b.y + rssi_b.h + 2*WN_TRIS + 25);
-    tft.print (WN_MAX_DB);
+    tft.print (max_plot);
 
-    uint16_t ok_x = RSSI_X(MIN_WIFI_RSSI);
+    uint16_t ok_x = RSSI_X(rssi_b, min_ok);
     tft.setCursor (ok_x - 20, rssi_b.y - 2*WN_MMTRIS-5);
-    tft.print (MIN_WIFI_RSSI);
+    tft.print (min_ok);
     tft.drawLine (ok_x, rssi_b.y, ok_x, rssi_b.y + rssi_b.h, RA8875_BLACK);
 
     // draw initial min/max
-    uint16_t min_x = RSSI_X(rssi_min);
-    uint16_t max_x = RSSI_X(rssi_max);
+    uint16_t min_x = RSSI_X(rssi_b, rssi_min);
+    uint16_t max_x = RSSI_X(rssi_b, rssi_max);
     uint16_t marker_y = rssi_b.y;
     drawMMMarker (marker_y, min_x, getWiFiMeterColor (rssi_b,min_x));
     drawMMMarker (marker_y, max_x, getWiFiMeterColor (rssi_b,max_x));
@@ -195,7 +244,6 @@ void runWiFiMeter(bool warn, bool &ignore_on)
     bool done = false;
     uint32_t log_t = millis();
     int prev_rssi_x = rssi_b.x + 1;
-    int rssi = 0;
     do {
 
         // erase real-time marker and value
@@ -203,11 +251,11 @@ void runWiFiMeter(bool warn, bool &ignore_on)
         tft.fillRect (rssi_b.x + rssi_b.w/2 - 20, rssi_b.y + rssi_b.h + 2*WN_TRIS + 1, 40, 30, RA8875_BLACK);
 
         // read and update
-        if (readWiFiRSSI(rssi)) {
+        if (readWiFiRSSI(rssi, is_dbm)) {
 
             // update min/max if changed -- do both in case they overlap
-            uint16_t new_min_x = RSSI_X(rssi_min);
-            uint16_t new_max_x = RSSI_X(rssi_max);
+            uint16_t new_min_x = RSSI_X(rssi_b, rssi_min);
+            uint16_t new_max_x = RSSI_X(rssi_b, rssi_max);
             if (new_min_x != min_x || new_max_x != max_x) {
                 drawMMMarker (marker_y, min_x, RA8875_BLACK);
                 drawMMMarker (marker_y, max_x, RA8875_BLACK);
@@ -218,7 +266,7 @@ void runWiFiMeter(bool warn, bool &ignore_on)
             }
 
             // show current
-            uint16_t rssi_x = RSSI_X(rssi);
+            uint16_t rssi_x = RSSI_X(rssi_b, rssi);
             drawCMarker (rssi_b.y+rssi_b.h, rssi_x, getWiFiMeterColor (rssi_b,rssi_x));
             tft.setCursor (rssi_b.x + rssi_b.w/2 - 20, rssi_b.y + rssi_b.h + 2*WN_TRIS + 25);
             tft.setTextColor(RA8875_WHITE);
@@ -259,8 +307,7 @@ void runWiFiMeter(bool warn, bool &ignore_on)
                 wdDelay (300);
                 drawStringInBox (reset_lbl, reset_b, false, RA8875_GREEN);
                 rssi_min = rssi_max = 0;
-                int rssi;
-                (void) readWiFiRSSI(rssi);
+                (void) readWiFiRSSI(rssi,is_dbm);
             }
 
         } else

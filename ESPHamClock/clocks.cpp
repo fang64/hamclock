@@ -552,7 +552,7 @@ static void drawAuxTime (bool all, const time_t &t_wo, const tmElements_t &tm_wo
             time_t year0 = makeTime (tm_doy);
             int doy = (t_wo - year0) / (24*3600) + 1;
 
-            snprintf (buf, sizeof(buf), "%s DOY %d  %d", dayShortStr(tm_wo.Wday), doy, year);
+            snprintf (buf, sizeof(buf), "%s DoY %d  %d", dayShortStr(tm_wo.Wday), doy, year);
             uint16_t bw = getTextWidth (buf);
             int16_t x = auxtime_b.x + (auxtime_b.w-bw)/2;
             if (x < 0)

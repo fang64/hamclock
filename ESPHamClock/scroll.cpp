@@ -1,7 +1,7 @@
 /* handy class to manage the scroll controls used in several panes.
  *
  * assumes data array is sorted oldest first. displayed list can either show newest entry
- * on top or bottom row, depending on scrollTopToBottom():
+ * on top or bottom row, depending on scrollT2B():
  *   if true (newest is shown on top) then scrolling Up means show Newer entries and Down means Older.
  *   if false (newest is shown at the bottom) then scrolling Up means show Older entries and Down means Newer.
  * The data array and its state variables are exactly the same either way, only the displayed rows are
@@ -19,7 +19,7 @@
  *
  * example 1: n_data 7, max_vis 3, scrolled to show newest data
  *
- *  scrollTopToBottom() is true:
+ *  scrollT2B() is true:
  *  
  *    top_vis  6 |  G  |  <------|        display row 0, ie, top row shows newest data
  *             5 |  F  |       max_vis    display row 1
@@ -30,7 +30,7 @@
  *             0 |  A  |                  oldest data array entry at index 0
  *               -------
  *  
- *  scrollTopToBottom() is false, ie, srolling bottom-to-top:
+ *  scrollT2B() is false, ie, srolling bottom-to-top:
  *  
  *               -------
  *             0 |  A  |                  oldest data array entry at index 0
@@ -44,7 +44,7 @@
  *
  * example 2: n_data 3, max_vis 6, scrolled to show newest data
  *
- *  scrollTopToBottom() is true:
+ *  scrollT2B() is true:
  *  
  *    top_vis  2 |  C  |  <------|        display row 0, ie, top row shows newest data
  *             1 |  B  |         |        display row 1
@@ -53,7 +53,7 @@
  *                               |        display row 4 empty
  *                        <------|        display row 5 empty
  *  
- *   scrollTopToBottom() is false, ie, srolling bottom-to-top:
+ *   scrollT2B() is false, ie, srolling bottom-to-top:
  *  
  *                        <------|        display row 0 empty
  *                               |        display row 1 empty
@@ -226,7 +226,7 @@ void ScrollState::moveTowardsNewer()
  */
 void ScrollState::scrollDown (void)
 {
-    if (scrollTopToBottom())
+    if (scrollT2B())
         moveTowardsOlder();
     else
         moveTowardsNewer();
@@ -236,7 +236,7 @@ void ScrollState::scrollDown (void)
  */
 void ScrollState::scrollUp (void)
 {
-    if (scrollTopToBottom())
+    if (scrollT2B())
         moveTowardsNewer();
     else
         moveTowardsOlder();
@@ -276,7 +276,7 @@ bool ScrollState::atNewest (void) const
 int ScrollState::nMoreAbove (void) const
 {
     int n;
-    if (scrollTopToBottom())
+    if (scrollT2B())
         n = n_data - top_vis - 1;
     else
         n = top_vis - max_vis + 1;
@@ -288,7 +288,7 @@ int ScrollState::nMoreAbove (void) const
 int ScrollState::nMoreBeneath (void) const
 {
     int n;
-    if (scrollTopToBottom())
+    if (scrollT2B())
         n = top_vis - max_vis + 1;
     else
         n = n_data - top_vis - 1;
@@ -311,7 +311,7 @@ bool ScrollState::findDataIndex (int display_row, int &array_index) const
 {
     int i;
 
-    if (scrollTopToBottom())
+    if (scrollT2B())
         i = top_vis - display_row;
     else
         i = top_vis - max_vis + 1 + display_row;
@@ -326,7 +326,7 @@ bool ScrollState::findDataIndex (int display_row, int &array_index) const
 /* pass back the min and max data _array_ indices currently visible and return total row count.
  * use getDisplayRow() to convert to display row.
  */
-int ScrollState::getVisIndices (int &min_i, int &max_i) const
+int ScrollState::getVisDataIndices (int &min_i, int &max_i) const
 {
     // N.B. inclusivity used for computing n below gives 1 when there is no data
     if (n_data == 0)
@@ -344,16 +344,30 @@ int ScrollState::getVisIndices (int &min_i, int &max_i) const
     return (n);
 }
 
-/* given a data array index ala getVisIndices, return the display row number starting with 0 on top.
+/* given a data array index ala getVisDataIndices, return the display row number starting with 0 on top.
  */
 int ScrollState::getDisplayRow (int array_index) const
 {
     int i;
 
-    if (scrollTopToBottom())
+    if (scrollT2B())
         i = top_vis - array_index;
     else
         i = array_index - (top_vis - (max_vis-1));
 
     return (i);
+}
+
+/* return whether to scroll top-to-bottom else bottom-to-top
+ */
+bool ScrollState::scrollT2B(void) const
+{
+    if (dir == DIR_FROMSETUP)
+        return (scrollTopToBottom());
+    if (dir == DIR_TOPDOWN)
+        return (true);
+    if (dir == DIR_BOTUP)
+        return (false);
+    fatalError ("scrollT2B undefined");
+    return (false);
 }

@@ -276,6 +276,36 @@ static bool installFilePixels (const char *dfile, const char *nfile)
         return (ok);
 }
 
+/* prepare and test whether the query files for the given time style and MHz are already local.
+ * N.B. query[] nfn[] and dfn[] are all the same length of qdn_len.
+ */
+static bool checkDayNightFiles (int yr, int mo, int hr, const char *page, const char *style,
+const float MHz, char query[], char dfn[], char nfn[], size_t qdn_len)
+{
+        static const char qfmt[] = "YEAR=%d&MONTH=%d&UTC=%d&TXLAT=%.3f&TXLNG=%.3f&PATH=%d&WATTS=%d&WIDTH=%d&HEIGHT=%d&MHZ=%.2f&TOA=%.1f&MODE=%d&TOA=%.1f";
+
+        snprintf (query, qdn_len, qfmt,
+                    yr, mo, hr, de_ll.lat_d, de_ll.lng_d, show_lp, bc_power, ZOOM_W, ZOOM_H,
+                    MHz, bc_toa, bc_modevalue, bc_toa);
+
+        // by storing the entire query in the file name we easily know if a new download is needed.
+        snprintf (dfn, qdn_len, "map-D-%s-%s-%010u.bmp", style, page, stringHash(query));
+        snprintf (nfn, qdn_len, "map-N-%s-%s-%010u.bmp", style, page, stringHash(query));
+
+        bool ok = false;
+        FILE *fp = fopenOurs (dfn, "r");
+        if (fp) {
+            fclose (fp);
+            fp = fopenOurs (nfn, "r");
+            if (fp) {
+                fclose (fp);
+                ok = true;
+            }
+        }
+
+        return (ok);
+}
+
 /* install maps that require a query unless file with same query already exists.
  * page is the fetch*.pl CGI handler, we add the query here based on current circumstances.
  * clean style cache of any older than maxage.
@@ -284,43 +314,44 @@ static bool installFilePixels (const char *dfile, const char *nfile)
 static bool installQueryMaps (const char *page, const char *msg, const char *style, const float MHz,
 long maxage)
 {
-        // get clock time
+        // fresh start
+        invalidatePixels();
+        (void) cleanCache (style, 3*maxage);
+
+        // get user clock time
         time_t t = nowWO();
         int yr = year(t);
         int mo = month(t);
         int hr = hour(t);
 
-        // prepare query
-        char query[200];
-        snprintf (query, sizeof(query),
-            "YEAR=%d&MONTH=%d&UTC=%d&TXLAT=%.3f&TXLNG=%.3f&PATH=%d&WATTS=%d&WIDTH=%d&HEIGHT=%d&MHZ=%.2f&TOA=%.1f&MODE=%d&TOA=%.1f",
-            yr, mo, hr, de_ll.lat_d, de_ll.lng_d, show_lp, bc_power, ZOOM_W, ZOOM_H,
-            MHz, bc_toa, bc_modevalue, bc_toa);
+        // required buffers
+        #define QBUFLEN 200
+        char query[QBUFLEN];
+        char q_dfn[QBUFLEN];
+        char q_nfn[QBUFLEN];
 
-        // Serial.printf ("%s query: %s\n", style, query);
-
-        // insure fresh start
-        invalidatePixels();
-        cleanCache (style, maxage);
-
-        // by storing the entire query in the file name we easily know if a new download is needed.
-        char q_dfn[200];
-        char q_nfn[200];
-        snprintf (q_dfn, sizeof(q_dfn), "map-D-%s-%s-%010u.bmp", style, page, stringHash(query));
-        snprintf (q_nfn, sizeof(q_nfn), "map-N-%s-%s-%010u.bmp", style, page, stringHash(query));
-
-        // check if both exist
-        bool ok = false;
-        FILE *testd_fp = fopenOurs (q_dfn, "r");
-        if (testd_fp) {
-            fclose (testd_fp);
-            FILE *testn_fp = fopenOurs (q_nfn, "r");
-            if (testn_fp) {
-                fclose (testn_fp);
-                ok = true;
-                Serial.printf ("%s: D and N files already downlaoded\n", style);
+        // check if already exist, if not try random portion of previous hour to avoid all using top of hour.
+        bool ok = checkDayNightFiles (yr, mo, hr, page, style, MHz, query, q_dfn, q_nfn, QBUFLEN);
+        if (!ok) {
+            // prepare a random offset up to about one hour, in seconds
+            static long ran_offset;
+            if (ran_offset == 0) {
+                ran_offset = 1 + random(3600-300);
+                Serial.printf ("maps update at %02ld:%02ld after the hour\n", ran_offset/60, ran_offset%60);
             }
+            t -= ran_offset;
+            yr = year(t);
+            mo = month(t);
+            hr = hour(t);
+
+            // accept previous hour for a while
+            ok = checkDayNightFiles (yr, mo, hr, page, style, MHz, query, q_dfn, q_nfn, QBUFLEN);
         }
+
+        if (ok)
+            Serial.printf ("%s: D and N files found locally\n", style);
+        else
+            Serial.printf ("%s: D and N files not found locally\n", style);
 
         // if not, download both
         if (!ok) {
@@ -330,7 +361,7 @@ long maxage)
             WiFiClient client;
             if (wifiOk() && client.connect(backend_host, backend_port)) {
                 mapMsg (0, "%s", msg);
-                char url[300];
+                char url[2*QBUFLEN];
                 snprintf (url, sizeof(url), "/%s?%s", page, query);
                 Serial.printf ("running %s\n", url);
                 httpHCGET (client, backend_host, url);
@@ -340,7 +371,7 @@ long maxage)
                     if (sscanf (x_len, "%ld %ld", &l1, &l2) == 2) {
                         ok = downloadMapFile (client, q_dfn, l1) && downloadMapFile (client, q_nfn, l2);
                     } else {
-                        Serial.printf ("%s: bogus multipart: '%s'", page, x_len);
+                        Serial.printf ("%s: bogus multipart: '%s'\n", page, x_len);
                     }
                 }
                 client.stop();
@@ -488,9 +519,9 @@ static bool installFileMaps (CoreMaps cm)
         snprintf (dtitle, NV_COREMAPSTYLE_LEN+10, "%s D map", style);
         snprintf (ntitle, NV_COREMAPSTYLE_LEN+10, "%s N map", style);
 
-        // insure fresh start
+        // fresh start
         invalidatePixels();
-        cleanCache (style, cm_info[cm].maxage);
+        (void) cleanCache (style, 3*cm_info[cm].maxage);
         if (day_fp)
             fclose(day_fp);
         if (night_fp)
@@ -533,6 +564,7 @@ bool installFreshMaps()
         case CM_DRAP:
         case CM_MUF_RT:
         case CM_AURORA:
+        case CM_CLOUDS:
         case CM_WX:
             ok = installFileMaps (core_map);
             break;
@@ -696,6 +728,7 @@ bool mapScaleIsUp(void)
         return (true);
     case CM_COUNTRIES:
     case CM_TERRAIN:
+    case CM_CLOUDS:
     case CM_N:          // lint
         return (false);
     }
@@ -778,6 +811,7 @@ void drawMapScale()
     switch (core_map) {
     case CM_COUNTRIES:
     case CM_TERRAIN:
+    case CM_CLOUDS:
     case CM_N:                                          // lint
         // no scale
         return;

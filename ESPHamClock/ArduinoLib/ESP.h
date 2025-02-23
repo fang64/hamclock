@@ -29,12 +29,13 @@ class ESP {
             return (1);
         }
 
-        void restart(bool minus_k);
+        void restart (bool minus_K, bool minus_0);
 
         uint32_t getChipId(void);
 
     private:
 
+        void addArgv (char **&argv, int &argc, const char *arg);
         uint32_t sn;
 };
 

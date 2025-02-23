@@ -47,12 +47,15 @@
  *
  */
 
-/* @(#) $Id: deflate.cpp,v 1.1 2025/01/18 07:57:49 ecdowney Exp $ */
+/* @(#) $Id: deflate.cpp,v 1.2 2025/02/03 17:40:52 ecdowney Exp $ */
 
 #include "deflate.h"
 
-const char deflate_copyright[] =
-   " deflate 1.3.1.1 Copyright 1995-2024 Jean-loup Gailly and Mark Adler ";
+/* removed compiler warning about unused variable
+ * const char deflate_copyright[] =
+ *  " deflate 1.3.1.1 Copyright 1995-2024 Jean-loup Gailly and Mark Adler ";
+ */
+
 /*
   If you use the zlib library in a product, an acknowledgment is welcome
   in the documentation of your product. If for some reason you cannot

@@ -26,6 +26,11 @@
   #define _IS_FREEBSD
 #endif
 
+#if defined(__NetBSD__)
+  #define _IS_NETBSD
+#endif
+
+
 #if defined (__APPLE__)
     #define _IS_APPLE
     #if defined(__aarch64__) || defined(__arm64__)
@@ -126,14 +131,15 @@ typedef enum {
     X(DEBUG_DXC,        "dxcluster")        \
     X(DEBUG_GIMBAL,     "gimbal")           \
     X(DEBUG_IO,         "io")               \
-    X(DEBUG_WEB,        "live-web")         \
+    X(DEBUG_WEB,        "liveweb")          \
     X(DEBUG_MENUS,      "menus")            \
     X(DEBUG_NMEA,       "NMEA")             \
     X(DEBUG_NVRAM,      "NVRAM")            \
     X(DEBUG_NET,        "network")          \
-    X(DEBUG_RADIO,      "radio")            \
+    X(DEBUG_RIG,        "rig")              \
     X(DEBUG_SCROLL,     "scroller")         \
     X(DEBUG_WL,         "watchlist")        \
+    X(DEBUG_WIFI,       "wifi")             \
     X(DEBUG_WX,         "wx")               \
     X(DEBUG_ZONES,      "zones")
 

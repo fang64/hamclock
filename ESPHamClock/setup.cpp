@@ -1233,9 +1233,10 @@ static void logAllPrompts(void)
     }
 
     // watch lists
-    Serial.printf ("Setup:   dx_wlist: %s\n", dx_wlist);
-    Serial.printf ("Setup: onta_wlist: %s\n", onta_wlist);
-    Serial.printf ("Setup: adif_wlist: %s\n", adif_wlist);
+    for (int i = 0; i < WLID_N; i++) {
+        WLInfo &wli = wl_info[i];
+        Serial.printf ("Setup: WL %-4s %5s %s\n", wli.name, getEntangledValue(wli.a_bpr,wli.b_bpr),wli.wlist);
+    }
 
     // brightness controls
     Serial.printf ("Setup: dimmable: %s\n", brDimmableOk() ? "yes" : "no");

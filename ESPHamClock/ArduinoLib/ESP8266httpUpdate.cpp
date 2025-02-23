@@ -332,7 +332,7 @@ t_httpUpdate_return ESPhttpUpdate::update(WiFiClient &client, const char *url)
 
 	// close all connections and execute over ourselves -- never returns if works
         printf ("OTA: restarting new version\n");
-        ESP.restart(false);
+        ESP.restart(false, false);
 
 	// darn! will never get here if successful
         prError ("OTA: restart failed\n");

@@ -6,15 +6,12 @@
 
 
 // checkFSFull() configuration
-#define CHECK_MS        (60000U)                // check interval, millis
-#define MIN_FREE        (50*1000000LL)          // min free bytes
+#define CHECKFULL_MS    (600*1000UL)            // check interval, millis
+#define MINFS_FREE      (100*1000000LL)         // min free bytes
+#define FATAL_FREE      (1*1000000LL)           // fatally full free bytes
+#define CLEAN_NAME      "bmp"                   // cache file names to remove
+#define CLEAN_AGE       (1*3600*24)             // cache age to remove, secs
 
-
-/* OS-dependent FS info
- */
-
-
-#if defined(_IS_LINUX)
 
 #include <sys/statvfs.h>
 
@@ -25,66 +22,62 @@ bool getFSSize (long long &cap, long long &used)
 {
     const char *dir = our_dir.c_str();
     struct statvfs buf;
+    memset (&buf, 0, sizeof(buf));
+
     if (statvfs (dir, &buf) < 0) {
-        Serial.printf ("Can not get info for FS containing %s: %s\n", dir, strerror(errno));
+        Serial.printf ("FS: Can not get info for FS containing %s: %s\n", dir, strerror(errno));
         return (false);
     }
+
+    // macOS says statvfs may not return any valid information ?!
     cap = buf.f_bsize * buf.f_blocks;
+    if (cap == 0) {
+        Serial.printf ("FS: bogus statvfs block size 0\n");
+        return (false);
+    }
+
     used = cap - buf.f_bsize * buf.f_bfree;
     return (true);
 }
 
-
-
-#elif defined (_IS_FREEBSD) || defined(_IS_APPLE)
-
-#include <sys/param.h>
-#include <sys/mount.h>
-
-/* pass back bytes capacity and used of the dir containing our working directory.
- * return whether successful.
+/* try to remove a diag file, return whether successful
  */
-bool getFSSize (long long &cap, long long &used)
+static bool rmDiagFile (void)
 {
-    const char *dir = our_dir.c_str();
-    struct statfs buf;
-    if (statfs (dir, &buf) < 0) {
-        Serial.printf ("Can not get info for FS containing %s: %s\n", dir, strerror(errno));
-        return (false);
+    // try in reverse order, but never back to the current one
+    for (int i = N_DIAG_FILES; --i >= 1; ) {
+        std::string dp = our_dir + diag_files[i];
+        const char *fn = dp.c_str();
+        if (unlink (fn) == 0) {
+            Serial.printf ("FS: removed %s\n", fn);
+            return (true);
+        }
     }
-    cap = buf.f_bsize * buf.f_blocks;
-    used = cap - buf.f_bsize * buf.f_bfree;
-    return (true);
-}
-
-
-#else
-
-/* don't know how to get fs info
- */
-bool getFSSize (long &cap, long &used)
-{
-    printf ("hello???\n");              // TODO
     return (false);
+
 }
 
-#endif
-
-
-/* throw fatal error if disk containing our working dir is nearly full
+/* return if file system is dangerously low, cleaning up if it helps.
+ * also pass back flag whether disk really is full
  */
-void checkFSFull(void)
+bool checkFSFull (bool &really)
 {
     static uint32_t check_ms;
 
-    if (timesUp (&check_ms, CHECK_MS)) {
+    if (timesUp (&check_ms, CHECKFULL_MS)) {
         long long cap, used;
-        if (getFSSize (cap, used)) {
-            long long n_free = cap - used;
-            if (n_free < MIN_FREE)
-                fatalError ("Disk is nearly full: %lld / %lld = %g%%", used, cap, 100.0*used/cap);
+        while (getFSSize (cap, used) && cap - used < MINFS_FREE
+                                                && (rmDiagFile() || cleanCache (CLEAN_NAME, CLEAN_AGE)))
+            continue;
+        if (getFSSize (cap, used) && cap - used < MINFS_FREE) {
+            Serial.printf ("FS: disk %lld bytes free = %lld%% full\n", cap - used, 100*used/cap);
+            really = cap - used < FATAL_FREE;
+            return (true);
         }
     }
+
+    really = false;
+    return (false);
 }
 
 
@@ -136,7 +129,7 @@ FS_Info *getConfigDirInfo (int *n_info, char **fs_name, long long *fs_size, long
             snprintf (full, sizeof(full), "%s/%s", wd, dp->d_name);
             struct stat sbuf;
             if (stat (full, &sbuf) < 0) {
-                Serial.printf ("%s: %s\n", full, strerror(errno));
+                Serial.printf ("FS: %s: %s\n", full, strerror(errno));
                 continue;
             }
 

@@ -1,154 +1,358 @@
 /* manage configuration files.
+ * allow current config to be saved, and offer restore/update/delete/rename of existing configurations.
  */
 
 #include "HamClock.h"
 
-// directpry and suffix for more eeprom files
+// directory and suffix for more eeprom files
 static const char cfg_dir[] = "configurations";
 static const char cfg_suffix[] = ".eeprom";
 
-// handy config file name
-typedef const char *CfgName;
 
 // layout
-#define TB_SET_COL  RA8875_GREEN                // most toggle button selected color
-#define TB_DEL_COL  RA8875_RED                  // Delete toggle button selected color
-#define TB_OFF_COL  RA8875_BLACK                // toggle button idle color
-#define TB_B_COL    RA8875_WHITE                // toggle button border color
-#define TL_COL      RGB565(255,200,100)         // titles color
-#define TX_COL      RA8875_WHITE                // text color
-#define TITLE_Y     50                          // title y
-#define TB_SZ       20                          // toggle button size
-#define ROW_DY      30                          // table row spacing
-#define TBL_HY      130                         // restore/delete table headings y
-#define TBL_Y       150                         // " top y
-#define TBL_T1X      50                         // " title 1 x
-#define TBL_C1X      80                         // " TB column 1 x
-#define TBL_T2X     140                         // " title 2 x
-#define TBL_C2X     170                         // " TB column 2 x
-#define TBL_T3X     240                         // " title 3 x
-#define TBL_C3X     250                         // " column 3 x
-#define TBL_T4X     320                         // " title 4 x
-#define TBL_C4X     320                         // " column 4 x
-#define COK_Y       410                         // Cancel and Ok button top y
+#define TB_SET_CLR  RA8875_GREEN                // most toggle button selected color
+#define TB_DEL_CLR  RA8875_RED                  // Delete toggle button selected color
+#define TB_OFF_CLR  RA8875_BLACK                // toggle button idle color
+#define TB_B_CLR    RA8875_WHITE                // toggle button border color
+#define TL_CLR      RGB565(255,200,100)         // titles color
+#define NAME_CCLR   RA8875_GREEN                // name cursor color
+#define TX_CLR      RA8875_WHITE                // text color
+#define SCROLL_CLR  TL_CLR                      // scroller color
+#define TITLE_Y     35                          // title y text baseline
+#define TB_SZ       20                          // square toggle button size
+#define ROW_DY      34                          // table row spacing
+#define TBL_HY      160                         // table headings text baseline y
+#define TBL_TBX     40                          // x of left side of first table column TB
+#define TBL_Y       180                         // y of top of first table row TB
+#define TBL_LX      15                          // x of left side of first table column title
+#define TBL_DX      82                          // dx to next table column 
+#define COK_Y       425                         // Cancel and Ok button top y
 #define COK_W       100                         // " width
 #define COK_H       38                          // " height
-#define SAVE_CW     10                          // " cursor width
-#define SAVE_TX     TBL_T1X                     // " TB x
+#define NAME_CW     14                          // Name cursor width
+#define NAME_CDY    9                           // " cursor drop below baseline
+#define NAME_H      (FONT_DY+NAME_CDY)          // " name field height
+#define NAME_W      430                         // " name field width
+#define SAVE_TX     TBL_TBX                     // Save TB x
 #define SAVE_LX     (SAVE_TX+45)                // " label x
-#define SAVE_NX     (SAVE_LX+70)                // " name field x
-#define SAVE_Y      90                          // Save baseline Y
-#define FONT_DY     26                          // " distance from top to baseline
-#define SAVE_CDY    10                          // " cursor drop below baseline
-#define SAVE_NH     (FONT_DY+SAVE_CDY)          // " name field height
-#define SAVE_NW     480                         // " name field width
-#define SAVE_CCOL   RA8875_GREEN                // " cursor color
-#define SAVE_MAXN   40                          // max chars in save name, including EOS
-#define MAX_CFG     ((COK_Y-TBL_Y)/ROW_DY)      // " max rows
+#define SAVE_NX     (SAVE_LX+110)               // " name field x
+#define SAVE_Y      80                          // " text baseline Y
+#define FONT_DY     24                          // " distance from top to baseline
+#define MAX_NAMLEN  50                          // max chars in save_name, w/EOS, but clipped to SAVE_NW
+#define RESET_TX    SAVE_TX                     // Reset TB x
+#define RESET_LX    SAVE_LX                     // " label x
+#define RESET_Y     (SAVE_Y+ROW_DY)             // " text baseline Y
+#define ARROW_W     10                          // arrow width (best if even)
+#define ARROW_H     25                          // " height
+#define ARROW_X     15                          // " left edge x
+#define SUP_Y       TBL_Y                       // top y of up arrow
+#define MAX_VIS     ((COK_Y-TBL_Y)/ROW_DY)      // max N display rows
+#define SDOWN_Y     (TBL_Y+(MAX_VIS-1)*ROW_DY+TB_SZ-ARROW_H)    // top y of down arrow
+
+#define ERR_DWELL   2000                        // dwell time for err msg, millis
+
+// table columns
+typedef enum {
+    USE_CIDX,                                   // "use" column index
+    UPD_CIDX,                                   // "update" column index
+    DEL_CIDX,                                   // "delete" column index
+    REN_CIDX,                                   // "rename" column index
+    N_CIDX,                                     // n columns
+} ColumnType;
+
+#define OTHER_CIDX N_CIDX                       // handy pseudo-type for one-off live Save and Reset
 
 // toggle button controller
 typedef struct {
     SBox box;                                   // where
+    ColumnType type;                            // usage
     bool on;                                    // state
 } TBControl;
 
-// table
-enum {
-    USE_CIDX,                                   // use column index
-    UPD_CIDX,                                   // update column index
-    DEL_CIDX,                                   // delete column index
-    N_CIDX,
-};
+// editable name info
 typedef struct {
-    TBControl sav_tb;                           // Save TB
-    char sav_name[SAVE_MAXN];                   // Save name string, always with EOS
-    unsigned sav_cursor;                        // cursor index into name
-    uint16_t sav_cy;                            // cursor y
-    SBox sav_b;                                 // Save name display box
-    TBControl tb[MAX_CFG][N_CIDX];              // main table
+    char name[MAX_NAMLEN];                      // name string, always with EOS
+    unsigned cursor;                            // cursor location, index into name[]
+    SBox box;                                   // name display box
+} CfgName;
+
+// one config entry
+typedef struct {
+    char *orig_name;                            // original name .. N.B. malloced but don't free
+    char edit_name[MAX_NAMLEN];                 // edited name string, use only if on[REN_CIDX]
+    bool on[N_CIDX];                            // the states pertaining to this name
+} CfgInfo;
+
+typedef struct {
+    CfgInfo *cfg;                               // malloced collection, sorted alphabetically with "a" at [0]
+    int n_cfg;                                  // n total cfg[], visible or not
+    int top_cfg;                                // cfg[] index currently at top of display
+
+    TBControl save_tb;                          // Save TB 
+    CfgName save_name;                          // Save text field
+
+    TBControl reset_tb;                         // Reset TB
+
+    TBControl tbl_tb[MAX_VIS][N_CIDX];          // toggle button table, drawn with [0] on top
+    CfgName tbl_name[MAX_VIS];                  // editable name for each table row
+
+    SBox scrollU_b, scrollD_b;                  // scroll up/down arrow buttons
 } CfgTable;
 
 
-/* draw the given control in its current state
+// handy conversions between table row and CfgInfo index
+#define T2C(ct,tr)  ((tr) + (ct).top_cfg)
+#define C2T(ct,ci)  ((ci) - (ct).top_cfg)
+
+// handy whether cfg[ci] or tbl_row is visible
+#define CVIS(ct,ci) ((ci) >= (ct).top_cfg && (ci) < (ct).n_cfg && C2T((ct),(ci)) < MAX_VIS)
+#define TVIS(ct,tr) (CVIS((ct),T2C((ct),(tr))))
+
+
+
+
+/* draw the scroll controls, if applicable
  */
-static void drawTBControl (const CfgTable &ctbl, const TBControl &tb)
+static void drawCfgScroller (const CfgTable &ctbl)
+{
+    if (ctbl.n_cfg <= MAX_VIS)
+        return;
+
+    // handy
+    const SBox &ub = ctbl.scrollU_b;
+    const SBox &db = ctbl.scrollD_b;
+
+    // scroll-up arrow points up
+    tft.fillTriangle (ub.x+ub.w/2, ub.y,  ub.x, ub.y+ub.h,  ub.x+ub.w, ub.y+ub.h, SCROLL_CLR);
+
+    // scroll-down arrow points down
+    tft.fillTriangle (db.x, db.y,  db.x+db.w, db.y,  db.x+db.w/2, db.y+db.h, SCROLL_CLR);
+
+    // trough sits between arrows with a small gap
+    const int trough_h = db.y - (ub.y + ub.h) - 1;
+    tft.fillRect (ub.x, ub.y+ub.h, ub.w, trough_h, RA8875_BLACK);
+
+    // thumb fits in trough, height depends on n_cfg vs MAX_VIS
+    const int thumb_h = trough_h*MAX_VIS/ctbl.n_cfg - 1;
+    const int thumb_y = ub.y+ub.h + trough_h*ctbl.top_cfg/ctbl.n_cfg + 1;
+    tft.fillRect (ub.x, thumb_y, ub.w, thumb_h, SCROLL_CLR);
+
+    // edges
+    tft.drawLine (ub.x, ub.y+ub.h, db.x, db.y, SCROLL_CLR);
+    tft.drawLine (ub.x+ub.w, ub.y+ub.h, db.x+db.w, db.y, SCROLL_CLR);
+}
+
+/* scroll up, if applicable
+ */
+static void scrollCfgUp (CfgTable &ctbl)
+{
+    if (ctbl.top_cfg > 0) {
+        ctbl.top_cfg -= 1;
+        drawCfgScroller (ctbl);
+    }
+}
+
+/* scroll down, if applicable
+ */
+static void scrollCfgDown (CfgTable &ctbl)
+{
+    if (ctbl.top_cfg < ctbl.n_cfg - MAX_VIS) {
+        ctbl.top_cfg += 1;
+        drawCfgScroller (ctbl);
+    }
+}
+
+
+
+
+/* draw the given TB in its current state
+ */
+static void drawTBControl (const TBControl &tb)
 {
     if (tb.on) {
         // color depends on column
-        uint16_t color = TB_SET_COL;
-        for (int r = 0; r < MAX_CFG; r++) {
-            if (&ctbl.tb[r][DEL_CIDX] == &tb) {
-                color = TB_DEL_COL;
-                break;
-            }
-        }
+        uint16_t color = tb.type == DEL_CIDX ? TB_DEL_CLR : TB_SET_CLR;   // show delete column in red
         fillSBox (tb.box, color);
-        drawSBox (tb.box, TB_B_COL);
+        drawSBox (tb.box, TB_B_CLR);
     } else {
-        fillSBox (tb.box, TB_OFF_COL);
-        drawSBox (tb.box, TB_B_COL);
+        fillSBox (tb.box, TB_OFF_CLR);
+        drawSBox (tb.box, TB_B_CLR);
     }
 }
 
-
-/* given pointer to one of the TB within ctbl.tb that has just toggled on or off:
- * go through the other TB and turn off any that conflict.
+/* erase the cursor used with the given cfg name
  */
-static void checkCfgChoices (CfgTable &ctbl, int n_names, TBControl *tbp)
+static void eraseCfgNameCursor (const CfgName &cn)
 {
-    // nothing conflicts with save or turning off
-    if (tbp == &ctbl.sav_tb || !tbp->on)
-        return;
+    // erase entire line so we don't care where it was before
+    const SBox &b = cn.box;
+    uint16_t cy = b.y + FONT_DY + NAME_CDY;
+    tft.drawLine (b.x, cy, b.x+b.w, cy, RA8875_BLACK);
+}
 
-    // find row and column
-    int row, col;
-    bool found = false;
-    for (row = 0; row < n_names && row < MAX_CFG; row++) {
-        for (col = 0; col < N_CIDX; col++) {
-            if (tbp == &ctbl.tb[row][col]) {
-                found = true;
-                goto out;       // two-level break
+/* draw the given name's cursor
+ */
+static void drawCfgNameCursor (const CfgName &cn)
+{
+    // erase old
+    eraseCfgNameCursor (cn);
+
+    // find x position by finding width of string chopped at cursor
+    char copy[sizeof(cn.name)];
+    strcpy (copy, cn.name);
+    copy[cn.cursor] = '\0';
+    const SBox &b = cn.box;
+    uint16_t cx = b.x + getTextWidth (copy);
+    uint16_t cy = b.y + FONT_DY + NAME_CDY;
+    tft.drawLine (cx, cy, cx+NAME_CW, cy, NAME_CCLR);
+}
+
+/* erase the given config name and cursor
+ */
+static void eraseCfgName (const CfgName &cn)
+{
+    fillSBox (cn.box, RA8875_BLACK);
+    eraseCfgNameCursor (cn);
+}
+
+/* draw the given config name
+ * N.B. text only, not the cursor
+ */
+static void drawCfgName (const CfgName &cn)
+{
+    eraseCfgName (cn);
+
+    tft.setTextColor (TX_CLR);
+    tft.setCursor (cn.box.x, cn.box.y + FONT_DY);
+    tft.print (cn.name);
+
+    // drawSBox (cn.box, RA8875_RED);   // RBF
+}
+
+
+/* draw either the edited or original name, with or without cursor
+ */
+static void drawCfgEditName (CfgName &cn, const CfgInfo &ci, bool editing, bool cursor)
+{
+    quietStrncpy (cn.name, editing ? ci.edit_name : ci.orig_name, sizeof(cn.name));
+    drawCfgName (cn);
+
+    if (editing && cursor)
+        drawCfgNameCursor (cn);
+    else
+        eraseCfgNameCursor (cn);
+}
+
+/* given row/col of one of the ctbl.tbl_tb[] that has just toggled on or off:
+ *   draw and save its state in the corresponding ctbl.cfg.
+ *   go through all the other TB states and update any that conflict.
+ */
+static void updateCfgChoices (CfgTable &ctbl, int tbl_row, int tbl_col)
+{
+    // draw
+    TBControl &tb = ctbl.tbl_tb[tbl_row][tbl_col];
+    drawTBControl (tb);
+
+    // set the cfg[] state corresponding to tbl_row to match
+    const int cfg_row = T2C(ctbl,tbl_row);
+    ctbl.cfg[cfg_row].on[tbl_col] = tb.on;
+
+    // off never conflicts
+    if (tb.on) {
+
+        // columns other than tbl_col in tbl_row must be off
+        for (int c = 0; c < N_CIDX; c++) {
+            if (c != tbl_col && ctbl.cfg[cfg_row].on[c]) {
+                ctbl.cfg[cfg_row].on[c] = false;                        // turn off in master list
+                ctbl.tbl_tb[tbl_row][c].on = false;                     // turn off TB
+                drawTBControl (ctbl.tbl_tb[tbl_row][c]);
             }
         }
-    }
- out:
-    if (!found)
-        fatalError ("Bogus checkCfgChoices() tbp %p", tbp);
 
-    // all rows require only one col per row
-    for (int c = 0; c < N_CIDX; c++) {
-        if (c != col) {
-            TBControl &tb = ctbl.tb[row][c];
-            if (tb.on) {
-                tb.on = false;
-                drawTBControl (ctbl, tb);
-            }
-        }
-    }
-
-    // USE_CIDX and UPD_CIDX require only one row per col
-    if (col == USE_CIDX || col == UPD_CIDX) {
-        for (int r = 0; r < n_names && r < MAX_CFG; r++) {
-            if (r != row) {
-                TBControl &tb = ctbl.tb[r][col];
-                if (tb.on) {
-                    tb.on = false;
-                    drawTBControl (ctbl, tb);
+        // check those columns that require at most one to be on
+        if (tbl_col == USE_CIDX || tbl_col == UPD_CIDX) {
+            for (int cr = 0; cr < ctbl.n_cfg; cr++) {                   // all cfg entries
+                if (cr != cfg_row && ctbl.cfg[cr].on[tbl_col]) {        // other than this row on?
+                    ctbl.cfg[cr].on[tbl_col] = false;                   // turn off in master list
+                    if (CVIS(ctbl,cr)) {                                // TB visible?
+                        int dsp_row = C2T(ctbl,cr);                     // TB row
+                        ctbl.tbl_tb[dsp_row][tbl_col].on = false;       // turn off TB
+                        drawTBControl (ctbl.tbl_tb[dsp_row][tbl_col]);
+                    }
                 }
             }
         }
+
+        // turn off Save but retain name
+        ctbl.save_tb.on = false;
+        drawTBControl (ctbl.save_tb);
+        eraseCfgName (ctbl.save_name);
+
+        // and Reset
+        ctbl.reset_tb.on = false;
+        drawTBControl (ctbl.reset_tb);
+    }
+
+    // now check the rename fields, insuring at most tbl_row shows cursor
+    for (int tr = 0; tr < MAX_VIS; tr++) {
+        if (TVIS(ctbl,tr)) {
+            CfgName &cn = ctbl.tbl_name[tr];
+            CfgInfo &ci = ctbl.cfg[T2C(ctbl,tr)];
+            bool tb_on = ctbl.tbl_tb[tr][REN_CIDX].on;
+            drawCfgEditName (cn, ci, tb_on, tr == tbl_row);
+        }
     }
 }
 
 
-/* toggle the given table control
- */
-static void toggleTBControl (CfgTable &ctbl, int n_names, TBControl &tb)
-{
-    tb.on = !tb.on;
-    drawTBControl (ctbl, tb);
 
-    checkCfgChoices (ctbl, n_names, &tb);
+/* draw all table controls and names based on current scroller.
+ */
+static void drawCfgTable (CfgTable &ctbl)
+{
+    // prep for text
+    selectFontStyle (LIGHT_FONT, SMALL_FONT);
+    tft.setTextColor (TX_CLR);
+
+    // draw each table row even if just erasing it
+    for (int tbl_row = 0; tbl_row < MAX_VIS; tbl_row++) {
+
+        // get corresponding master row
+        int cfg_row = T2C(ctbl,tbl_row);
+        CfgInfo &ci = ctbl.cfg[cfg_row];
+
+        if (TVIS(ctbl,tbl_row)) {
+
+            // update TBs
+            for (int c = 0; c < N_CIDX; c++) {
+                ctbl.tbl_tb[tbl_row][c].on = ci.on[c];
+                drawTBControl (ctbl.tbl_tb[tbl_row][c]);
+            }
+
+            // show edited name if REN_CIDX is on else original
+            drawCfgEditName (ctbl.tbl_name[tbl_row], ci, ctbl.tbl_tb[tbl_row][REN_CIDX].on, false);
+
+        } else {
+
+            // no TBs
+            for (int c = 0; c < N_CIDX; c++)
+                fillSBox (ctbl.tbl_tb[tbl_row][c].box, TB_OFF_CLR);
+
+            // no names
+            eraseCfgName (ctbl.tbl_name[tbl_row]);
+
+        }
+    }
+}
+
+/* reset all matrix controls.
+ */
+static void setAllCfgTableOff (CfgTable &ctbl)
+{
+    for (int i = 0; i < ctbl.n_cfg; i++)
+        for (int j = 0; j < N_CIDX; j++)
+            ctbl.cfg[i].on[j] = false;
+    drawCfgTable (ctbl);
 }
 
 /* convert the given config name to an actual full file name
@@ -162,55 +366,66 @@ static void cfg2file (const char *cfg_name, char fn[], size_t fn_l)
 }
 
 /* convert the given file name to a config name.
- * return whether file was properly converted.
+ * return whether file name and contents meet basic requirements.
  */
 static bool file2cfg (const char *fn, char cfg[], size_t cfg_l)
 {
     const char *suffix = strstr (fn, cfg_suffix);
-    size_t name_len;
-    if (suffix && (name_len = (suffix - fn)) < cfg_l) {
-        strncpySubChar (cfg, fn, ' ', '_', name_len+1);
-        return (true);
+    if (suffix) {
+        size_t basename_l = suffix - fn;
+        if (basename_l > 0 && basename_l < cfg_l) {
+            // file name looks promising, check basic contents
+            char path[2000];
+            snprintf (path, sizeof(path), "%s/%s/%s", our_dir.c_str(), cfg_dir, fn);
+            FILE *fp = fopen (path, "r");
+            if (fp) {
+                if (fgets(path,sizeof(path),fp) && !feof(fp) && !ferror(fp) && !strcmp(path,"00000000 00\n")){
+                    // looks plausible!
+                    strncpySubChar (cfg, fn, ' ', '_', basename_l+1);   // include room for EOS
+                    return (true);
+                }
+                fclose (fp);
+            }
+        }
     }
+
+    // nope
+    if (strcmp(fn,".") != 0 && strcmp (fn,"..") != 0)   // log other than the dot files
+        Serial.printf ("CFG: bogus config file: '%s'\n", fn);
     return (false);
 }
 
-/* pass back malloced array of all existing configuration names.
- * N.B. caller must always call freeCfgFiles()
+/* set caller's list pointer to malloced array of malloced configuration names and return count.
  */
-static int getCfgFiles (const char *dir, CfgName **names)
+static int getCfgFiles (const char *dir, char ***cfg_names)
 {
+    // open the directory of configuration files
     DIR *dirp = opendir (dir);
     if (dirp == NULL)
         fatalError ("%s: %s", dir, strerror(errno));
 
-    CfgName *&nm_list = *names;
+    // fill user's array with config names which are derived from file names with '-' changed to ' '
+    char **&nm_list = *cfg_names;                       // handy reference to caller's list location
     nm_list = NULL;
     struct dirent *dp;
-    int n_names = 0;
+    int n_cfgs = 0;
     while ((dp = readdir(dirp)) != NULL) {
-        nm_list = (CfgName *) realloc (nm_list, (n_names + 1) * sizeof(CfgName));
+        nm_list = (char **) realloc (nm_list, (n_cfgs + 1) * sizeof(char *));
         if (nm_list == NULL)
-            fatalError ("No memory for %d config files", n_names+1);
-        char cfg_name[SAVE_MAXN];
-        if (file2cfg (dp->d_name, cfg_name, SAVE_MAXN))
-            nm_list[n_names++] = strdup (cfg_name);
+            fatalError ("No memory for %d config files", n_cfgs+1);
+        char cfg_name[MAX_NAMLEN];
+        if (file2cfg (dp->d_name, cfg_name, sizeof(cfg_name)))
+            nm_list[n_cfgs++] = strdup (cfg_name);
     }
 
+    // finished with directory
     closedir (dirp);
 
-    qsort (nm_list, n_names, sizeof(char*), qsString);
+    // nice alpha order, "a" at [0]
+    qsort (nm_list, n_cfgs, sizeof(char*), qsAString);
 
-    return (n_names);
-}
-
-/* free a list of CfgName
- */
-static void freeCfgFiles (CfgName *names, int n_names)
-{
-    for (int i = 0; i < n_names; i++)
-        free ((void*)names[i]);
-    free ((void*)names);
+    // return count
+    return (n_cfgs);
 }
 
 /* copy the given config name as the new default eeprom
@@ -294,128 +509,233 @@ static void deleteCfgFile (const char *cfg_name)
     Serial.printf ("CFG: delete '%s'\n", cfg_name);
 }
 
-/* draw, else erase, the save cursor
+/* rename config file from to to
  */
-static void drawCfgCursor (const CfgTable &ctbl, bool draw)
+static void renameCfgFile (const char *from, const char *to)
 {
-    // find x position by finding width of string shopped at cursor
-    char copy[sizeof(ctbl.sav_name)];
-    strcpy (copy, ctbl.sav_name);
-    copy[ctbl.sav_cursor] = '\0';
-    uint16_t cx = ctbl.sav_b.x + getTextWidth (copy);
-    tft.drawLine (cx, ctbl.sav_cy, cx+SAVE_CW, ctbl.sav_cy, draw ? SAVE_CCOL : RA8875_BLACK);
+    char f_buf[2000], t_buf[2000];
+    cfg2file (from, f_buf, sizeof(f_buf));
+    cfg2file (to, t_buf, sizeof(t_buf));
+    if (rename (f_buf, t_buf) < 0)
+        fatalError ("rename(%s,%s): %s", f_buf, t_buf, strerror(errno));
+    Serial.printf ("CFG: rename '%s' to '%s'\n", from, to);
 }
 
-/* given a tap and/or keyboard char known to be within the save box, update
+/* free a string list and its contents
  */
-static void updateSaveText (const SCoord &s, const char kbc, CfgTable &ctbl)
+static void freeCfgNames (char **cfg_names, int n_cfg)
+{
+    for (int i = 0; i < n_cfg; i++)
+        free ((void*)cfg_names[i]);
+    free ((void*)cfg_names);
+}
+
+/* free any memory allocated for CfgTable
+ */
+static void freeCfgTable (CfgTable &ctbl)
+{
+    // N.B. do NOT free the cfg.name's, these are malloc'd elsewhere
+
+    free ((void*)ctbl.cfg);
+}
+
+/* decide whether the candidate name is acceptable.
+ * if so return true, else briefly show reason return false.
+ */
+static bool isCfgNameOk (CfgName &cn)
+{
+    // clean ends
+    strtrim (cn.name);
+
+    // can't be empty
+    if (strlen (cn.name) == 0) {
+        // show error message
+        fillSBox (cn.box, RA8875_BLACK);
+        eraseCfgNameCursor (cn);
+        tft.setCursor (cn.box.x, cn.box.y + FONT_DY);
+        tft.setTextColor (RA8875_RED);
+        tft.print ("Empty");
+        wdDelay(ERR_DWELL);
+
+        // restore message
+        drawCfgName (cn);
+        return (false);
+    }
+
+    // can't already exist
+    char buf[2000];
+    cfg2file (cn.name, buf, sizeof(buf));
+    FILE *test_fp = fopen (buf, "r");
+    if (test_fp) {
+        // done with fp
+        fclose (test_fp);
+
+        // show error message
+        fillSBox (cn.box, RA8875_BLACK);
+        eraseCfgNameCursor (cn);
+        tft.setCursor (cn.box.x, cn.box.y + FONT_DY);
+        tft.setTextColor (RA8875_RED);
+        tft.print ("Exists");
+        wdDelay(ERR_DWELL);
+
+        // restore message and turn off TB
+        drawCfgName (cn);
+        return (false);
+    }
+
+    // name looks reasonable
+    return (true);
+}
+
+/* given a tap and/or keyboard char known to be within the save box, update cn
+ */
+static void editCfgName (const SCoord &s, const char kbc, CfgName &cn)
 {
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
-    tft.setTextColor (TX_COL);
+    tft.setTextColor (TX_CLR);
 
-    if (inBox (s, ctbl.sav_b)) {
-        // set cursor based on tap position, if within string
-        uint16_t nw = getTextWidth (ctbl.sav_name);
-        uint16_t sdx = s.x - ctbl.sav_b.x;
-        if (sdx < nw) {
-            char copy[sizeof(ctbl.sav_name)];
-            strcpy (copy, ctbl.sav_name);
-            (void) maxStringW (copy, sdx);
-            drawCfgCursor (ctbl, false);
-            ctbl.sav_cursor = strlen (copy);
-        }
-        drawCfgCursor (ctbl, true);
+    if (inBox (s, cn.box)) {
+        // set cursor based on tap position
+        uint16_t sdx = s.x - cn.box.x;
+        char copy[sizeof(cn.name)];
+        strcpy (copy, cn.name);
+        (void) maxStringW (copy, sdx);
+        cn.cursor = strlen (copy);
+        drawCfgNameCursor (cn);
 
     } else if (kbc == CHAR_RIGHT) {
-        if (ctbl.sav_cursor < strlen(ctbl.sav_name)) {
-            drawCfgCursor (ctbl, false);
-            ctbl.sav_cursor += 1;
-            drawCfgCursor (ctbl, true);
+        if (cn.cursor < strlen(cn.name)) {
+            cn.cursor += 1;
+            drawCfgNameCursor (cn);
         }
 
     } else if (kbc == CHAR_LEFT) {
-        if (ctbl.sav_cursor > 0) {
-            drawCfgCursor (ctbl, false);
-            ctbl.sav_cursor -= 1;
-            drawCfgCursor (ctbl, true);
+        if (cn.cursor > 0) {
+            cn.cursor -= 1;
+            drawCfgNameCursor (cn);
         }
 
     } else if (kbc == CHAR_BS || kbc == CHAR_DEL) {
-        if (ctbl.sav_cursor > 0) {
-            drawCfgCursor (ctbl, false);
-            memmove (ctbl.sav_name+ctbl.sav_cursor-1, ctbl.sav_name+ctbl.sav_cursor,
-                                                            SAVE_MAXN-ctbl.sav_cursor+1);       // w/EOS
-            fillSBox (ctbl.sav_b, RA8875_BLACK);
-            tft.setCursor (ctbl.sav_b.x, ctbl.sav_b.y + FONT_DY);
-            tft.print (ctbl.sav_name);
-            ctbl.sav_cursor -= 1;
-            drawCfgCursor (ctbl, true);
+        if (cn.cursor > 0) {
+            // remove char to left of cursor
+            memmove (cn.name+cn.cursor-1, cn.name+cn.cursor,
+                                                            sizeof(cn.name)-cn.cursor+1); // w/EOS
+            cn.cursor -= 1;
+            drawCfgName (cn);
+            drawCfgNameCursor (cn);
         }
 
     } else if (isprint (kbc)) {
-        size_t sl = strlen(ctbl.sav_name);
-        if (sl < SAVE_MAXN-1 && getTextWidth(ctbl.sav_name) < ctbl.sav_b.w - SAVE_CW - 15) { // for added char
-            drawCfgCursor (ctbl, false);
-            memmove (ctbl.sav_name+ctbl.sav_cursor+1, ctbl.sav_name+ctbl.sav_cursor,
-                                                            SAVE_MAXN-ctbl.sav_cursor+1);       // w/EOS
-            ctbl.sav_name[ctbl.sav_cursor] = kbc;
-            fillSBox (ctbl.sav_b, RA8875_BLACK);
-            tft.setCursor (ctbl.sav_b.x, ctbl.sav_b.y + FONT_DY);
-            tft.print (ctbl.sav_name);
-            ctbl.sav_cursor += 1;
-            drawCfgCursor (ctbl, true);
+        size_t sl = strlen(cn.name);
+        if (sl < sizeof(cn.name)-1 && getTextWidth(cn.name) < cn.box.w - 2*NAME_CW) {
+            // open a gap to insert kbc at cursor
+            memmove (cn.name+cn.cursor+1, cn.name+cn.cursor,
+                                                            sizeof(cn.name)-cn.cursor+1); // w/EOS
+            cn.name[cn.cursor] = kbc;
+            cn.cursor += 1;
+            drawCfgName (cn);
+            drawCfgNameCursor (cn);
         }
     }
 }
 
 
-/* offer user the means to save, delete or restore from a set of existing configuration files.
- * return whether they have elected to change the current configuration.
+/* offer user the means to reset, save, delete, rename or restore from a set of existing configuration names.
+ * return whether a reboot is required and, if so, whether to restore all defaults
  */
-static bool runConfigMenu (const CfgName *names, int n_names)
+static bool runConfigMenu (char **names, int n_cfgs, bool &restore_def)
 {
+    // master table
+    CfgTable ctbl;
+
+    // begin scrolling with first cfg[] on top
+    ctbl.top_cfg = 0;
+
+    // init the save controls
+    ctbl.save_tb = {SAVE_TX, SAVE_Y-TB_SZ, TB_SZ, TB_SZ};
+    memset (ctbl.save_name.name, 0, sizeof(ctbl.save_name.name));
+    ctbl.save_name.cursor = 0;
+    ctbl.save_name.box = {SAVE_NX, SAVE_Y-FONT_DY, NAME_W, NAME_H};
+    drawTBControl (ctbl.save_tb);
+    selectFontStyle (LIGHT_FONT, SMALL_FONT);
+    tft.setTextColor (TL_CLR);
+    tft.setCursor (SAVE_LX, SAVE_Y);
+    tft.print ("Save new:");
+
+    // alloc and init one CfgInfo for each names[]
+    ctbl.n_cfg = n_cfgs;
+    ctbl.cfg = (CfgInfo *) calloc (ctbl.n_cfg, sizeof(CfgInfo));
+    if (n_cfgs > 0 && ctbl.cfg == NULL)
+        fatalError ("no memory for %d configuration files", ctbl.n_cfg);
+    for (int i = 0; i < ctbl.n_cfg; i++) {
+        ctbl.cfg[i].orig_name = names[i];                       // not another malloc!
+        memcpy (ctbl.cfg[i].edit_name, names[i], sizeof(ctbl.cfg[i].edit_name));
+    }
+
+    // init display matrix row and column
+    for (int tbl_row = 0; tbl_row < MAX_VIS; tbl_row++) {
+
+        // text baseline
+        uint16_t y = TBL_Y + tbl_row*ROW_DY + TB_SZ;
+
+        // TB matrix
+        for (int cidx = 0; cidx < N_CIDX; cidx++) {
+            TBControl &t = ctbl.tbl_tb[tbl_row][cidx];
+            t.type = (ColumnType) cidx;
+            t.on = false;
+            SBox &b = t.box;
+            b.x = TBL_TBX + cidx*TBL_DX;
+            b.y = y - TB_SZ;
+            b.w = b.h = TB_SZ;
+        }
+
+        // name
+        CfgName &cn = ctbl.tbl_name[tbl_row];
+        cn.box = {(uint16_t)(TBL_LX + 4*TBL_DX), (uint16_t)(y - FONT_DY), NAME_W, NAME_H};
+        cn.cursor = 0;
+        memset (&cn.name, 0, sizeof(cn.name));
+    }
+
     // position the ok and cancel buttons
     SBox ok_b = {200, COK_Y, COK_W, COK_H};
     SBox cancel_b = {500, COK_Y, COK_W, COK_H};
 
-    // state
-    CfgTable ctbl;
-    memset (&ctbl, 0, sizeof(ctbl));
+    // postion reset button and its label
+    ctbl.reset_tb = {{RESET_TX, RESET_Y-TB_SZ, TB_SZ, TB_SZ}, OTHER_CIDX, false};
+    drawTBControl (ctbl.reset_tb);
+    selectFontStyle (LIGHT_FONT, SMALL_FONT);
+    tft.setTextColor (TL_CLR);
+    tft.setCursor (RESET_LX, RESET_Y);
+    tft.print ("Reset to default configuration (restarts)");
 
-    // position the save name input area
-    ctbl.sav_tb = {{SAVE_TX, SAVE_Y-TB_SZ, TB_SZ, TB_SZ}, false};
-    ctbl.sav_b = {SAVE_NX, SAVE_Y-FONT_DY, SAVE_NW, SAVE_NH};
-    ctbl.sav_cy = SAVE_Y-FONT_DY+SAVE_NH;
-
-    // position and init table
-    for (int i = 0; i < MAX_CFG; i++) {
-        ctbl.tb[i][0] = {{TBL_C1X, (uint16_t)(TBL_Y + i*ROW_DY), TB_SZ, TB_SZ}, false};
-        ctbl.tb[i][1] = {{TBL_C2X, (uint16_t)(TBL_Y + i*ROW_DY), TB_SZ, TB_SZ}, false};
-        ctbl.tb[i][2] = {{TBL_C3X, (uint16_t)(TBL_Y + i*ROW_DY), TB_SZ, TB_SZ}, false};
-    }
+    // position scroll controls
+    ctbl.scrollU_b = {ARROW_X, SUP_Y, ARROW_W, ARROW_H};
+    ctbl.scrollD_b = {ARROW_X, SDOWN_Y, ARROW_W, ARROW_H};
 
     // draw title
     static const char title[] = "Manage Configurations";
     selectFontStyle (BOLD_FONT, SMALL_FONT);
-    tft.setTextColor (TL_COL);
+    tft.setTextColor (TL_CLR);
     tft.setCursor ((800-getTextWidth(title))/2, TITLE_Y);
     tft.print (title);
 
     // draw column headings
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
-    tft.setTextColor (TL_COL);
-    tft.setCursor (TBL_T1X, TBL_HY);
+    tft.setTextColor (TL_CLR);
+    tft.setCursor (TBL_LX + 0*TBL_DX, TBL_HY);
     tft.print ("Restore");
-    tft.setCursor (TBL_T2X, TBL_HY);
+    tft.setCursor (TBL_LX + 1*TBL_DX, TBL_HY);
     tft.print ("Update");
-    tft.setCursor (TBL_T3X, TBL_HY);
+    tft.setCursor (TBL_LX + 2*TBL_DX, TBL_HY);
     tft.print ("Delete");
-    tft.setCursor (TBL_T4X, TBL_HY);
-    tft.print ("Name");
+    tft.setCursor (TBL_LX + 3*TBL_DX - 10, TBL_HY);
+    tft.print ("Rename");
+    tft.setCursor (TBL_LX + 4*TBL_DX, TBL_HY);
+    tft.print ("Name:");
 
-    // add restart reminder below Restore
+    // add small restart reminder below Restore
     selectFontStyle (LIGHT_FONT, FAST_FONT);
-    tft.setCursor (TBL_T1X+10, TBL_HY+4);
+    tft.setCursor (TBL_LX+10, TBL_HY+4);
     tft.print ("(restarts)");
 
     // draw cancel and ok
@@ -423,32 +743,11 @@ static bool runConfigMenu (const CfgName *names, int n_names)
     drawStringInBox ("Ok", ok_b, false, RA8875_WHITE);
     drawStringInBox ("Cancel", cancel_b, false, RA8875_WHITE);
 
-    // draw save
-    drawTBControl (ctbl, ctbl.sav_tb);
-    selectFontStyle (LIGHT_FONT, SMALL_FONT);
-    tft.setTextColor (TL_COL);
-    tft.setCursor (SAVE_LX, SAVE_Y);
-    tft.print ("Save:");
-    updateSaveText ({0,0}, CHAR_NONE, ctbl);
+    // draw full table
+    drawCfgTable (ctbl);
 
-    // draw each defined table control and name
-    selectFontStyle (LIGHT_FONT, SMALL_FONT);
-    tft.setTextColor (TX_COL);
-    for (int r = 0; r < n_names && r < MAX_CFG; r++) {
-        for (int c = 0; c < N_CIDX; c++)
-            drawTBControl (ctbl, ctbl.tb[r][c]);
-        tft.setCursor (TBL_C4X, TBL_Y + r*ROW_DY + TB_SZ - 1);
-        tft.print (names[r]);
-    }
-
-    // reduce n_names to MAX_CFG but at least show some are not being shown
-    if (n_names > MAX_CFG) {
-        Serial.printf ("CFG: reducing n_names from %d to %d\n", n_names, MAX_CFG);
-        selectFontStyle (LIGHT_FONT, FAST_FONT);
-        tft.setCursor (TBL_C1X, TBL_Y + MAX_CFG*ROW_DY);
-        tft.printf ("%d more not shown", n_names - MAX_CFG);
-        n_names = MAX_CFG;
-    }
+    // draw scroll control
+    drawCfgScroller (ctbl);
 
     // prep run
     SBox screen_b = {0, 0, tft.width(), tft.height()};
@@ -466,10 +765,15 @@ static bool runConfigMenu (const CfgName *names, int n_names)
         false,
         false
     }; 
+
+    // note where editing, tbl_row or -1 for Save else -2
+    #define EDITING_SAVE (-1)
+    #define EDITING_NONE (-2)
+    int editing = EDITING_NONE;
     
     // run
-    bool doit = false;
-    bool in_save_text = false;
+    bool user_ok = false;
+    restore_def = false;
     while (waitForUser(ui)) {
 
         // done when ESC or Cancel
@@ -478,68 +782,115 @@ static bool runConfigMenu (const CfgName *names, int n_names)
 
         // engage when CR or Ok but beware blank save
         if (kbc == CHAR_NL || kbc == CHAR_CR || inBox (s, ok_b)) {
-            bool save_err = false;
-            if (ctbl.sav_tb.on) {
-                strtrim (ctbl.sav_name);
-                if (strlen (ctbl.sav_name) == 0) {
-                    tft.setCursor (ctbl.sav_b.x, ctbl.sav_b.y + FONT_DY);
-                    tft.setTextColor (RA8875_RED);
-                    tft.print ("Err");
-                    wdDelay(2000);
-                    fillSBox (ctbl.sav_b, RA8875_BLACK);
-                    toggleTBControl (ctbl, n_names, ctbl.sav_tb);
-                    save_err = true;
-                }
-            }
-            if (!save_err) {
-                doit = true;
+            if (!ctbl.save_tb.on || isCfgNameOk (ctbl.save_name)) {
+                user_ok = true;
                 break;
             }
         }
 
-        // steer input
-        if (inBox (s, ctbl.sav_b)) {
-            in_save_text = true;
-        } else if (inBox (s, ctbl.sav_tb.box)) {
-            toggleTBControl (ctbl, n_names, ctbl.sav_tb);
-            in_save_text = false;
-            updateSaveText ({0,0}, CHAR_NONE, ctbl);
+        // steer tap input to matching box, if any
+        if (inBox (s, ctbl.save_name.box)) {
+            drawCfgNameCursor (ctbl.save_name);
+            setAllCfgTableOff (ctbl);
+            editing = EDITING_SAVE;
+
+        } else if (inBox (s, ctbl.save_tb.box)) {
+            ctbl.save_tb.on = !ctbl.save_tb.on;
+            drawTBControl (ctbl.save_tb);
+            editing = ctbl.save_tb.on ? EDITING_SAVE : EDITING_NONE;
+            if (ctbl.save_tb.on) {
+                drawCfgNameCursor (ctbl.save_name);
+                setAllCfgTableOff (ctbl);
+            } else
+                eraseCfgNameCursor (ctbl.save_name);
+
+        } else if (inBox (s, ctbl.reset_tb.box)) {
+            restore_def = ctbl.reset_tb.on = !ctbl.reset_tb.on;
+            drawTBControl (ctbl.reset_tb);
+            if (ctbl.reset_tb.on)
+                setAllCfgTableOff (ctbl);
+
+        } else if (inBox (s, ctbl.scrollU_b)) {
+            scrollCfgUp (ctbl);
+            drawCfgTable (ctbl);
+
+        } else if (inBox (s, ctbl.scrollD_b)) {
+            scrollCfgDown (ctbl);
+            drawCfgTable (ctbl);
+
         } else {
-            bool done = false;
-            for (int i = 0; !done && i < n_names && i < MAX_CFG; i++) {
-                for (int j = 0; !done && j < N_CIDX; j++) {
-                    TBControl &tb = ctbl.tb[i][j];
+            // find table entry, if any
+            bool found = false;
+            for (int tbl_row = 0; !found && tbl_row < MAX_VIS && TVIS(ctbl,tbl_row); tbl_row++) {
+
+                // check TB matrix
+                for (int cidx = 0; !found && cidx < N_CIDX; cidx++) {
+                    TBControl &tb = ctbl.tbl_tb[tbl_row][cidx];
                     if (inBox (s, tb.box)) {
-                        toggleTBControl (ctbl, n_names, tb);
-                        in_save_text = false;
-                        updateSaveText ({0,0}, CHAR_NONE, ctbl);
-                        done = true;
+
+                        // toggle
+                        tb.on = !tb.on;
+                        updateCfgChoices (ctbl, tbl_row, cidx);
+
+                        // note whether editing
+                        if (cidx == REN_CIDX)
+                            editing = tb.on ? tbl_row : EDITING_NONE;
+
+                        // multilevel goto here not allowed in std=c++17
+                        found = true;
                     }
+                }
+
+                // check clicking in name text field
+                if (!found && inBox (s, ctbl.tbl_name[tbl_row].box)) {
+                    // friendly turn on matching TB
+                    ctbl.tbl_tb[tbl_row][REN_CIDX].on = true;
+                    updateCfgChoices (ctbl, tbl_row, REN_CIDX);
+                    // note we are now editing this row
+                    editing = tbl_row;
+                    found = true;
                 }
             }
         }
 
-        if (in_save_text)
-            updateSaveText (s, kbc, ctbl);
-    }
-
-    // engage all specified changes, noting if any require restarting
-    bool restart = false;
-    if (doit) {
-        if (ctbl.sav_tb.on)
-            saveCfgFile (ctbl.sav_name);                // copy eeprom to sav_name
-        for (int r = 0; r < n_names && r < MAX_CFG; r++) {
-            if (ctbl.tb[r][USE_CIDX].on) {
-                engageCfgFile (names[r]);               // copy names[r] to eeprom
-                restart = true;                         // restart to engage
-            }
-            if (ctbl.tb[r][UPD_CIDX].on)
-                saveCfgFile (names[r]);                 // copy eeprom to names[r]
-            if (ctbl.tb[r][DEL_CIDX].on)
-                deleteCfgFile (names[r]);               // delete names[r]
+        // handle editing
+        if (editing == EDITING_SAVE)
+            editCfgName (s, kbc, ctbl.save_name);
+        else if (editing != EDITING_NONE && TVIS(ctbl,editing)) {
+            // handle edit and store change back into master table
+            CfgName &cn = ctbl.tbl_name[editing];
+            editCfgName (s, kbc, cn);
+            quietStrncpy (ctbl.cfg[T2C(ctbl,editing)].edit_name, cn.name, MAX_NAMLEN);
         }
     }
 
+    // engage all specified changes, noting if any require restarting
+    // N.B. we assume only sensible combinations have already been established
+    bool restart = false;
+    if (user_ok) {
+        if (ctbl.save_tb.on)
+            saveCfgFile (ctbl.save_name.name);                  // copy eeprom to save_name
+        for (int r = 0; r < n_cfgs; r++) {
+            CfgInfo &ci = ctbl.cfg[r];
+            if (ci.on[UPD_CIDX])                                // N.B. UPD_CIDX must be done before others
+                saveCfgFile (ci.orig_name);                     // copy eeprom to cfg name
+            if (ci.on[USE_CIDX]) {
+                engageCfgFile (ci.orig_name);                   // copy cfg name to eeprom
+                restart = true;                                 // restart to engage
+            }
+            if (ci.on[DEL_CIDX])
+                deleteCfgFile (ci.orig_name);                   // delete cfg name
+            if (ci.on[REN_CIDX] && strcmp (ci.orig_name, ci.edit_name))
+                renameCfgFile (ci.orig_name, ci.edit_name);     // rename cfg name
+        }
+        if (restore_def)
+            restart = true;                                     // restart to restore def
+    }
+
+    // clean up
+    freeCfgTable (ctbl);
+
+    // return whether current configuration has changed
     return (restart);
 }
 
@@ -550,11 +901,11 @@ void runConfigManagement(void)
     // all ours
     eraseScreen();
 
-    // handy dir and insure it exists
+    // directory of config files to manage, create if not already
     char dir[1000];
     snprintf (dir, sizeof(dir), "%s/%s", our_dir.c_str(), cfg_dir);
     if (mkdir (dir, 0755) == 0) {
-        if (chown (dir, getuid(), getgid()) < 0)        // set real owner, not fatal
+        if (chown (dir, getuid(), getgid()) < 0)                // try to set real owner, not fatal
             Serial.printf ("CFG: chown(%d,%d): %s\n", getuid(), getgid(), strerror(errno));
     } else if (errno != EEXIST) {
         // ok if already exists
@@ -562,14 +913,19 @@ void runConfigManagement(void)
     }
 
     // gather collection of existing saved files
-    CfgName *cfg_names;
+    char **cfg_names;
     int n_cfgs = getCfgFiles (dir, &cfg_names);
 
-    // run menu and restart if needed
-    if (runConfigMenu (cfg_names, n_cfgs))
-        doReboot(true);
+    // run menu noting whether to engage a new config
+    bool restore_def;
+    bool restart = runConfigMenu (cfg_names, n_cfgs, restore_def);
 
-    // no change, just clean up and resume
-    freeCfgFiles (cfg_names, n_cfgs);
-    initScreen();
+    // clean up
+    freeCfgNames (cfg_names, n_cfgs);
+
+    // act
+    if (restart)
+        doReboot (true, restore_def);
+    else
+        initScreen();
 }

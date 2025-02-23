@@ -14,25 +14,64 @@ ESP::ESP()
         sn = 0;
 }
 
-void ESP::restart(bool minus_K)
+void ESP::addArgv (char **&argv, int &argc, const char *arg)
 {
-        // add non-persistent -K to our_argv if desired (ok if more than once)
-        char **use_argv = our_argv;
-        if (minus_K) {
-            // copy our_argv to add -K
-            int argc;
-            for (argc = 0; our_argv[argc] != NULL; argc++)
-                continue;
-            use_argv = (char **) malloc ((argc+2)*sizeof(char*)); // +1 -k +1 NULL
-            memcpy (use_argv, our_argv, argc*sizeof(char*));
-            use_argv[argc++] = strdup("-K");    // dup just to avoid "char* = const char*" warning
-            use_argv[argc] = NULL;
+        argv = (char **) realloc (argv, (argc+1)*sizeof(char*));
+        argv[argc++] = arg ? strdup (arg) : NULL;
+}
+
+/* restart possibly with modified our_argv
+ */
+void ESP::restart (bool minus_K, bool minus_0)
+{
+        printf ("Restart -K? %d -0? %d\n", minus_K, minus_0);
+
+        // copy our_argv, removing any -[K0] unless wanted
+        char **tmp_argv = NULL;
+        int tmp_argc = 0;
+        for (char **argv = our_argv; *argv != NULL; argv++) {
+            char *s = *argv;
+            if (s[0] == '-') {
+                while (*++s) {
+                    switch (*s) {
+                    case 'K':
+                        if (!minus_K) {
+                            memmove (s, s+1, strlen(s));        // remove K, include EOS
+                            s -= 1;                             // recheck the new *s
+                        }
+                        minus_K = false;                        // prevent dup below
+                        break;
+                    case '0':
+                        if (!minus_0) {
+                            memmove (s, s+1, strlen(s));        // remove 0, include EOS
+                            s -= 1;                             // recheck the new *s
+                        }
+                        minus_0 = false;                        // prevent dup below
+                        break;
+                    }
+                }
+                // add if anything meaningful is left
+                if ((*argv)[1] != '\0')
+                    addArgv (tmp_argv, tmp_argc, *argv);
+            } else {
+                // always add non-dash args
+                addArgv (tmp_argv, tmp_argc, *argv);
+            }
         }
 
+        // add minus_X if not already
+        if (minus_K)
+            addArgv (tmp_argv, tmp_argc, "-K");
+        if (minus_0)
+            addArgv (tmp_argv, tmp_argc, "-0");
+
+        // add final sentinel
+        addArgv (tmp_argv, tmp_argc, NULL);
+
         // log
-        printf ("Restarting -- args will be:\n");
-        for (int i = 0; use_argv[i] != NULL; i++)
-            printf ("  argv[%d]: %s\n", i, use_argv[i]);
+        printf ("Restart: args will be:\n");
+        for (int i = 0; tmp_argv[i] != NULL; i++)
+            printf ("  argv[%d]: %s\n", i, tmp_argv[i]);
         printf ("see you there!\n\n");
 
         // close all but basic fd
@@ -40,9 +79,9 @@ void ESP::restart(bool minus_K)
             (void) ::close(i);
 
         // go
-        execvp (use_argv[0], use_argv);
+        execvp (tmp_argv[0], tmp_argv);
 
-        printf ("execvp(%s): %s\n", use_argv[0], strerror(errno));
+        printf ("execvp(%s): %s\n", tmp_argv[0], strerror(errno));
         exit(1);
 }
 

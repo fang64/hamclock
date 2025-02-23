@@ -3,7 +3,7 @@
 .nh
 
 .SH NAME
-hamclock \- a kiosk-style application showing information useful to the amateur radio operator
+hamclock \- a kiosk-style application showing timely information useful to the amateur radio operator
 
 .SH SYNOPSIS
 hamclock [options]
@@ -37,6 +37,8 @@ rig and rotator control using flrig or hamlib
 list and plot DX Spider cluster, RBN, WSPR, PSK, POTA and SOTA spots
 .IP \(bu
 read and display local weather data from one or two connected BME280 I2C sensors
+.IP \(bu
+several background maps including VOACAP predictions and weather.
 .RE
 
 .SH OPTIONS
@@ -44,9 +46,6 @@ The following list of command line options is current as of this writing.
 To see all options, run hamclock with any illegal option such as -help.
 .RS 5
 .TP 10
--a l
-set gimbal trace level
-.TP
 -b h
 set backend host to h; default is clearskyinstitute.com
 .TP
@@ -108,7 +107,7 @@ In 2020 it was ported to the Raspberry Pi platform or any other UNIX-like operat
 running the X11 Window display system.
 In 2022 it was ported again to be a web server that can be displayed and controlled
 using any browser, with no need for X11.
-All configurations continue to be supported although the ESP is loosing favor.
+All configurations continue to be supported although the ESP is not longer being maintained.
 
 .SH AUTHOR
 Elwood Downey, WB0OEW, ecdowney@clearskyinstitute.com

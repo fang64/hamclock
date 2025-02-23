@@ -20,12 +20,6 @@
 #define CLRBOX_R        4                       // clear box radius
 #define SPOTMRNOP       (tft.SCALESZ+4)         // raw spot marker radius when no path
 
-// timing
-#define BGCHECK_DT      1000                    // background checkDXCluster period, millis
-#define MAXUSE_DT       (5*60)                  // remove all spots memory if pane not used this long, secs
-#define MAXKEEP_DT      3600                    // max age on dxc_spots list, secs
-#define DXCMSG_DT       500                     // delay before sending each cluster message, millis
-
 // connection info
 static WiFiClient dxc_client;                   // persistent TCP connection while displayed ...
 static WiFiUDP udp_server;                      // or persistent UDP "connection" to WSJT-X client program
@@ -40,6 +34,12 @@ static const char inject_fn[] = "x.dxc-injection";
 static uint8_t dxc_ages[] = {10, 20, 40, 60};   // minutes
 static uint8_t dxc_age;                         // one of above, once set
 #define N_DXCAGES NARRAY(dxc_ages)              // handy count
+
+// timing
+#define BGCHECK_DT      1000                    // background checkDXCluster period, millis
+#define MAXUSE_DT       (5*60)                  // remove all spots memory if pane not used this long, secs
+#define MAXKEEP_DT      (60*dxc_ages[N_DXCAGES-1]) // max age on dxc_spots list, secs
+#define DXCMSG_DT       500                     // delay before sending each cluster message, millis
 
 // state
 static DXSpot *dxc_spots;                       // malloced list, complete
@@ -102,7 +102,7 @@ static void rebuildDXWatchList(void)
     freshenADIFFile();
 
     // extract qualifying spots
-    time_t oldest = myNow() - 60*dxc_age;               // oldest time to use, seconds
+    time_t oldest = myNow() - 60*dxc_age;               // oldest time to display, seconds
     dxc_ss.n_data = 0;                                  // reset count, don't bother to resize dxwl_spots
     for (int i = 0; i < n_dxspots; i++) {
         DXSpot &spot = dxc_spots[i];
@@ -197,7 +197,7 @@ static void addDXClusterSpot (DXSpot &new_spot, bool set_dx)
     time_t now = myNow();
     time_t ancient = now - MAXKEEP_DT;
     if (new_spot.spotted < ancient) {
-        dxcLog ("%s %g: age %ld already > %d mins\n", new_spot.tx_call, new_spot.kHz, 
+        dxcLog ("new %s %g dropped: age %ld already > %d mins\n", new_spot.tx_call, new_spot.kHz, 
             (long)((now - new_spot.spotted)/60), MAXKEEP_DT/60);
         return;
     }
@@ -214,20 +214,22 @@ static void addDXClusterSpot (DXSpot &new_spot, bool set_dx)
     for (int i = 0; i < n_dxspots; i++) {
         DXSpot &spot = dxc_spots[i];
         if (spot.spotted < ancient) {
-            dxcLog ("%s %g: aged out\n", spot.tx_call, spot.kHz);
+            dxcLog ("new %s %g dropped: aged out\n", spot.tx_call, spot.kHz);
             memmove (&dxc_spots[i], &dxc_spots[i+1], (--n_dxspots - i) * sizeof(DXSpot));
-            dxc_spots_changed = true;
-        } else {
-            // consider dupe if same tx and same band
-            if (!strcmp (spot.tx_call, new_spot.tx_call) && findHamBand (spot.kHz) == new_band) {
-                same_spot = true;
-                if (new_spot.spotted > spot.spotted) {
-                    dxcLog ("%s %g: updated\n", spot.tx_call, new_spot.kHz);
-                    spot = new_spot;
-                    dxc_spots_changed = true;           // update GUI with new age
-                } else {
-                    dxcLog ("%s %g: superseded\n", spot.tx_call, spot.kHz);
-                }
+            i -= 1;                                     // examine new [i] again next loop
+            dxc_spots_changed = true;                   // update GUI with updated list
+        } else if (!strcmp (spot.tx_call, new_spot.tx_call) && findHamBand (spot.kHz) == new_band) {
+            // consider dupe if same tx call and band
+            same_spot = true;
+            if (new_spot.spotted > spot.spotted) {
+                dxcLog ("new %s %g: updated %ld -> %ld\n", spot.tx_call, new_spot.kHz,
+                                                    (long)new_spot.spotted, (long)spot.spotted);
+                spot.spotted = new_spot.spotted;
+                dxc_spots_changed = true;           // update GUI with new age
+            } else if (new_spot.spotted == spot.spotted) {
+                dxcLog ("new %s %g: dup time %ld\n", spot.tx_call, spot.kHz, (long)new_spot.spotted);
+            } else {
+                dxcLog ("new %s %g: superseded\n", spot.tx_call, spot.kHz);
             }
         }
     }
@@ -253,7 +255,7 @@ static void addDXClusterSpot (DXSpot &new_spot, bool set_dx)
         tft.setMouse (s.x, s.y);
     }
 
-    // note
+    // update GUI with new spot
     dxc_spots_changed = true;
 }
 
@@ -665,6 +667,7 @@ static void initDXGUI (const SBox &box)
     // init scroller for this box size but leave n_data
     dxc_ss.max_vis = (box.h - LISTING_Y0)/LISTING_DY;
     dxc_ss.initNewSpotsSymbol (box, DXC_COLOR);
+    dxc_ss.dir = dxc_ss.DIR_FROMSETUP;
 }
 
 /* connect dxc_client to a dx cluster or udp_server.
@@ -1201,7 +1204,7 @@ bool getDXCPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll)
     // scan listed spots for one located at ms
     uint16_t y0 = plot_b[pp].y + LISTING_Y0;
     int min_i, max_i;
-    if (dxc_ss.getVisIndices (min_i, max_i) > 0) {
+    if (dxc_ss.getVisDataIndices (min_i, max_i) > 0) {
         for (int i = min_i; i <= max_i; i++) {
             listrow_b.y = y0 + dxc_ss.getDisplayRow(i) * LISTING_DY;
             if (inBox (ms, listrow_b)) {

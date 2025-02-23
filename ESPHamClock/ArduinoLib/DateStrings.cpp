@@ -11,18 +11,11 @@
 
 #if defined(__AVR__)
 #include <avr/pgmspace.h>
-#elif defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)		// WB0OEW
+#else
 #define PROGMEM
 #define PGM_P  const char *
 #define pgm_read_byte(addr) (*(addr))
 #define pgm_read_word(addr) (*(addr))
-#define strcpy_P(dest, src) strcpy((dest), (src))
-#else
-// for compatiblity with Arduino Due and Teensy 3.0 and maybe others?
-#define PROGMEM
-#define PGM_P  const char *
-#define pgm_read_byte(addr) (*(const unsigned char *)(addr))
-#define pgm_read_word(addr) (*(const unsigned char **)(addr))
 #define strcpy_P(dest, src) strcpy((dest), (src))
 #endif
 #include <string.h> // for strcpy_P or strcpy

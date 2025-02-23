@@ -17,6 +17,8 @@ const char platform[] = "HamClock-linux";
 const char platform[] = "HamClock-apple";
 #elif defined (_IS_FREEBSD)
 const char platform[] = "HamClock-FreeBSD";
+#elif defined (_IS_NETBSD)
+const char platform[] = "HamClock-NetBSD";
 #else
 const char platform[] = "HamClock-UNIX";
 #endif
@@ -3714,7 +3716,7 @@ static bool doWiFiReboot (WiFiClient &client, char *unused_line, size_t line_len
     wdDelay(1000);
 
     Serial.println ("restarting...");
-    doReboot(false);
+    doReboot(false, false);
 
     // never returns but compiler doesn't know that
     return (true);
@@ -3740,6 +3742,24 @@ static bool doWiFiUpdate (WiFiClient &client, char *unused_line, size_t line_len
         client.println ("update failed");
     } else
         client.println ("You're up to date!");    // match tapping version
+
+    return (true);
+}
+
+/* post diagnostics file
+ */
+static bool doWiFiPostDiags (WiFiClient &client, char *unused_line, size_t line_len)
+{
+    (void)(unused_line);
+    (void)(line_len);
+
+    Serial.printf ("webserver posting diagnostics:\n");
+
+    startPlainText(client);
+    if (postDiags())
+        client.println ("ok");
+    else
+        client.println ("fail");
 
     return (true);
 }
@@ -4057,6 +4077,7 @@ static const CmdTble command_table[] = {
     { "set_touch?",         setWiFiTouch,          "x=X&y=Y" },
     { "set_voacap?",        setWiFiVOACAP,         "band=X&power=W&tz=DE|UTC&mode=X&map=X&TOA=X" },
     { "exit ",              doWiFiExit,            "exit HamClock" },
+    { "postDiags ",         doWiFiPostDiags,       "post diagnostic logs and configuration settings" },
     { "restart ",           doWiFiReboot,          "restart HamClock" },
     { "updateVersion ",     doWiFiUpdate,          "update to latest version"},
 
@@ -4065,7 +4086,7 @@ static const CmdTble command_table[] = {
 };
 
 #define N_CMDTABLE      NARRAY(command_table)           // real n entries in command table
-#define N_UNDOC_CMD      1                              // n undocumented commands at end of table
+#define N_UNDOC_CMD     1                               // n undocumented commands at end of table
 
 /* return whether the given command is allowed in read-only web service
  */
@@ -4078,6 +4099,7 @@ static bool roCommandOk (const char *cmd)
                     || strncmp (cmd, "set_touch", 9) == 0
                     || strncmp (cmd, "set_screenlock", 14) == 0
                     || strncmp (cmd, "restart", 7) == 0
+                    || strncmp (cmd, "postDiags", 9) == 0
                     || strncmp (cmd, "exit", 4) == 0);
 }
 
@@ -4134,6 +4156,13 @@ static bool isPOST (const char *line)
             || strncmp (line, "POST /set_bmp?", 14) == 0);
 }
 
+/* return whether the given line is a valid GET command
+ */
+static bool isGET (const char *line)
+{
+    return (strncmp (line, "GET /", 5) == 0);
+}
+
 /* service remote restful connection.
  * if ro, only accept the get commands and a few more as listed in roCommandOk().
  * N.B. caller must close client, we don't.
@@ -4150,9 +4179,9 @@ static void serveRemote(WiFiClient &client, bool ro)
     }
 
     // first line must be the GET except a few can be POST
-    if (strncmp (line, "GET /", 5) && !isPOST (line)) {
+    if (!isGET(line) && !isPOST(line)) {
+        sendHTTPError (client, "Method must be GET or selected POST:\n");
         Serial.println (line);
-        sendHTTPError (client, "Method must be GET or POST\n");
         return;
     }
     // Serial.printf ("web: %s\n", line);
@@ -4232,12 +4261,16 @@ static void serveRemote(WiFiClient &client, bool ro)
 void checkWebServer(bool ro)
 {
     if (restful_server) {
-        WiFiClient client = restful_server->available();
-        if (client) {
-            bypass_pw = true;
-            serveRemote(client, ro);
-            bypass_pw = false;
-            client.stop();
+        // not crazy fast
+        static uint32_t ws_ms;
+        if (timesUp (&ws_ms, 250)) {
+            WiFiClient client = restful_server->available();
+            if (client) {
+                bypass_pw = true;
+                serveRemote(client, ro);
+                bypass_pw = false;
+                client.stop();
+            }
         }
     }
 }

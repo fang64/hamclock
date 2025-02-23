@@ -16,8 +16,11 @@
 #define NVBIT_SHOWDATE  0x1                     // showing dates
 #define NVBIT_SHOWDETZ  0x2                     // showing DE time zone
 
-// URL to access info
-static const char contest_page[] = "/contests/contests311.txt";
+// URL and local cache file to access info
+static const char contests_page[] = "/contests/contests311.txt";
+static const char contests_fn[] = "contests311.txt";
+#define CONTESTS_MAXAGE 3600                    // update when cache older than this, secs
+#define CONTESTS_MINSIZ   10                    // min acceptable size is just attribution line
 
 static ContestEntry *contests;                  // malloced list of ContestEntry
 static char *credit;                            // malloced credit line
@@ -87,7 +90,7 @@ static void drawContestsPane (const SBox &box)
     tft.setTextColor(RA8875_WHITE);
     uint16_t y0 = box.y + START_DY;
     int min_i, max_i;
-    if (cts_ss.getVisIndices (min_i, max_i) > 0) {
+    if (cts_ss.getVisDataIndices (min_i, max_i) > 0) {
         for (int i = min_i; i <= max_i; i++) {
             ContestEntry &ce = contests[i];
             int r = cts_ss.getDisplayRow(i);
@@ -95,8 +98,7 @@ static void drawContestsPane (const SBox &box)
                 uint16_t y = y0 + r*2*CONTEST_DY;
                 if (now > ce.start_t && now < ce.end_t)
                     tft.fillRect (box.x+1, y-4, box.w-2, 2*CONTEST_DY+1, NOW_COLOR);
-                else if (i < max_i)
-                    tft.drawLine (box.x+1, y+2*CONTEST_DY-3, box.x+box.w-2, y+2*CONTEST_DY-3, 2, TD_COLOR);
+                tft.drawLine (box.x+1, y+2*CONTEST_DY-3, box.x+box.w-2, y+2*CONTEST_DY-3, 2, TD_COLOR);
                 uint16_t w = getTextWidth (ce.title);
                 tft.setCursor (box.x + (box.w-w)/2, y);
                 tft.print (ce.title);
@@ -329,6 +331,14 @@ static bool runContestMenu (const SCoord &s, const SBox &box)
     return (full_redo);
 }
 
+/* qsort-style comparison to sort by in decreasing start time.
+ * this puts the first (smallest time) contest to start at the end of the array, as expected by SrollState.
+ */
+static int qsContestStart (const void *v1, const void *v2)
+{
+    return (((ContestEntry*)v2)->start_t - ((ContestEntry*)v1)->start_t);
+}
+
 /* collect Contest info into the contests[] array.
  * return whether io ok.
  */
@@ -337,25 +347,19 @@ static bool retrieveContests (const SBox &box)
     WiFiClient ctst_client;
     bool ok = false;
 
-    // get date state
+    // insure date state is up to date
     loadContestNV();
 
     // download and load contests[]
-    Serial.println(contest_page);
-    if (wifiOk() && ctst_client.connect(backend_host, backend_port)) {
+    FILE *fp = openCachedFile (contests_fn, contests_page, CONTESTS_MAXAGE, CONTESTS_MINSIZ);
+
+    if (fp) {
 
         // look alive
         updateClocks(false);
 
         // handy UTC
         time_t now = myNow();
-
-        // fetch page and skip header
-        httpHCGET (ctst_client, backend_host, contest_page);
-        if (!httpSkipHeader (ctst_client)) {
-            Serial.printf ("CTS: %s failed\n", contest_page);
-            goto out;
-        }
 
         // reset contests and credit
         for (int i = 0; i < cts_ss.n_data; i++) {
@@ -370,7 +374,7 @@ static bool retrieveContests (const SBox &box)
         credit = NULL;
 
         // init scroller and max data size. max_vis is half the number of rows if showing date too.
-        cts_ss.init ((box.h - START_DY)/CONTEST_DY, 0, 0);      // max_vis, top_vis, n_data
+        cts_ss.init ((box.h - START_DY)/CONTEST_DY, 0, 0, cts_ss.DIR_TOPDOWN);
         if (show_date)
             cts_ss.max_vis /= 2;
 
@@ -378,8 +382,8 @@ static bool retrieveContests (const SBox &box)
         char line1[100], line2[100];
 
         // first line is credit
-        if (!getTCPLine (ctst_client, line1, sizeof(line1), NULL)) {
-            Serial.printf ("CTS: %s no credit line\n", contest_page);
+        if (!fgets (line1, sizeof(line1), fp)) {
+            Serial.printf ("CTS: %s no credit line\n", contests_fn);
             goto out;
         }
         credit = strdup (line1);
@@ -391,8 +395,12 @@ static bool retrieveContests (const SBox &box)
         selectFontStyle (LIGHT_FONT, FAST_FONT);
 
         // read 2 lines per contest: info and url
-        while (getTCPLine (ctst_client, line1, sizeof(line1), NULL)
-                                        && getTCPLine (ctst_client, line2, sizeof(line2), NULL)) {
+        while (fgets (line1, sizeof(line1), fp) && fgets (line2, sizeof(line2), fp)) {
+
+            // chomp
+            line1[strlen(line1)-1] = '\0';
+            line2[strlen(line2)-1] = '\0';
+
             if (debugLevel (DEBUG_CONTESTS, 1))
                 Serial.printf ("CTS line %d: %s\n%s\n", cts_ss.n_data, line1, line2);
 
@@ -409,7 +417,7 @@ static bool retrieveContests (const SBox &box)
                 continue;
             }
 
-            // skip if already over
+            // skip if contest is already over
             time_t end_t = atol(ut2);
             if (now > end_t) {
                 Serial.printf ("CTS %s is already passed %ld\n", title, (long)end_t);
@@ -424,6 +432,7 @@ static bool retrieveContests (const SBox &box)
             if (!contests)
                 fatalError ("No memory for %d contests", cts_ss.n_data+1);
             ContestEntry &ce = contests[cts_ss.n_data++];
+            memset (&ce, 0, sizeof(ContestEntry));
 
             // save times, title and url 
             if (debugLevel (DEBUG_CONTESTS, 2)) {
@@ -445,35 +454,40 @@ static bool retrieveContests (const SBox &box)
 
 out:
 
-    Serial.printf ("CTS: Found %d\n", cts_ss.n_data);
+    if (ok)
+        qsort (contests, cts_ss.n_data, sizeof(ContestEntry), qsContestStart);
 
-    ctst_client.stop();
-
+    Serial.printf ("CTS: found %d in %s\n", cts_ss.n_data, contests_fn);
+    fclose (fp);
     return (ok);
 }
 
-/* remove contests that are over and reset display if any were removed.
+/* remove contests that are over.
+ * return whether any such or any have just become active.
  */
-static bool rmPastContests (void)
+static bool checkActiveContests (void)
 {
     bool any_past = false;
+    bool newly_active = false;
     time_t now = myNow();
 
     for (int i = 0; i < cts_ss.n_data; i++) {
         ContestEntry *cp = &contests[i];
         if (cp->end_t <= now) {
             memmove (cp, cp+1, (--cts_ss.n_data - i) * sizeof(ContestEntry));
+            i -= 1;                             // examine new [i] again next loop
             any_past = true;
+        } else if (cp->start_t <= now && !cp->was_active) {
+            cp->was_active = true;
+            newly_active = true;
         }
     }
 
     if (any_past)
         cts_ss.scrollToNewest();
 
-    return (any_past);
+    return (any_past || newly_active);
 }
-
-
 
 /* collect Contest info into the contests[] array and show in the given pane box
  */
@@ -496,12 +510,15 @@ bool updateContests (const SBox &box, bool fresh)
         retrieve_hour = hour();
 
         ok = retrieveContests (box);
-        cts_ss.scrollToNewest();
+        if (ok) {
+            cts_ss.scrollToNewest();
+            fresh = true;
+        }
     }
 
     if (ok) {
 
-        if (rmPastContests() || fresh)
+        if (checkActiveContests() || fresh)     // always check regardless of fresh
             drawContestsPane (box);
 
     } else {

@@ -27,6 +27,13 @@ ifeq ($(shell uname -s), FreeBSD)
     LIBS += -lgpio -lexecinfo -lm
 endif
 
+# NetBSD
+ifeq ($(shell uname -s), NetBSD)
+    CXXFLAGS += -I/usr/pkg/include -I/usr/X11R7/include
+    LDXXFLAGS += -L/usr/pkg/lib -R/usr/pkg/lib -L/usr/X11R7/lib -R/usr/X11R7/lib
+    LIBS += -lexecinfo -lm
+endif
+
 # Linux needs libgpiod
 ifeq ($(shell find /usr/lib -name libgpiod.a | wc -l), 1)
     LIBS += -lgpiod

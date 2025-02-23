@@ -26,9 +26,9 @@ static int cty_radix[_N_RADIX];                 // table of cty_list index from 
 static char prev_radix;                         // used to detect change in radis index
 static time_t next_refresh;                     // time of next download
 #define MAX_CTY_AGE     (2*24*3600)             // normally update city file this often, secs
+#define MIN_CTY_SIZ     800000                  // min believable file size
 #define RETRY_DT        60                      // retry interval if trouble, secs
 #define MAX_DIST        12                      // max dist from target, degrees
-#define MIN_SZ          100000                  // min believable file size
 
 
 /* table of common prefixes and their rough center location.
@@ -731,7 +731,7 @@ void splitCallSign (const char *call, char home_call[NV_CALLSIGN_LEN], char dx_c
 
         if (r_len <= 1 || !strcmp(right,"MM") || !strcmp(right,"AM")
                        || (r_len > 2 && (int)strcspn(right,"0123456789") == r_len)      // 3+ all alpha
-                       || (int)strspn(right,"0123456789") == r_len) {                   // 2+ all digit
+                       || (int)strspn(right,"0123456789") > 1) {                        // 2+ leading digits
 
             // disregard suspicious right side
             snprintf (home_call, NV_CALLSIGN_LEN, "%.*s", l_len, left);
@@ -859,7 +859,7 @@ static bool loadCtyFile(void)
         return (cty_list != NULL);
 
     // open cached file
-    FILE *fp = openCachedFile (cty_fn, cty_page, MAX_CTY_AGE, MIN_SZ);
+    FILE *fp = openCachedFile (cty_fn, cty_page, MAX_CTY_AGE, MIN_CTY_SIZ);
     if (!fp) {
         next_refresh = myNow() + RETRY_DT;
         return (false);

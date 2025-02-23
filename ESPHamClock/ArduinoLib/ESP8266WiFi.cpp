@@ -17,9 +17,12 @@
 #include <ifaddrs.h>
 #include <netdb.h>
 
-
-
 #include "ESP8266WiFi.h"
+
+#if defined(_IS_LINUX)
+#include <linux/wireless.h>
+#include <sys/ioctl.h>
+#endif
 
 class WiFi WiFi;
 
@@ -31,7 +34,7 @@ static bool getCommand (const char cmd[], char line[], size_t line_len)
         // Serial.printf ("getCommand: %s\n", cmd);
 
 	line[0] = '\0';
-        if (debugLevel (DEBUG_NET, 1))
+        if (debugLevel (DEBUG_NET, 2) || debugLevel (DEBUG_WIFI, 2))
             printf ("** run=%s\n", cmd);
 	FILE *pp = popen (cmd, "r");
 	if (!pp)
@@ -44,11 +47,11 @@ static bool getCommand (const char cmd[], char line[], size_t line_len)
         int exstatus = WEXITSTATUS(wstatus);
         if (fgets_ok && exited && exstatus == 0 && strlen(line) > 1) {
             line[strlen(line)-1] = '\0';        // rm \n
-            if (debugLevel (DEBUG_NET, 1))
+        if (debugLevel (DEBUG_NET, 2) || debugLevel (DEBUG_WIFI, 2))
                 printf ("** back=%s\n", line);
             return (true);
         }
-        if (debugLevel (DEBUG_NET, 1)) {
+        if (debugLevel (DEBUG_NET, 2) || debugLevel (DEBUG_WIFI, 2)) {
             printf ("** cmd=%s\n", cmd);
             int signaled = WIFSIGNALED(wstatus);
             int signal = WTERMSIG(wstatus);
@@ -273,28 +276,89 @@ IPAddress WiFi::dnsIP(void)
 	return (a);
 }
 
-int WiFi::RSSI(void)
+/* pass back RSSI and whether it was dBm or percentage.
+ * return whether values are valid.
+ */
+bool WiFi::RSSI(int &value, bool &is_dbm)
 {
-	// returning value > 31 signifies error
-	int rssi = 100;
+    bool ok = false;
 
-#ifdef _IS_LINUX
+#if defined(_IS_LINUX)
 
-        FILE *fp = fopen ("/proc/net/wireless", "r");
-        if (fp) {
-            char buf[200];
-            while (fgets (buf, sizeof(buf), fp)) {
-                int status;
-                float rssif;
-                if (sscanf (buf, " %*[^:]: %d %*f %f %*f", &status, &rssif) == 2 && status == 0) {
-                    rssi = rssif;
-                    break;
-                }
+    struct ifaddrs *ifaddr;
+    struct iw_statistics iwstats;
+
+    // get list of interfaces. N.B. must freeifaddrs(ifaddr)
+    if (getifaddrs(&ifaddr) < 0) {
+        printf ("getifaddrs(): %s\n", strerror(errno));
+        return (false);
+    }
+
+    // any socket will do
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        printf ("can not create socket for RSSI: %s\n", strerror(errno));
+        freeifaddrs (ifaddr);
+        return (false);
+    }
+
+    // look for interface for which SIOCGIWNAME works which can only be wireless
+    for (struct ifaddrs *ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+
+        struct iwreq wrq;
+        memcpy (wrq.ifr_name, ifa->ifa_name, IFNAMSIZ);
+        if (ioctl(sock, SIOCGIWNAME, &wrq) == 0) {
+            if (debugLevel (DEBUG_WIFI, 1))
+                printf ("found wireless connection %s\n", wrq.ifr_name);
+
+            // show ssid if interested
+            if (debugLevel (DEBUG_WIFI, 1)) {
+                char essid[IW_ESSID_MAX_SIZE+1];
+                wrq.u.essid.pointer = essid;
+                if (ioctl(sock, SIOCGIWESSID, &wrq) < 0)
+                    printf ("can not retrieve SSID: %s\n", strerror(errno));
+                else
+                    printf("ESSID %s\n", essid);
             }
-            fclose (fp);
+
+            // finally get signal info
+            memset(&iwstats, 0, sizeof(iwstats));
+            wrq.u.data.pointer = &iwstats;
+            wrq.u.data.length = sizeof(struct iw_statistics);
+            wrq.u.data.flags = 1;
+            if (ioctl(sock, SIOCGIWSTATS, &wrq) < 0) {
+                printf ("SIOCGIWSTATS: %s\n", strerror(errno));
+                break;
+            }
+
+            // ok!
+            ok =  true;
+            break;
+
+        } else if (debugLevel (DEBUG_WIFI, 1))
+            printf ("SIOCGIWNAME: %s\n", strerror(errno));
+    }
+
+    // clean up
+    close (sock);
+    freeifaddrs (ifaddr);
+
+    // go it?
+    if (ok) {
+        if (debugLevel(DEBUG_WIFI, 1)) {
+            printf("Signal level%s is %d%s.\n",
+               (iwstats.qual.updated & IW_QUAL_DBM ? " (in dBm)" :" (as percentage)"),
+               iwstats.qual.level,
+               (iwstats.qual.updated & IW_QUAL_LEVEL_UPDATED ? " (updated)" :""));
         }
+        is_dbm = (iwstats.qual.updated & IW_QUAL_DBM) != 0;
+        value = is_dbm ? -iwstats.qual.level/10 : iwstats.qual.level;    // level is -dbm*10 else percentage
+    } else if (debugLevel(DEBUG_WIFI, 1))
+        printf ("No wifi found\n");
 
 #endif // _IS_LINUX
+
+
 
 #ifdef __APPLE__
 
@@ -305,13 +369,20 @@ int WiFi::RSSI(void)
         if (getCommand (cmd, ret, sizeof(ret))) {
             int apple_rssi;
             char *rssi_kw = strstr (ret, "agrCtlRSSI: ");
-            if (rssi_kw && sscanf (rssi_kw+11, "%d", &apple_rssi) == 1 && apple_rssi != 0)
-                rssi = apple_rssi;
+            if (rssi_kw && sscanf (rssi_kw+11, "%d", &apple_rssi) == 1 && apple_rssi != 0) {
+                value = apple_rssi;
+                is_dbm = true;
+                ok = true;
+            }
         }
+
+        if (debugLevel(DEBUG_WIFI, 1) && !ok)
+            printf ("No RSSI from apple\n");
 
 #endif // __APPLE__
 
-	return (rssi);
+
+    return (ok);
 }
 
 int WiFi::status(void)
@@ -336,7 +407,7 @@ int WiFi::status(void)
 	    }
 	}
 
-	// free list
+	// always free list
 	freeifaddrs (ifp0);
 
 	// return result code
@@ -363,6 +434,7 @@ std::string WiFi::macAddress(void)
                 "| perl -n -e '/ether ([a-fA-F0-9:]+)/ and print \"$1\\n\"'",
             "[ -x /sbin/ifconfig ] && /sbin/ifconfig | awk '/ether/{print $2}' | head -1",
             "[ -x /sbin/ifconfig ] && /sbin/ifconfig | awk '/HWaddr/{print $5}' | head -1",
+            "[ -x /sbin/ifconfig ] && /sbin/ifconfig | awk '/address/{print $2}' | head -1",
             "[ -x /sbin/ifconfig -a -x /sbin/route ] && /sbin/ifconfig "
                 "`/sbin/route -n | awk '/UG/{print $8}'` | awk '/ether/{print $2}'",
         };

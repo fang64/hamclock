@@ -33,7 +33,7 @@ static void postMsgToMain (const char *fmt, ...)
     vsnprintf (buf, sizeof(buf), fmt, ap);
     va_end (ap);
 
-    if (debugLevel (DEBUG_RADIO, 1))
+    if (debugLevel (DEBUG_RIG, 1))
         Serial.printf ("RADIO: posting %s\n", buf);
 
     // inform main thread of new malloced message, discard are message not yet picked up.
@@ -70,7 +70,7 @@ static bool hamlib_vfo;
 static bool sendHamlibCmd (WiFiClient &client, const char cmd[])
 {
     // send
-    if (debugLevel (DEBUG_RADIO, 2))
+    if (debugLevel (DEBUG_RIG, 2))
         Serial.printf ("RADIO: HAMLIB: send: %s\n", cmd);
     client.println(cmd);
 
@@ -80,7 +80,7 @@ static bool sendHamlibCmd (WiFiClient &client, const char cmd[])
     do {
         ok = getTCPLine (client, buf, sizeof(buf), NULL);
         if (ok) {
-            if (debugLevel (DEBUG_RADIO, 2))
+            if (debugLevel (DEBUG_RIG, 2))
                 Serial.printf ("RADIO: HAMLIB reply: %s\n", buf);
         } else {
             Serial.printf ("RADIO: HAMLIB cmd %s: no reply\n", cmd);
@@ -96,7 +96,7 @@ static bool sendHamlibCmd (WiFiClient &client, const char cmd[])
 static bool intHamlibCmd (WiFiClient &client, const char cmd[], const char kw[], int &reply)
 {
     // send
-    if (debugLevel (DEBUG_RADIO, 2))
+    if (debugLevel (DEBUG_RIG, 2))
         Serial.printf ("RADIO: HAMLIB: send: %s\n", cmd);
     client.println(cmd);
 
@@ -112,9 +112,9 @@ static bool intHamlibCmd (WiFiClient &client, const char cmd[], const char kw[],
                 reply = atoi (buf + kw_l);
                 if (reply < 0)
                     Serial.printf ("RADIO: HAMLIB rejected %s -> %d\n", cmd, reply);
-                else if (debugLevel (DEBUG_RADIO, 1))
+                else if (debugLevel (DEBUG_RIG, 1))
                     Serial.printf ("RADIO: HAMLIB %s -> %d\n", cmd, reply);
-            } else if (debugLevel (DEBUG_RADIO, 2))
+            } else if (debugLevel (DEBUG_RIG, 2))
                 Serial.printf ("RADIO: HAMLIB reply: %s\n", buf);
          } else {
             Serial.printf ("RADIO: HAMLIB cmd %s: no reply\n", cmd);
@@ -175,7 +175,7 @@ static bool setHamlibFreq (WiFiClient &client, int Hz)
             Serial.printf ("RADIO: HAMLIB set %d Hz but acked %d\n", Hz, reply);
     }
 
-    if (ok && debugLevel (DEBUG_RADIO, 1))
+    if (ok && debugLevel (DEBUG_RIG, 1))
         Serial.printf ("RADIO: HAMLIB: set %d Hz\n", Hz);
 
     return (ok);
@@ -197,7 +197,7 @@ static bool tryHamlibConnect (WiFiClient &client)
     if (!client.connect(host, port))
         return (false);
 
-    if (debugLevel (DEBUG_RADIO, 1))
+    if (debugLevel (DEBUG_RIG, 1))
         Serial.printf ("RADIO: HAMLIB: %s:%d connect ok\n", host, port);
 
     // check for --vfo
@@ -253,7 +253,7 @@ static void coreFlrigCmd (WiFiClient &client, const char cmd[], const char value
     char xml_hdr[sizeof(hdr_fmt) + 100];
     snprintf (xml_hdr, sizeof(xml_hdr), hdr_fmt, body_l);
 
-    if (debugLevel (DEBUG_RADIO, 2)) {
+    if (debugLevel (DEBUG_RIG, 2)) {
         Serial.printf ("RADIO: FLRIG: sending:\n");
         printf ("%s", xml_hdr);
         printf ("%s", xml_body);
@@ -273,14 +273,14 @@ static bool sendFlrigCmd (WiFiClient &client, const char cmd[], const char value
     coreFlrigCmd (client, cmd, value, type);
 
     // skip through reply until </methodResponse>
-    if (debugLevel (DEBUG_RADIO, 2))
+    if (debugLevel (DEBUG_RIG, 2))
         Serial.printf ("RADIO: FLRIG: reply:\n");
     char reply_buf[200];
     bool ok = false;
     do {
         ok = getTCPLine (client, reply_buf, sizeof(reply_buf), NULL);
         if (ok) {
-            if (debugLevel (DEBUG_RADIO, 2))
+            if (debugLevel (DEBUG_RIG, 2))
                 printf ("%s\n", reply_buf);
         } else {
             Serial.printf ("RADIO: FLRIG cmd %s: no reply\n", cmd);
@@ -300,7 +300,7 @@ int &reply)
     coreFlrigCmd (client, cmd, value, type);
 
     // skip through response until find </methodResponse>, watch for <value> reply along the way
-    if (debugLevel (DEBUG_RADIO, 2))
+    if (debugLevel (DEBUG_RIG, 2))
         Serial.printf ("RADIO: FLRIG: reply:\n");
     char reply_buf[200];
     reply = -1;
@@ -308,7 +308,7 @@ int &reply)
     do {
         ok = getTCPLine (client, reply_buf, sizeof(reply_buf), NULL);
         if (ok) {
-            if (debugLevel (DEBUG_RADIO, 2))
+            if (debugLevel (DEBUG_RIG, 2))
                 printf ("%s\n", reply_buf);
             if (sscanf (reply_buf, " <value><i4>%d", &reply) == 1
                                         || sscanf (reply_buf, " <value>%d", &reply) == 1) {
@@ -352,7 +352,7 @@ static bool tryFlrigConnect (WiFiClient &client)
     if (!client.connect(host, port))
         return (false);
 
-    if (debugLevel (DEBUG_RADIO, 1))
+    if (debugLevel (DEBUG_RIG, 1))
         Serial.printf ("RADIO: FLRIG: %s:%d connect ok\n", host, port);
 
     // ok

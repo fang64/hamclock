@@ -205,7 +205,7 @@ static void drawONTAVisSpots (const SBox &box)
     bool any_older = false;
     bool any_newer = false;
     int min_i, max_i;
-    if (onta_ss.getVisIndices (min_i, max_i) > 0) {
+    if (onta_ss.getVisDataIndices (min_i, max_i) > 0) {
         for (int i = 0; i < onta_ss.n_data; i++) {
             const DXSpot &spot = ontawl_spots[i];
             if (i < min_i) {
@@ -518,7 +518,7 @@ static void resetONTAStorage (const SBox &box)
     n_ontaspots = 0;
     free (ontawl_spots);
     ontawl_spots = NULL;
-    onta_ss.init ((box.h - LISTING_Y0)/LISTING_DY, 0, 0);         // max_vis, top_vis, n_data = 0;
+    onta_ss.init ((box.h - LISTING_Y0)/LISTING_DY, 0, 0, onta_ss.DIR_FROMSETUP);
     onta_ss.scrollToNewest();
     onta_ss.initNewSpotsSymbol (box, ONTA_COLOR);
 }
@@ -780,7 +780,7 @@ bool getOnTheAirPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll)
     // scan listed spots for one located at ms
     uint16_t y0 = plot_b[pp].y + LISTING_Y0;
     int min_i, max_i;
-    if (onta_ss.getVisIndices (min_i, max_i) > 0) {
+    if (onta_ss.getVisDataIndices (min_i, max_i) > 0) {
         for (int i = min_i; i <= max_i; i++) {
             listrow_b.y = y0 + onta_ss.getDisplayRow(i) * LISTING_DY;
             if (inBox (ms, listrow_b)) {
