@@ -18,7 +18,11 @@
 // import png writer -- complete implementation in a header file -- amazing.
 // https://github.com/nothings/stb
 #define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "zlib.h"
+static unsigned char * myZDeflate(unsigned char *data, int data_len, int *out_len, int quality);
+#define STBIW_ZLIB_COMPRESS myZDeflate
 #include "stb_image_write.h"
+
 
 
 // public
@@ -76,6 +80,44 @@ static void bye (const char *fmt, ...)
     exit(1);
 }
 
+/* zlib deflator used by stb_image_write.h, see there for usage.
+ * patterned after zpipe def().
+ */
+static unsigned char * myZDeflate(unsigned char *data, int data_len, int *out_len, int quality)
+{
+    int ret, flush;
+    z_stream strm;
+
+    /* output buffer surely less than data_len but allow for some unknown header size*/
+    int n_out = data_len + 1000;
+    unsigned char *out_mem = (unsigned char *) malloc (n_out);
+    if (!out_mem)
+        bye ("myZDeflate no memory for %d\n", n_out);
+
+    /* allocate deflate state */
+    strm.zalloc = Z_NULL;
+    strm.zfree = Z_NULL;
+    strm.opaque = Z_NULL;
+    ret = deflateInit(&strm, quality);
+    if (ret != Z_OK)
+        bye ("myZDeflate deflateInit returns %d\n", ret);
+
+    /* compress data_len in one gulp */
+    strm.avail_in = data_len;
+    strm.next_in = data;
+    flush = Z_FINISH;
+    strm.avail_out = n_out;
+    strm.next_out = out_mem;
+    ret = deflate(&strm, flush);
+    if (ret != Z_STREAM_END)
+        bye ("myZDeflate error %d %d/%d\n", ret, *out_len, data_len);
+
+    /* done */
+    *out_len = n_out - strm.avail_out;
+    (void)deflateEnd(&strm);
+    // printf ("myZDeflate %d -> %d %d%%\n", data_len, *out_len, 100 * *out_len/data_len);      // RBF
+    return (out_mem);
+}
 
 /* stbi_write_png_to_func helper to write the given array to the given ws_cli_conn_t in context.
  */

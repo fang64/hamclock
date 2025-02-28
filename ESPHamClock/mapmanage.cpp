@@ -1100,6 +1100,7 @@ bool zinfWiFiFILE (WiFiClient &in_client, int in_n, FILE *out_fp)
     unsigned char in[CHUNK];
     unsigned char out[CHUNK];
     int in_read = 0;
+    int out_n = 0;
 
     // allocate inflate state
     strm.zalloc = Z_NULL;
@@ -1112,8 +1113,6 @@ bool zinfWiFiFILE (WiFiClient &in_client, int in_n, FILE *out_fp)
         Serial.printf ("inflateInit failed: %s\n", strm.msg);
         return (false);
     }
-
-    Serial.printf ("inflating %d\n", in_n);
 
     // decompress until deflate stream ends, read in_n bytes or end of file
     do {
@@ -1142,7 +1141,7 @@ bool zinfWiFiFILE (WiFiClient &in_client, int in_n, FILE *out_fp)
                 ret = Z_DATA_ERROR;     // fall thru
             case Z_DATA_ERROR:
             case Z_MEM_ERROR:
-                Serial.printf ("unzip error %s\n", strm.msg);
+                Serial.printf ("unzip error: %s\n", strm.msg);
                 (void)inflateEnd(&strm);
                 return (false);
             }
@@ -1152,6 +1151,7 @@ bool zinfWiFiFILE (WiFiClient &in_client, int in_n, FILE *out_fp)
                 (void)inflateEnd(&strm);
                 return (false);
             }
+            out_n += have;
         } while (strm.avail_out == 0);
 
         // done when inflate() says it's done
@@ -1160,10 +1160,10 @@ bool zinfWiFiFILE (WiFiClient &in_client, int in_n, FILE *out_fp)
     // clean up and return
     (void)inflateEnd(&strm);
     if (ret == Z_STREAM_END) {
-        Serial.printf ("inflate ok\n");
+        Serial.printf ("inflated %d -> %d\n", in_n, out_n);
         return (true);
     } else {
-        Serial.printf ("inflate failed with %s\n", strm.msg);
+        Serial.printf ("inflate failed: %s\n", strm.msg);
         return (false);
     }
 }

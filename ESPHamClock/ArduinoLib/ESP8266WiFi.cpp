@@ -19,7 +19,7 @@
 
 #include "ESP8266WiFi.h"
 
-#if defined(_IS_LINUX)
+#if defined(_LINUX_WIRELESS_OK)
 #include <linux/wireless.h>
 #include <sys/ioctl.h>
 #endif
@@ -283,7 +283,9 @@ bool WiFi::RSSI(int &value, bool &is_dbm)
 {
     bool ok = false;
 
-#if defined(_IS_LINUX)
+#if defined (_IS_LINUX)
+
+#if defined (_LINUX_WIRELESS_OK)
 
     struct ifaddrs *ifaddr;
     struct iw_statistics iwstats;
@@ -326,14 +328,11 @@ bool WiFi::RSSI(int &value, bool &is_dbm)
             wrq.u.data.pointer = &iwstats;
             wrq.u.data.length = sizeof(struct iw_statistics);
             wrq.u.data.flags = 1;
-            if (ioctl(sock, SIOCGIWSTATS, &wrq) < 0) {
-                printf ("SIOCGIWSTATS: %s\n", strerror(errno));
+            if (ioctl(sock, SIOCGIWSTATS, &wrq) == 0) {
+                // found one!
+                ok =  true;
                 break;
             }
-
-            // ok!
-            ok =  true;
-            break;
 
         } else if (debugLevel (DEBUG_WIFI, 1))
             printf ("SIOCGIWNAME: %s\n", strerror(errno));
@@ -355,6 +354,32 @@ bool WiFi::RSSI(int &value, bool &is_dbm)
         value = is_dbm ? -iwstats.qual.level/10 : iwstats.qual.level;    // level is -dbm*10 else percentage
     } else if (debugLevel(DEBUG_WIFI, 1))
         printf ("No wifi found\n");
+
+
+#else // !_LINUX_WIRELESS_OK
+
+    // simpler way for systems without linux headers
+
+    FILE *fp = fopen ("/proc/net/wireless", "r");
+    if (fp) {
+        char buf[200];
+        while (fgets (buf, sizeof(buf), fp)) {
+            int status;
+            float rssif;
+            if (sscanf (buf, " %*[^:]: %d %*f %f %*f", &status, &rssif) == 2 && status == 0) {
+                // reject if appears to be a percentage
+                if (rssif > 0)
+                    ok = false;
+                else
+                    value = (int)rssif;
+                break;
+            }
+        }
+        fclose (fp);
+    }
+
+#endif // _LINUX_WIRELESS_OK
+
 
 #endif // _IS_LINUX
 

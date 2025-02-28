@@ -1342,10 +1342,10 @@ static void drawRotatingMessage()
 
         case ROTM_FSUSE: {
 
-            long long cap, used;
+            DSZ_t cap, used;
             if (getFSSize (cap, used)) {
                 bool really_is_full;
-                snprintf (str, sizeof(str), "Disk %lld%% full", 100*used/cap);
+                snprintf (str, sizeof(str), "Disk %llu%% full", 100*used/cap);
                 show_red = checkFSFull (really_is_full);
                 if (really_is_full)
                     fatalError ("Disk is full");

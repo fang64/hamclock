@@ -2333,9 +2333,13 @@ bool getTCPLine (WiFiClient &client, char line[], uint16_t line_len, uint16_t *l
     }
 }
 
-// handy wifi health check
+/* handy wifi health check
+ * N.B. no longer necessary after ESP
+ */
 bool wifiOk()
 {
+    return (true);
+#if _IS_ESP8266
     if (WiFi.status() == WL_CONNECTED)
         return (true);
 
@@ -2346,6 +2350,7 @@ bool wifiOk()
         return (WiFi.status() == WL_CONNECTED);
     } else
         return (false);
+#endif
 }
 
 /* arrange for everything to update immediately

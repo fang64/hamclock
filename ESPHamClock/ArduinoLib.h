@@ -48,7 +48,17 @@
       #endif
   #endif
 #endif
+
+#if defined(_IS_LINUX)
+  #if defined(__has_include)
+      // alpine linux does not include linux_headers package by default
+      #if __has_include(<linux/wireless.h>)
+        #define _LINUX_WIRELESS_OK
+      #endif
+  #endif
+#endif
     
+
 #if defined(__has_include)
   #if defined(_IS_FREEBSD) && __has_include(<dev/iicbus/iic.h>)
     #define _NATIVE_I2C_FREEBSD

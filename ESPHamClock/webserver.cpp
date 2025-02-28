@@ -1607,21 +1607,21 @@ static bool getWiFiSys (WiFiClient &client, char *unused_line, size_t line_len)
 
     // show file system info
     int n_info;
-    long long fs_size, fs_used;
+    DSZ_t fs_size, fs_used;
     char *fs_name;
     FS_Info *fip0 = getConfigDirInfo (&n_info, &fs_name, &fs_size, &fs_used);
     if (fip0) {
         client.print (fs_name);
-        if (fs_size > 1000000000L) {
-            snprintf (buf, sizeof(buf), " %lld / %lld MiB %.2f%%\n",
-                            fs_used/1048576LL, fs_size/1048576LL, 100.0F*fs_used/fs_size);
+        if (fs_size > 1000000000UL) {
+            snprintf (buf, sizeof(buf), " %llu / %lld MiB %.2f%%\n",
+                            fs_used/1048576ULL, fs_size/1048576ULL, 100.0F*fs_used/fs_size);
         } else
-            snprintf (buf, sizeof(buf), " %lld / %lld B %.2f%%\n",
+            snprintf (buf, sizeof(buf), " %llu / %llu B %.2f%%\n",
                             fs_used, fs_size, 100.0F*fs_used/fs_size);
         client.print (buf);
         for (int i = 0; i < n_info; i++) {
             FS_Info *fip = &fip0[i];
-            snprintf (buf, sizeof(buf), "  %s %8ld %s\n", fip->date, fip->len, fip->name);
+            snprintf (buf, sizeof(buf), "  %s %8llu %s\n", fip->date, fip->len, fip->name);
             client.print (buf);
         }
         free (fs_name);

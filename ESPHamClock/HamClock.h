@@ -1688,15 +1688,16 @@ extern void writeFavicon (FILE *fp);
  */
 
 
+typedef unsigned long long DSZ_t;               // really really paranoid size type
 typedef struct {
     char name[50];      // name with EOS
     char date[30];      // ISO 8601 date with EOS
     time_t t0;          // unix time
-    long len;           // n bytes
+    DSZ_t len;          // n bytes
 } FS_Info;
 
-extern FS_Info *getConfigDirInfo (int *n_info, char **fs_name, long long *fs_size, long long *fs_used);
-extern bool getFSSize (long long &cap, long long &used);
+extern FS_Info *getConfigDirInfo (int *n_info, char **fs_name, DSZ_t *fs_size, DSZ_t *fs_used);
+extern bool getFSSize (DSZ_t &cap, DSZ_t &used);
 extern bool checkFSFull (bool &really);
 
 

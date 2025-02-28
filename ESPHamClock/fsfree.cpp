@@ -18,7 +18,7 @@
 /* pass back bytes capacity and used of the dir containing our working directory.
  * return whether successful.
  */
-bool getFSSize (long long &cap, long long &used)
+bool getFSSize (DSZ_t &cap, DSZ_t &used)
 {
     const char *dir = our_dir.c_str();
     struct statvfs buf;
@@ -30,13 +30,13 @@ bool getFSSize (long long &cap, long long &used)
     }
 
     // macOS says statvfs may not return any valid information ?!
-    cap = buf.f_bsize * buf.f_blocks;
+    cap = (DSZ_t)buf.f_bsize * (DSZ_t)buf.f_blocks;
     if (cap == 0) {
         Serial.printf ("FS: bogus statvfs block size 0\n");
         return (false);
     }
 
-    used = cap - buf.f_bsize * buf.f_bfree;
+    used = cap - (DSZ_t)buf.f_bsize * (DSZ_t)buf.f_bfree;
     return (true);
 }
 
@@ -65,12 +65,12 @@ bool checkFSFull (bool &really)
     static uint32_t check_ms;
 
     if (timesUp (&check_ms, CHECKFULL_MS)) {
-        long long cap, used;
+        DSZ_t cap, used;
         while (getFSSize (cap, used) && cap - used < MINFS_FREE
                                                 && (rmDiagFile() || cleanCache (CLEAN_NAME, CLEAN_AGE)))
             continue;
         if (getFSSize (cap, used) && cap - used < MINFS_FREE) {
-            Serial.printf ("FS: disk %lld bytes free = %lld%% full\n", cap - used, 100*used/cap);
+            Serial.printf ("FS: disk %llu bytes free = %llu%% full\n", cap - used, 100*used/cap);
             really = cap - used < FATAL_FREE;
             return (true);
         }
@@ -92,10 +92,10 @@ static int FSInfoNameQsort (const void *p1, const void *p2)
 /* produce a listing of the map storage directory.
  * return malloced array and malloced name -- caller must free() -- else NULL if not available.
  */
-FS_Info *getConfigDirInfo (int *n_info, char **fs_name, long long *fs_size, long long *fs_used)
+FS_Info *getConfigDirInfo (int *n_info, char **fs_name, DSZ_t *fs_size, DSZ_t *fs_used)
 {
         // get basic fs info
-        long long cap, used;
+        DSZ_t cap, used;
         if (!getFSSize (cap, used))
             return (NULL);
 

@@ -657,6 +657,10 @@ void drawPSKPaths ()
  */
 bool getClosestPSK (const LatLong &ll, DXSpot *sp, LatLong *mark_ll)
 {
+    // ignore if not in any rotation set
+    if (findPaneForChoice(PLOT_CH_PSK) == PANE_NONE)
+        return (false);
+
     // which way?
     bool of_de = (psk_mask & PSKMB_OFDE) != 0;
 
