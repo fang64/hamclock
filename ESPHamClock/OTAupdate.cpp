@@ -63,7 +63,7 @@ bool newVersionIsAvailable (char *new_ver, uint16_t new_verl)
     bool found_newer = false;
 
     Serial.printf ("%s/%s\n", backend_host, v_page);
-    if (wifiOk() && v_client.connect (backend_host, backend_port)) {
+    if (v_client.connect (backend_host, backend_port)) {
         resetWatchdog();
 
         // query page
@@ -131,6 +131,7 @@ static void drawChangeList (char **line, int top_line, int n_lines)
     tft.fillRect (0, line_y, SCR_UPX-SCR_BGAP-1, tft.height() - line_y, RA8875_BLACK);
 
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
+    tft.setTextColor (RA8875_WHITE);
     for (int i = top_line; i < n_lines && (line_y += LH) < tft.height() - FD; i++) {
         tft.setCursor (LINDENT, line_y);
         tft.print (line[i]);
@@ -191,7 +192,7 @@ static void drawTrough (int max_lines, int n_lines, int top_line)
 /* ask and return whether to install the given (presumably newer) version.
  * default no if trouble of no user response.
  */
-bool askOTAupdate(char *new_ver)
+bool askOTAupdate(char *new_ver, bool init_yes)
 {
     // prep
     eraseScreen();
@@ -212,7 +213,7 @@ bool askOTAupdate(char *new_ver)
     // draw yes/no boxes
     SBox no_b =  {NBOX_X, NBOX_Y, YNBOX_W, YNBOX_H};
     SBox yes_b = {YBOX_X, YBOX_Y, YNBOX_W, YNBOX_H};
-    bool active_yes = false;
+    bool active_yes = init_yes;
     drawStringInBox ("No", no_b, !active_yes, RA8875_WHITE);
     drawStringInBox ("Yes", yes_b, active_yes, RA8875_WHITE);
 
@@ -224,7 +225,7 @@ bool askOTAupdate(char *new_ver)
     WiFiClient v_client;
     char **lines = NULL;                        // malloced list of malloced strings -- N.B. free!
     int n_lines = 0;
-    if (wifiOk() && v_client.connect (backend_host, backend_port)) {
+    if (v_client.connect (backend_host, backend_port)) {
         resetWatchdog();
 
         // query page
@@ -246,6 +247,8 @@ bool askOTAupdate(char *new_ver)
         while (getTCPLine (v_client, line, sizeof(line), NULL)) {
             maxStringW (line, SCR_UPX-SCR_BGAP-LINDENT-1);       // insure fit
             lines = (char **) realloc (lines, (n_lines+1) * sizeof(char*));
+            if (!lines)
+                fatalError ("no memory for %d version changes", n_lines+1);
             lines[n_lines++] = strdup (line);
         }
     }
@@ -300,11 +303,13 @@ bool askOTAupdate(char *new_ver)
     uint32_t t0 = millis();
     Serial.println ("Waiting for update y/n ...");
     bool finished = false;
-    bool result = false;
     while (!finished && count_s > 0) {
 
         // check for scroll
         int prev_topl = top_line;
+
+        // needed if UTC button is flashing "Off"
+        tft.setTextColor (RA8875_WHITE);
 
         // update countdown
         wdDelay(10);
@@ -327,12 +332,11 @@ bool askOTAupdate(char *new_ver)
             break;
         case CHAR_ESC:
             finished = true;
-            result = false;
+            active_yes = false;
             break;
         case CHAR_CR:
         case CHAR_NL:
             finished = true;
-            result = active_yes;
             break;
         case CHAR_UP:
             if (MORE_UP)
@@ -352,12 +356,12 @@ bool askOTAupdate(char *new_ver)
             if (inBox (s, yes_b)) {
                 drawStringInBox ("Yes", yes_b, true, RA8875_WHITE);
                 finished = true;
-                result = true;
+                active_yes = true;
             }
             if (inBox (s, no_b)) {
                 drawStringInBox ("No", no_b, false, RA8875_WHITE);
                 finished = true;
-                result = false;
+                active_yes = false;
             }
             if (inBox (s, sup_b)) {
                 if (MORE_UP)
@@ -385,7 +389,7 @@ bool askOTAupdate(char *new_ver)
     free (lines);
 
     // return result
-    return (result);
+    return (active_yes);
 }
 
 /* reload HamClock with the given version.

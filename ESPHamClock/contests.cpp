@@ -19,10 +19,21 @@
 // URL and local cache file to access info
 static const char contests_page[] = "/contests/contests311.txt";
 static const char contests_fn[] = "contests311.txt";
+static const char week_url[] = "https://www.contestcalendar.com/weeklycont.php";
 #define CONTESTS_MAXAGE 3600                    // update when cache older than this, secs
 #define CONTESTS_MINSIZ   10                    // min acceptable size is just attribution line
 
-static ContestEntry *contests;                  // malloced list of ContestEntry
+// info about each contest
+typedef struct {
+    time_t start_t;                             // contest start time, always UTC
+    time_t end_t;                               // contest end time, always UTC
+    char *date_str;                             // malloced date string as user wants to see it
+    char *title;                                // malloced title
+    char *url;                                  // malloced web page URL
+    bool was_active;                            // set once now > start_t
+} ContestEntry;
+
+static ContestEntry *contests;                  // malloced list of ContestEntry, count in cts_ss.n_data
 static char *credit;                            // malloced credit line
 static bool show_date;                          // whether to show 2nd line with date
 static bool show_detz;                          // whether to show dates in DE timezone
@@ -216,9 +227,8 @@ static void formatTimeLine (const SBox &box, time_t t1, time_t t2, char str[], s
         }
     }
 
-    // be absolutely certain it fits within box
-    for (uint16_t str_w = getTextWidth(str); str_w >= box.w; str_w = getTextWidth(str))
-        str[strlen(str)-1] = '\0';
+    // one last check it fits within box
+    (void) maxStringW (str, box.w-2);
 }
 
 /* show the contest menu knowing s is within box.
@@ -267,27 +277,40 @@ static bool runContestMenu (const SCoord &s, const SBox &box)
     }
 
     // decide which menu items to show
-    MenuFieldType title_mft = cep ? MENU_LABEL : MENU_IGNORE;
+    MenuFieldType cname_mft = cep ? MENU_LABEL : MENU_IGNORE;
+    MenuFieldType dates_mft = cep ? MENU_IGNORE : MENU_TOGGLE;
+    MenuFieldType detz_mft = cep ? MENU_IGNORE : MENU_TOGGLE;
     MenuFieldType alarm_mft = cep && starts_in_future ? MENU_TOGGLE : MENU_IGNORE;
-    MenuFieldType showdtz_mft = cep ? MENU_IGNORE : MENU_TOGGLE;
 
 #if defined(_USE_FB0)
-    MenuFieldType web_mft = MENU_IGNORE;
+    // FB0 is not running a browser
+    MenuFieldType cpage_mft = MENU_IGNORE;
+    MenuFieldType weekpage_mft = MENU_IGNORE;
 #else
-    MenuFieldType web_mft = cep ? MENU_TOGGLE : MENU_IGNORE;
+    MenuFieldType cpage_mft = cep ? MENU_TOGGLE : MENU_IGNORE;
+    MenuFieldType weekpage_mft = cep ? MENU_IGNORE : MENU_TOGGLE;
 #endif
 
+    // handy mitems[] offset names
+    enum {
+        CM_CNAME,
+        CM_SHOW_DATES,
+        CM_USE_DE_TZ,
+        CM_SET_ALARM,
+        CM_SHOW_CTST_PAGE,
+        CM_SHOW_WEEK_PAGE,
+    };
 
     // build menu
     MenuItem mitems[] = {
-        {title_mft,    false,         0, indent, cname, 0},                        // 0
-        {showdtz_mft,  show_date,     1, indent, "Show dates", 0},                 // 1
-        {showdtz_mft,  show_detz,     2, indent, "Use DE TZ", 0},                  // 2
-        {alarm_mft,    alarm_is_set,  3, indent, "Set alarm", 0},                  // 3
-        {web_mft,      false,         4, indent, "Show web page", 0},              // 4
+        {cname_mft,    false,         0, indent, cname, 0},
+        {dates_mft,    show_date,     1, indent, "Show dates", 0},
+        {detz_mft,     show_detz,     2, indent, "Use DE TZ", 0},
+        {alarm_mft,    alarm_is_set,  3, indent, "Set alarm", 0},
+        {cpage_mft,    false,         4, indent, "Show web page", 0},
+        {weekpage_mft, false,         5, indent, "Show 8-day page", 0},
     };
     const int n_mi = NARRAY(mitems);
-
 
     // boxes
     const uint16_t menu_x = box.x + menu_gap;
@@ -302,15 +325,15 @@ static bool runContestMenu (const SCoord &s, const SBox &box)
     if (runMenu (menu)) {
 
         // check for show_date change
-        if (mitems[1].set != show_date) {
-            show_date = mitems[1].set;
+        if (mitems[CM_SHOW_DATES].set != show_date) {
+            show_date = mitems[CM_SHOW_DATES].set;
             saveContestNV();
             full_redo = true;   // requires ScrollState reset
         }
 
         // check for TZ change
-        if (mitems[2].set != show_detz) {
-            show_detz = mitems[2].set;
+        if (mitems[CM_USE_DE_TZ].set != show_detz) {
+            show_detz = mitems[CM_USE_DE_TZ].set;
             saveContestNV();
             full_redo = true;   // requires new formatTimeLine()
         }
@@ -318,12 +341,19 @@ static bool runContestMenu (const SCoord &s, const SBox &box)
         if (cep) {
 
             // check alarm state change
-            if (mitems[3].set != alarm_is_set)
-                setOneTimeAlarmState (mitems[3].set ? ALMS_ARMED : ALMS_OFF, !show_detz, cep->start_t);
+            if (mitems[CM_SET_ALARM].set != alarm_is_set)
+                setOneTimeAlarmState (mitems[CM_SET_ALARM].set ? ALMS_ARMED : ALMS_OFF, !show_detz,
+                                                                cep->start_t, cname);
 
-            // open web page if desired
-            if (mitems[4].set)
+            // open contest web page if desired
+            if (mitems[CM_SHOW_CTST_PAGE].set)
                 openURL (cep->url);
+
+        } else {
+
+            // open 8-day web page if desired
+            if (mitems[CM_SHOW_WEEK_PAGE].set)
+                openURL (week_url);
         }
     }
 
@@ -337,6 +367,36 @@ static bool runContestMenu (const SCoord &s, const SBox &box)
 static int qsContestStart (const void *v1, const void *v2)
 {
     return (((ContestEntry*)v2)->start_t - ((ContestEntry*)v1)->start_t);
+}
+
+/* scrub the given contest title IN PLACE to fit within the given box
+ * N.B. we assume desired font is already selected.
+ */
+static void scrubContestTitleLine (char *line, const SBox &box)
+{
+    // look for a few common phases
+    char *phrase;
+    if ((phrase = strstr (line, "Parks on the Air")) != NULL)
+        strcpy (phrase, "POTA");
+
+    // keep chopping off at successive right-most space until fits within box
+    uint16_t lw;                                        // line width in pixels
+    while ((lw = getTextWidth (line)) >= box.w) {
+        char *right_space = strrchr (line, ' ');
+        if (right_space)
+            *right_space = '\0';                        // EOS now at right-most space
+        else
+            break;                                      // still too long but no more spaces to chop
+    }
+
+    // always chop off any trailing punct char
+    size_t ll = strlen (line);                          // line length in chars
+    if (ll > 0 && ispunct(line[ll-1]))
+        line[--ll] = '\0';
+
+    // well just hack off if still too long
+    while (getTextWidth (line) >= box.w)
+        line[--ll] = '\0';
 }
 
 /* collect Contest info into the contests[] array.
@@ -386,6 +446,7 @@ static bool retrieveContests (const SBox &box)
             Serial.printf ("CTS: %s no credit line\n", contests_fn);
             goto out;
         }
+        chompString (line1);
         credit = strdup (line1);
 
         // consider transaction is ok if get at least the credit message
@@ -398,8 +459,8 @@ static bool retrieveContests (const SBox &box)
         while (fgets (line1, sizeof(line1), fp) && fgets (line2, sizeof(line2), fp)) {
 
             // chomp
-            line1[strlen(line1)-1] = '\0';
-            line2[strlen(line2)-1] = '\0';
+            chompString (line1);
+            chompString (line2);
 
             if (debugLevel (DEBUG_CONTESTS, 1))
                 Serial.printf ("CTS line %d: %s\n%s\n", cts_ss.n_data, line1, line2);
@@ -563,51 +624,19 @@ bool checkContestsTouch (const SCoord &s, const SBox &box)
     return (false);
 }
 
-/* scrub the given contest title IN PLACE to fit within the given box
- * N.B. we assume desired font is already selected.
+/* return contests to caller
+ * N.B. caller must free both lists and their contents iff we return > 0.
  */
-void scrubContestTitleLine (char *line, const SBox &box)
+int getContests (char **&titles, char **&dates)
 {
-    // look for a few common phases
-    char *phrase;
-    if ((phrase = strstr (line, "Parks on the Air")) != NULL)
-        strcpy (phrase, "POTA");
-
-    // keep chopping off at successive right-most space until fits within box
-    uint16_t lw;                                        // line width in pixels
-    while ((lw = getTextWidth (line)) >= box.w) {
-        char *right_space = strrchr (line, ' ');
-        if (right_space)
-            *right_space = '\0';                        // EOS now at right-most space
-        else
-            break;                                      // still too long but no more spaces to chop
+    if (cts_ss.n_data > 0) {
+        titles = (char **) malloc (cts_ss.n_data * sizeof(const char *));
+        dates = (char **) malloc (cts_ss.n_data * sizeof(const char *));
+        for (int i = 0; i < cts_ss.n_data; i++) {
+            titles[i] = strdup (contests[i].title);
+            dates[i] = strdup (contests[i].date_str);
+        }
     }
 
-    // always chop off any trailing punct char
-    size_t ll = strlen (line);                          // line length in chars
-    if (ll > 0 && ispunct(line[ll-1]))
-        line[--ll] = '\0';
-
-    // well just hack off if still too long
-    while (getTextWidth (line) >= box.w)
-        line[--ll] = '\0';
-}
-
-/* return title of contest with matching time, if any.
- */
-const char *getAlarmedContestTitle (time_t t)
-{
-    for (int i = 0; i < cts_ss.n_data; i++)
-        if (contests[i].start_t == t)
-            return (contests[i].title);
-    return (NULL);
-}
-
-/* return contests to caller
- */
-int getContests (const char **credp, const ContestEntry **cepp)
-{
-    *credp = credit;
-    *cepp = contests;
     return (cts_ss.n_data);
 }

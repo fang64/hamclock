@@ -39,10 +39,11 @@ class WiFiClient {
 	bool connect (const char *host, int port);
 	bool connect (IPAddress ip, int port);
 	void stop (void);
-	int available();
+	int available(int pending_ms = 0);
         void setNoDelay(bool on);
 	bool connected();
 	int read();
+        int readArray (uint8_t *array, long count);
 	operator bool();
 	int write (const uint8_t *buf, int n);
 	void print (void);
@@ -62,10 +63,11 @@ class WiFiClient {
 
     private:
 
-	int socket;                     // open if >= 0
-  	uint8_t peek[4096*10];          // read-ahead buffer
-  	int n_peek;                     // n useful values in peek[]
-        int next_peek;                  // next peek[] index to use
+        const int READ_PENDING_MS = 10000;      // max read wait time, ms
+	int socket;                             // open if >= 0
+  	uint8_t peek[4096*10];                  // read-ahead buffer
+  	int n_peek;                             // n useful values in peek[]
+        int next_peek;                          // next peek[] index to use
 
         int connect_to (int sockfd, struct sockaddr *serv_addr, int addrlen, int to_ms);
         int tout (int to_ms, int fd);

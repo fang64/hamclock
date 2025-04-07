@@ -113,7 +113,7 @@ static bool retrieveSDO (const char *fn, const char *save_fn)
     bool ok = false;
 
     Serial.println (url);
-    if (wifiOk() && client.connect(backend_host, backend_port)) {
+    if (client.connect(backend_host, backend_port)) {
         updateClocks(false);
     
         // query web page
@@ -154,9 +154,9 @@ static bool drawSDOImage (const SBox &box)
     const char *fn = sdo_file[sdo_choice];
 
     // check local file first
-    char local_path[1000];
+    std::string dp = our_dir + fn;
+    const char *local_path = dp.c_str();
     struct stat sbuf;
-    snprintf (local_path, sizeof(local_path), "%s/%s", our_dir.c_str(), fn);
     bool need_fresh = stat (local_path, &sbuf) < 0 || myNow() > sbuf.st_mtime + SDO_IMG_INTERVAL;
 
     // assume download bad until proven otherwise
@@ -178,9 +178,9 @@ static bool drawSDOImage (const SBox &box)
             ok = false;
         } else {
             GenReader gr(fp);
-            char ynot[256];
-            if (!install24BMP (gr, box, ynot, sizeof(ynot))) {
-                plotMessage (box, SDO_COLOR, ynot);
+            Message ynot;
+            if (!installBMPBox (gr, box, FIT_CROP, ynot)) {
+                plotMessage (box, SDO_COLOR, ynot.get());
                 ok = false;
             }
             fclose (fp);

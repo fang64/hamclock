@@ -183,9 +183,38 @@ bool WiFiClient::connected()
 	return (socket >= 0);
 }
 
-int WiFiClient::available()
+/* return whether more is available after waiting up to ms.
+ * non-standard
+ */
+bool WiFiClient::pending(int ms)
 {
-        // none if closed
+        struct timeval tv;
+        fd_set rset;
+        FD_ZERO (&rset);
+        FD_SET (socket, &rset);
+        tv.tv_sec = ms/1000;
+        tv.tv_usec = (ms-1000*tv.tv_sec)*1000;
+        int s = select (socket+1, &rset, NULL, NULL, &tv);
+        if (s < 0) {
+            printf ("WiFiCl: fd %d select(%d ms): %s\n", socket, ms, strerror(errno));
+	    stop();
+	    return (false);
+	}
+
+        bool more = s > 0;
+
+        if (debugLevel (DEBUG_NET, 2))
+            printf ("WiFiCl: %smore pending\n", more ? "" : "no ");
+
+        return (more);
+}
+
+/* return next value in peek or wait up to given time to add more.
+ * return 1 if read() or readArray() will return immediately else 0 if nothing more.
+ */
+int WiFiClient::available (int pending_ms)
+{
+        // certainly none if closed
         if (socket < 0)
             return (0);
 
@@ -193,15 +222,15 @@ int WiFiClient::available()
 	if (next_peek < n_peek)
 	    return (1);
 
-        // don't block if nothing more is available
-        if (!pending(0))
+        // wait as instructed
+        if (!pending(pending_ms))
             return (0);
 
         // read more
 	int nr = ::read(socket, peek, sizeof(peek));
 	if (nr > 0) {
             if (debugLevel (DEBUG_NET, 2))
-                printf ("WiFiCl: read(%d) %d\n", socket, nr);
+                printf ("WiFiCl: available read(%d,%ld) %d\n", socket, (long)sizeof(peek), nr);
             if (debugLevel (DEBUG_NET, 3))
                 logBuffer (peek, nr);
 	    n_peek = nr;
@@ -209,25 +238,53 @@ int WiFiClient::available()
 	    return (1);
 	} else if (nr == 0) {
             if (debugLevel (DEBUG_NET, 1))
-                printf ("WiFiCl: read(%d) EOF\n", socket);
+                printf ("WiFiCl: available read(%d) EOF\n", socket);
 	    stop();
 	    return (0);
         } else {
             if (debugLevel (DEBUG_NET, 1))
-                printf ("WiFiCl: read(%d): %s\n", socket, strerror(errno));
+                printf ("WiFiCl: available read(%d): %s\n", socket, strerror(errno));
 	    stop();
 	    return (0);
 	}
 }
 
+/* wait as long as READ_PENDING_MS read next char.
+ * return char else -1 if EOF
+ */
 int WiFiClient::read()
 {
-	if (available()) {
-            if (debugLevel (DEBUG_NET, 3))
-                printf ("WiFiCl: read(%d) returning %c %d\n", socket, peek[next_peek], peek[next_peek]);
-            return (peek[next_peek++]);
+        if (available (READ_PENDING_MS)) {
+            uint8_t p = peek[next_peek++];
+            if (debugLevel (DEBUG_NET, 3)) {
+                int n_more = n_peek - next_peek;
+                if (isprint (p))
+                    printf ("WiFiCl: read(%d) returning %c %d, %d more\n", socket, p, p, n_more);
+                else
+                    printf ("WiFiCl: read(%d) returning   %d, %d more\n", socket, p, n_more);
+            }
+            return (p);
         }
 	return (-1);
+}
+
+/* wait as long as READ_PENDING_MS to read up to count more bytes into array.
+ * return actual count or 0 when no more.
+ */
+int WiFiClient::readArray (uint8_t *array, long count)
+{
+        int n_return = 0;
+
+        if (available (READ_PENDING_MS)) {
+            int n_available = n_peek - next_peek;
+            n_return = count > n_available ? n_available : count;
+            memcpy (array, &peek[next_peek], n_return);
+            next_peek += n_return;
+        }
+
+        if (debugLevel (DEBUG_NET, 2))
+            printf ("WiFiCl: readArray(%d,%ld) %d\n", socket, count, n_return);
+        return (n_return);
 }
 
 int WiFiClient::write (const uint8_t *buf, int n)
@@ -377,24 +434,4 @@ IPAddress WiFiClient::remoteIP()
         int oct0, oct1, oct2, oct3;
         sscanf (s, "%d.%d.%d.%d", &oct0, &oct1, &oct2, &oct3);
 	return (IPAddress(oct0,oct1,oct2,oct3));
-}
-
-/* return whether more is available after waiting up to ms.
- * non-standard
- */
-bool WiFiClient::pending(int ms)
-{
-        struct timeval tv;
-        fd_set rset;
-        FD_ZERO (&rset);
-        FD_SET (socket, &rset);
-        tv.tv_sec = ms/1000;
-        tv.tv_usec = (ms-1000*tv.tv_sec)*1000;
-        int s = select (socket+1, &rset, NULL, NULL, &tv);
-        if (s < 0) {
-            printf ("WiFiCl: fd %d select(%d ms): %s\n", socket, ms, strerror(errno));
-	    stop();
-	    return (false);
-	}
-        return (s != 0);
 }

@@ -481,10 +481,9 @@ static void runONTASortMenu (const SBox &box)
             fatalError ("runONTASortMenu no sort set");
 
         // must recompile to update wl but runMenu already insured wl compiles ok
-        char ynot[100];
-        if (lookupWatchListState (wl_mt.label) != WLA_OFF
-                                && !compileWatchList (WLID_ONTA, wl_mt.text, ynot, sizeof(ynot)))
-            fatalError ("onair failed recompling wl %s: %s", wl_mt.text, ynot);
+        Message ynot;
+        if (lookupWatchListState (wl_mt.label) != WLA_OFF && !compileWatchList (WLID_ONTA, wl_mt.text, ynot))
+            fatalError ("onair failed recompling wl %s: %s", wl_mt.text, ynot.get());
         setWatchList (WLID_ONTA, wl_mt.label, wl_mt.text);
         Serial.printf ("ONTA: set WL to %s %s\n", wl_mt.label, wl_mt.text);
 
@@ -546,14 +545,12 @@ static bool retrieveONTA (void)
         char line[100];
         while (fgets (line, sizeof(line), fp)) {
 
-            // skip comments
-            if (line[0] == '#' || line[0] == '\0')
-                continue;
-
             // rm trailing \n
-            char *nl = strchr (line, '\n');
-            if (nl)
-                *nl = '\0';
+            chompString (line);
+
+            // skip comments
+            if (line[0] == '#')
+                continue;
 
             // prep next spot but don't count until known good
             onta_spots = (DXSpot*) realloc (onta_spots, (n_ontaspots+1)*sizeof(DXSpot));
@@ -757,7 +754,7 @@ void drawOnTheAirSpotsOnMap (void)
 bool getClosestOnTheAirSpot (const LatLong &ll, DXSpot *onta_closest, LatLong *ll_closest)
 {
     return (ontawl_spots && findPaneForChoice (PLOT_CH_ONTA) != PANE_NONE && getSpotLabelType() != LBL_NONE
-                && getClosestSpot (ontawl_spots, onta_ss.n_data, LOME_TXEND, ll, onta_closest, ll_closest));
+            && getClosestSpot (ontawl_spots, onta_ss.n_data, NULL, LOME_TXEND, ll, onta_closest, ll_closest));
 }
 
 /* return spot in our pane if under ms 

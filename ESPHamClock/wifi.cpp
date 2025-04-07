@@ -38,13 +38,15 @@ float bc_toa;                                   // VOACAP take off angle
 uint8_t bc_utc_tl;                              // label band conditions timeline in utc else DE local
 
 uint8_t bc_modevalue;                           // VOACAP sensitivity value
+// N.B. these must match the tables in fetchBandConditions.pl etc
 const BCModeSetting bc_modes[N_BCMODES] {
-    {"CW",  19},
-    {"SSB", 38},
-    {"AM",  49},
-    {"WSPR", 3},
-    {"FT8", 13},
-    {"FT4", 17}
+    {"CW",   19},
+    {"RTTY", 22},
+    {"SSB",  38},
+    {"AM",   49},
+    {"WSPR",  3},
+    {"FT8",  13},
+    {"FT4",  17}
 };
 uint8_t findBCModeValue (const char *name)      // find value give name, else 0
 {
@@ -221,7 +223,7 @@ static void geolocateIP (const char *ip)
     char credline[80];
     int nlines = 0;
 
-    if (wifiOk() && iploc_client.connect(backend_host, backend_port)) {
+    if (iploc_client.connect(backend_host, backend_port)) {
 
         // create proper query
         strcpy (llline, locip_page);
@@ -798,13 +800,7 @@ static bool retrieveBandConditions (char *config)
             goto out;
         }
         if (config) {
-            // sans nl
-            size_t c_len = strlen(buf);
-            if (c_len < 2) {
-                Serial.println ("BC: empty config line");
-                goto out;
-            }
-            buf[c_len] = '\0';
+            chompString (buf);
             strcpy (config, buf);
         }
 
@@ -1053,10 +1049,6 @@ time_t getNTPUTC (NTPServer *ntp)
     static const uint8_t timeReqA[] = { 0xE3, 0x00, 0x06, 0xEC };
     static const uint8_t timeReqB[] = { 0x31, 0x4E, 0x31, 0x34 };
 
-    // N.B. do not call wifiOk: now() -> us -> wifiOk -> initWiFi -> initWiFiRetry which forces all 
-    // if (!wifiOk())
-    //    return (0);
-
     // create udp endpoint
     WiFiUDP ntp_udp;
     if (!ntp_udp.begin(1000+random(50000))) {                   // any local port
@@ -1151,42 +1143,14 @@ time_t getNTPUTC (NTPServer *ntp)
     return (unix_s);
 }
 
-/* read next char from client.
+/* read next char from client, waiting a short while if necessary.
  * return whether another character was in fact available.
  */
 bool getTCPChar (WiFiClient &client, char *cp)
 {
-    // wait for char, avoid calling millis() if more data are already ready
-    if (!client.available()) {
-        uint32_t t0 = millis();
-        while (!client.available()) {
-            if (!client) {
-                Serial.print ("getTCPChar EOF\n");
-                return (false);
-            }
-            if (!client.connected()) {
-                Serial.print ("getTCPChar disconnect\n");
-                return (false);
-            }
-            if (timesUp(&t0,10000)) {
-                Serial.print ("getTCPChar timeout\n");
-                return (false);
-            }
-
-            // N.B. do not call wdDelay -- it calls checkWebServer() most of whose handlers
-            // call back here via getTCPLine()
-            delay(2);
-        }
-    }
-
-    // read, which offers yet another way to indicate failure
     int c = client.read();
-    if (c < 0) {
-        Serial.print ("bad getTCPChar read\n");
+    if (c == -1)
         return (false);
-    }
-
-    // got one
     *cp = (char)c;
     return (true);
 }
@@ -1378,6 +1342,11 @@ void sendUserAgent (WiFiClient &client)
         // panzoom
         bool pz = pan_zoom.zoom != MIN_ZOOM || pan_zoom.pan_x != 0 || pan_zoom.pan_y != 0;
 
+        // autoo upgrade
+        int aup_hr;
+        (void) autoUpgrade (aup_hr);
+
+
         snprintf (ua, sizeof(ua),
             "User-Agent: %s/%s (id %u up %lld) crc %d "
                 "LV7 %s %d %d %d %d %d %d %d %d %d %d %d %d %d %.2f %.2f %d %d %d %d "
@@ -1406,7 +1375,7 @@ void sendUserAgent (WiFiClient &client)
             1, // rankSpaceWx rm V4.07
             showNewDXDEWx(), getPaneRotationPeriod(), pw_file != NULL, n_roweb>0, pz,
             plotops[PANE_0], screenIsLocked(), showPIP(), (int)getGrayDisplay(), wl,
-            0, 0);
+            aup_hr, 0);
 
     } else {
         snprintf (ua, sizeof(ua), "User-Agent: %s/%s (id %u up %lld) crc %d\r\n",
@@ -2077,6 +2046,7 @@ void updateWiFi(void)
             if (pc == PLOT_CH_ADIF)      fresh_redraw[PLOT_CH_ADIF] = true;
             if (pc == PLOT_CH_ONTA)      fresh_redraw[PLOT_CH_ONTA] = true;
             if (pc == PLOT_CH_CONTESTS)  fresh_redraw[PLOT_CH_CONTESTS] = true;
+            if (pc == PLOT_CH_DXPEDS)    fresh_redraw[PLOT_CH_DXPEDS] = true;
 
             // go now
             next_update[pp] = 0;
@@ -2281,14 +2251,21 @@ void updateWiFi(void)
             }
             break;
 
+        case PLOT_CH_DXPEDS:
+            if (t0 >= next_update[pp]) {
+                if (updateDXPeds(box, fresh_redraw[pc])) {
+                    next_update[pp] = nextPaneUpdate (pc, DXPEDS_INTERVAL);
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
         case PLOT_CH_N:
             break;              // lint
         }
 
     }
-
-    // freshen memory usage
-    cleanDXCluster();
 
     // freshen NCDXF_b
     checkBRB(t0);
@@ -2308,13 +2285,9 @@ void updateWiFi(void)
  */
 bool getTCPLine (WiFiClient &client, char line[], uint16_t line_len, uint16_t *ll)
 {
-    // update network stack
-    yield();
-
     // decrement available length so there's always room to add '\0'
     line_len -= 1;
 
-    // read until find \n or time out.
     uint16_t i = 0;
     while (true) {
         char c;
@@ -2331,26 +2304,6 @@ bool getTCPLine (WiFiClient &client, char line[], uint16_t line_len, uint16_t *l
         } else if (i < line_len)
             line[i++] = c;
     }
-}
-
-/* handy wifi health check
- * N.B. no longer necessary after ESP
- */
-bool wifiOk()
-{
-    return (true);
-#if _IS_ESP8266
-    if (WiFi.status() == WL_CONNECTED)
-        return (true);
-
-    // retry occasionally
-    static uint32_t last_wifi;
-    if (timesUp (&last_wifi, WIFI_RETRY*1000)) {
-        initWiFi(false);
-        return (WiFi.status() == WL_CONNECTED);
-    } else
-        return (false);
-#endif
 }
 
 /* arrange for everything to update immediately

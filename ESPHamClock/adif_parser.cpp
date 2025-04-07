@@ -1,4 +1,9 @@
 /* ADIF parser and GenReader reader
+ *
+ * DEBUG_ADIF guidelines:
+ *   level 1: log each successful spot, no errors
+ *   level 2: 1+ errors in final check
+ *   level 3: 2+ all else
  */
 
 #include "HamClock.h"
@@ -636,7 +641,7 @@ static bool parseADIF (char c, ADIFParser &adif, DXSpot &spot)
 }
 
 /* general purpose ADIF parser from a GenReader.
- * add malloced DXSpots to spots and return count.
+ * add malloced DXSpots to spots, add to prefix table and return count.
  * also:
  *   we pass back count of any broken spots or did not qualify WLID_ADIF if used.
  *   use_wl determines whether spots are checked against WLID_ADIF.
@@ -645,8 +650,17 @@ static bool parseADIF (char c, ADIFParser &adif, DXSpot &spot)
  */
 int readADIFFile (GenReader &gr, DXSpot *&spots, bool use_wl, int &n_bad)
 {
-    // init counts
-    int n_good = n_bad = 0;
+    // init counts, timer
+    int n_read = 0;
+    int n_good = 0;
+    int n_malloc = 0;
+    const int malloc_more = 1000;
+    n_bad = 0;
+    struct timeval tv0;
+    gettimeofday (&tv0, NULL);
+
+    // reset dxpeds worked list
+    resetDXPedsWorked();
 
     // crack file
     DXSpot spot;
@@ -659,13 +673,21 @@ int readADIFFile (GenReader &gr, DXSpot *&spots, bool use_wl, int &n_bad)
         if (parseADIF (c, adif, spot)) {
             // spot parsing complete
             if (spotLooksGood (adif, spot)) {
-                // at this point all spot fields are complete but may not qualify WL
+                // at this point all spot fields are complete
+                n_read++;
+
+                // add to the DXPeds indices regardless of watch list
+                addDXPedsWorked (spot);
+
+                // add to list if qualifies watch list
                 bool wl_ok = !use_wl || checkWatchListSpot(WLID_ADIF, spot) != WLS_NO;
                 if (wl_ok) {
                     // add to *spots_p
-                    spots = (DXSpot *) realloc (spots, (n_good + 1) * sizeof(DXSpot));
-                    if (!spots)
-                        fatalError ("No memory for %d ADIF Spots", n_good+1);
+                    if (n_good+1 > n_malloc) {
+                        spots = (DXSpot *) realloc (spots, (n_malloc += malloc_more) * sizeof(DXSpot));
+                        if (!spots)
+                            fatalError ("No memory for %d ADIF Spots", n_malloc);
+                    }
                     spots[n_good++] = spot;
                 }
                 // nice logging if enabled
@@ -683,6 +705,17 @@ int readADIFFile (GenReader &gr, DXSpot *&spots, bool use_wl, int &n_bad)
             if (((n_good + n_bad)%100) == 0)
                 updateClocks(false);
         }
+    }
+
+    // rm excess spots
+    spots = (DXSpot *) realloc (spots, n_good * sizeof(DXSpot));
+
+    if (debugLevel (DEBUG_ADIF, 1)) {
+        struct timeval tv1;
+        gettimeofday (&tv1, NULL);
+        long usec = TVDELUS (tv0, tv1);
+        Serial.printf ("ADIF: file read %d required %ld ms = %ld spots/s\n", n_read, usec/1000,
+                                                                                1000000L*n_read/usec);
     }
 
     return (n_good);

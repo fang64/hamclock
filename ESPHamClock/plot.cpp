@@ -675,3 +675,34 @@ void prepPlotBox (const SBox &box)
     if (memcmp (&box, &plot_b[PANE_0], sizeof(SBox)) == 0)
         tft.drawLine (box.x, by, rx, by, BORDER_COLOR);                 // bottom
 }
+
+/* install the given BMP image into the given box, resizing and padding with black as necessary.
+ * return whether all ok else false with brief reason in ynot
+ */
+bool installBMPBox (GenReader &gr, const SBox &box, ImageRefit fit, Message &ynot)
+{
+    // prep box with black
+    fillSBox (box, RA8875_BLACK);
+
+    // draw to full raw resolution
+    SBox raw_b;
+    raw_b.x = box.x * tft.SCALESZ;
+    raw_b.y = box.y * tft.SCALESZ;
+    raw_b.w = box.w * tft.SCALESZ;
+    raw_b.h = box.h * tft.SCALESZ;
+
+    // read image fit to raw box dimensions
+    uint16_t *pix_565;
+    if (!readBMPImage (gr, raw_b, pix_565, fit, ynot))
+        return (false);
+
+    // fill raw_b with image
+    uint16_t *pix = pix_565;
+    for (int dy = 0; dy < raw_b.h; dy++)
+        for (int dx = 0; dx < raw_b.w; dx++)
+            tft.drawPixelRaw (raw_b.x+dx, raw_b.y+dy, *pix++);
+
+    // ok
+    free (pix_565);
+    return (true);
+}

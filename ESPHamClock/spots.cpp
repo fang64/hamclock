@@ -4,11 +4,11 @@
 #include "HamClock.h"
 
 
-/* find closest location from ll to the given end(s) of paths defined in the given list of spots.
+/* find list element, subject to possible filtering, that is closest to ll on the given end(s).
  * return whether found one within MAX_CSR_DIST.
  */
-bool getClosestSpot (const DXSpot *list, int n_list, LabelOnMapEnd which_end, const LatLong &from_ll,
-    DXSpot *closest_sp, LatLong *closest_llp)
+bool getClosestSpot (const DXSpot *list, int n_list, SpotFilter sfp, LabelOnMapEnd which_end,
+const LatLong &from_ll, DXSpot *closest_sp, LatLong *closest_llp)
 {
     // linear search -- not worth kdtree etc
     const DXSpot *min_sp = NULL;   
@@ -17,10 +17,14 @@ bool getClosestSpot (const DXSpot *list, int n_list, LabelOnMapEnd which_end, co
     for (int i = 0; i < n_list; i++) {
 
         const DXSpot *sp = &list[i];
-        float d;                    
 
+        // skip if filtered out
+        if (sfp && !(*sfp)(sp))
+            continue;
+
+        // check RX end if used
         if (which_end == LOME_RXEND || which_end == LOME_BOTH) {
-            d = simpleSphereDist (sp->rx_ll, from_ll);
+            float d = simpleSphereDist (sp->rx_ll, from_ll);
             if (d < min_d) {
                 min_d = d;
                 min_sp = sp;
@@ -28,8 +32,9 @@ bool getClosestSpot (const DXSpot *list, int n_list, LabelOnMapEnd which_end, co
             }
         }
 
+        // check TX end if used
         if (which_end == LOME_TXEND || which_end == LOME_BOTH) {
-            d = simpleSphereDist (sp->tx_ll, from_ll);
+            float d = simpleSphereDist (sp->tx_ll, from_ll);
             if (d < min_d) {
                 min_d = d;
                 min_sp = sp;
@@ -38,6 +43,7 @@ bool getClosestSpot (const DXSpot *list, int n_list, LabelOnMapEnd which_end, co
         }
     }
 
+    // use if close enough
     if (min_sp && min_d*ERAD_M < MAX_CSR_DIST) {
 
         // return ll depending on end

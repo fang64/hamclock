@@ -211,7 +211,7 @@ out:
 
 /* prepare the given tty fd
  */
-static bool setNMEAtty (int fd, char *ynot, size_t n_ynot)
+static bool setNMEAtty (int fd, Message &ynot)
 {
     // set up for line input
     struct termios t;
@@ -231,23 +231,23 @@ static bool setNMEAtty (int fd, char *ynot, size_t n_ynot)
     else if (strcmp (baud_str, "38400") == 0)
         B = B38400;
     else {
-        snprintf (ynot, n_ynot, "bad baud %s", baud_str);
+        ynot.printf ("bad baud %s", baud_str);
         return(false);
     }
     if (cfsetspeed (&t, B) < 0) {
-        snprintf (ynot, n_ynot, "cfsetspeed %s: %s", baud_str, strerror(errno));
+        ynot.printf ("cfsetspeed %s: %s", baud_str, strerror(errno));
         return(false);
     }
 
     // engage
     if (tcsetattr (fd, TCSANOW, &t) < 0) {
-        snprintf (ynot, n_ynot, "tcsetattr %s", strerror(errno));
+        ynot.printf ("tcsetattr %s", strerror(errno));
         return(false);
     }
 
     // fresh
     if (tcflush (fd, TCIOFLUSH) < 0) {
-        snprintf (ynot, n_ynot, "tcflush %s", strerror(errno));
+        ynot.printf ("tcflush %s", strerror(errno));
         return(false);
     }
 
@@ -268,8 +268,10 @@ static void *theNMEAThread (void *unused)
     pthread_detach(pthread_self());
 
     // open and prep
+    char path[1000];
     const char *fn = getNMEAFile();
-    char *path = expandENV (fn);
+    if (!expandENV (fn, path, sizeof(path)))
+        fatalError ("NMEA: %s env expansion failed", fn);
     int fd = open (path, O_RDONLY);
     if (fd < 0)
         fatalError ("NMEA device %s: %s", path, strerror(errno));
@@ -280,10 +282,10 @@ static void *theNMEAThread (void *unused)
         const char *baud_str = getNMEABaud();
         tty_cps = atoi(baud_str)/10;                            // assumes 8N1, ie, 10 bits/char
         Serial.printf ("NMEA: tty %u char/sec\n", tty_cps);
-        char ynot[100];
-        if (!setNMEAtty (fd, ynot, sizeof(ynot))) {
+        Message ynot;
+        if (!setNMEAtty (fd, ynot)) {
             close (fd);
-            fatalError ("NMEA device %s: %s", path, ynot);
+            fatalError ("NMEA device %s: %s", path, ynot.get());
         }
     }
 
@@ -387,26 +389,27 @@ static void checkNMEAThread (void)
 /* return whether the given file seems suitable for NMEA.
  * if trouble return false with short reason
  */
-bool checkNMEAFilename (const char *fn, char *ynot, size_t n_ynot)
+bool checkNMEAFilename (const char *fn, Message &ynot)
 {
-    // expand env -- N.B. must free!
-    char *path = expandENV (fn);
+    // expand env
+    char path[1000];
+    if (!expandENV (fn, path, sizeof(path))) {
+        ynot.printf ("%s env expansion failed", fn);
+        return(false);
+    }
 
     // try to open
     int fd = open (path, O_RDONLY|O_NONBLOCK);
 
-    // done with path either way
-    free (path);
-
     // done if can't even open
     if (fd < 0) {
-        snprintf (ynot, n_ynot, "%s", strerror(errno));
+        ynot.printf ("%s: %s", path, strerror(errno));
         return(false);
     }
 
     // do a little more if it appears to be a tty
     if (isatty (fd)) {
-        if (!setNMEAtty (fd, ynot, n_ynot)) {
+        if (!setNMEAtty (fd, ynot)) {
             close (fd);
             return (false);
         }

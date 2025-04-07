@@ -106,7 +106,7 @@ static bool retrieveWorldWx(void)
     Serial.printf ("WWX: %s\n", ww_page);
 
     // get
-    if (wifiOk() && ww_client.connect(backend_host, backend_port)) {
+    if (ww_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
@@ -257,7 +257,7 @@ static bool retrieveCurrentWX (const LatLong &ll, bool is_de, WXCache &wxc)
     resetWatchdog();
 
     // get
-    if (wifiOk() && wx_client.connect(backend_host, backend_port)) {
+    if (wx_client.connect(backend_host, backend_port)) {
         updateClocks(false);
         resetWatchdog();
 
@@ -554,14 +554,14 @@ void doNCDXFWXTouch (BRB_MODE m)
  */
 bool updateDEWX (const SBox &box)
 {
-    char ynot[100];
+    Message ynot;
     WXInfo wxi;
 
     bool ok = getCurrentWX (de_ll, true, &wxi, ynot);
     if (ok)
         plotWX (box, DE_COLOR, wxi);
     else
-        plotMessage (box, DE_COLOR, ynot);
+        plotMessage (box, DE_COLOR, ynot.get());
 
     if (brb_mode == BRB_SHOW_DEWX)
         drawNCDXFBoxWx (BRB_SHOW_DEWX, wxi, ok);
@@ -573,14 +573,14 @@ bool updateDEWX (const SBox &box)
  */
 bool updateDXWX (const SBox &box)
 {
-    char ynot[100];
+    Message ynot;
     WXInfo wxi;
 
     bool ok = getCurrentWX (dx_ll, false, &wxi, ynot);
     if (ok)
         plotWX (box, DX_COLOR, wxi);
     else
-        plotMessage (box, DX_COLOR, ynot);
+        plotMessage (box, DX_COLOR, ynot.get());
 
     if (brb_mode == BRB_SHOW_DXWX)
         drawNCDXFBoxWx (BRB_SHOW_DXWX, wxi, ok);
@@ -594,7 +594,7 @@ bool updateDXWX (const SBox &box)
 bool drawNCDXFWx (BRB_MODE m)
 {
     // get weather
-    char ynot[100];
+    Message ynot;
     WXInfo wxi;
     bool ok = false;
     if (m == BRB_SHOW_DEWX)
@@ -604,7 +604,7 @@ bool drawNCDXFWx (BRB_MODE m)
     else
         fatalError ("Bogus drawNCDXFWx mode: %d", m);
     if (!ok)
-        Serial.printf ("WX: %s\n", ynot);
+        Serial.printf ("WX: %s\n", ynot.get());
 
     // show it
     drawNCDXFBoxWx (m, wxi, ok);
@@ -617,10 +617,10 @@ bool drawNCDXFWx (BRB_MODE m)
 
 /* return current WXInfo for the given de or dx, else NULL
  */
-static const WXInfo *findWXTXCache (const LatLong &ll, bool is_de, char ynot[])
+static const WXInfo *findWXTXCache (const LatLong &ll, bool is_de, Message &ynot)
 {
     // who are we?
-    WXCache &wxc           = is_de ? de_cache : dx_cache;
+    WXCache &wxc = is_de ? de_cache : dx_cache;
 
     // new location?
     bool new_loc = ll.lat_d != wxc.lat_d || ll.lng_d != wxc.lng_d;
@@ -634,7 +634,7 @@ static const WXInfo *findWXTXCache (const LatLong &ll, bool is_de, char ynot[])
             snprintf (retry_msg, sizeof(retry_msg), "%s WX/TZ", is_de ? "DE" : "DX");
             next_err_update = nextWiFiRetry (retry_msg);
             wxc.ok = false;
-            strcpy (ynot, wxc.ynot);
+            ynot.set(wxc.ynot);
             return (NULL);
         }
 
@@ -653,20 +653,20 @@ static const WXInfo *findWXTXCache (const LatLong &ll, bool is_de, char ynot[])
     // return requested info else why not
     if (wxc.ok)
         return (&wxc.info);
-    strcpy (ynot, wxc.ynot);
+    ynot.set (wxc.ynot);
     return (NULL);
 }
 
 /* return current WXInfo with weather at de or dx.
  */
-static const WXInfo *findWXCache (const LatLong &ll, bool is_de, char ynot[])
+static const WXInfo *findWXCache (const LatLong &ll, bool is_de, Message &ynot)
 {
     return (findWXTXCache (ll, is_de, ynot));
 }
 
 /* return current WXInfo with timezone at de or dx.
  */
-const WXInfo *findTZCache (const LatLong &ll, bool is_de, char ynot[])
+const WXInfo *findTZCache (const LatLong &ll, bool is_de, Message &ynot)
 {
     return (findWXTXCache (ll, is_de, ynot));
 }
@@ -715,7 +715,7 @@ bool getFastWx (const LatLong &ll, WXInfo &wxi)
 /* fill wip with weather data for ll.
  * return whether ok, with short reason if not.
  */
-bool getCurrentWX (const LatLong &ll, bool is_de, WXInfo *wip, char ynot[])
+bool getCurrentWX (const LatLong &ll, bool is_de, WXInfo *wip, Message &ynot)
 {
     const WXInfo *new_wip = findWXCache (ll, is_de, ynot);
     if (new_wip) {

@@ -58,6 +58,7 @@ OBJS = \
 	astro.o \
 	bands.o \
 	blinker.o \
+	bmp.o \
 	brightness.o \
 	cachefile.o \
 	callsign.o \
@@ -70,6 +71,7 @@ OBJS = \
 	debug.o \
 	drawextra.o \
 	dxcluster.o \
+	dxpeds.o \
 	earthmap.o \
 	earthsat.o \
 	emetool.o \
@@ -245,18 +247,22 @@ hamclock-fb0-3200x1920: $(OBJS) hclibs
 
 
 
+# /usr/local/bin seems right although Alpine linux does not have it even though it is in the default PATH
 install:
 	@SOURCE=hamclock-*0x*0 ; \
-	TARGET=/usr/local/bin/hamclock ; \
+	DIR=/usr/local/bin ; \
+	TARGET=$$DIR/hamclock ; \
 	if ! [ -x $$SOURCE ] ; then \
 	    echo 'make something first' ; \
+	    make help ; \
 	elif [ `id -un` != 'root' ] ; then \
 	    echo please run with sudo ; \
 	else \
-	    cp -f $$SOURCE $$TARGET \
+	    mkdir -p $$DIR \
+	    && mv -f $$SOURCE $$TARGET \
 	    && chown root $$TARGET \
 	    && chmod u+s $$TARGET \
-	    && echo $$SOURCE is ready as $$TARGET ; \
+            && echo ready to run as: hamclock '&' ; \
 	fi
 
 clean clobber:

@@ -161,7 +161,7 @@ int qsDString (const void *v1, const void *v2)
 void getTextBounds (const char str[], uint16_t *wp, uint16_t *hp)
 {
     int16_t x, y;
-    tft.getTextBounds ((char*)str, 100, 100, &x, &y, wp, hp);
+    tft.getTextBounds (str, 100, 100, &x, &y, wp, hp);
 }
 
 /* return width in pixels of the given string in the current font
@@ -171,6 +171,15 @@ uint16_t getTextWidth (const char str[])
     uint16_t w, h;
     getTextBounds (str, &w, &h);
     return (w);
+}
+
+/* remove trailing newline IN PLACE
+ */
+void chompString (char *str)
+{
+    char *nl = strchr (str, '\n');
+    if (nl)
+        *nl = '\0';
 }
 
 /* shorten str IN PLACE as needed to be less than maxw pixels wide.
@@ -205,59 +214,82 @@ void strncpySubChar (char to_str[], const char from_str[], char to_char, char fr
 }
 
 
-/* expand any ENV in the given file.
- * return malloced result -- N.B. caller must free!
+/* copy fn to with_env expanding any $ENV.
+ * return whether all $ENV found and result fits.
  */
-char *expandENV (const char *fn)
+bool expandENV (const char *fn, char *with_env, size_t max_len)
 {
-    // build fn with any embedded info expanded
-    char *fn_exp = NULL;
-    int exp_len = 0;
-    for (const char *fn_walk = fn; *fn_walk; fn_walk++) {
+    size_t with_len = 0;
 
-        // check for embedded terms
+    for (const char *fn_walk = fn; *fn_walk != '\0'; fn_walk++) {
 
-        char *embed_value = NULL;
+        // check for embedded terms else just copy
+
         if (*fn_walk == '$') {
-            // expect ENV all caps, digits or _
-            const char *dollar = fn_walk;
-            const char *env = dollar + 1;
-            while (isupper(*env) || isdigit(*env) || *env=='_')
-                env++;
-            int env_len = env - dollar - 1;             // env now points to first invalid char; len w/o EOS
-            StackMalloc env_mem(env_len+1);             // +1 for EOS
-            char *env_tmp = (char *) env_mem.getMem();
-            memcpy (env_tmp, dollar+1, env_len);
-            env_tmp[env_len] = '\0';
-            embed_value = getenv(env_tmp);
+
+            // temporarily copy caps/digits/_ to with_env starting just passed the $
+            char *with_env_start = &with_env[with_len];         // start of env copy within with_env
+            int env_len = 0;
+            for (const char *env = fn_walk+1; isupper(*env) || isdigit(*env) || *env=='_'; env++) {
+                if (with_len + env_len < max_len-1)             // leave room for final EOS
+                    with_env_start[env_len++] = *env;
+                else {
+                    Serial.printf ("ENV: expanding %s exceeds max %ld\n", fn, (long)max_len);
+                    return (false);
+                }
+            }
+
+            // terminate and look up
+            with_env_start[env_len] = '\0';
+            char *env_value = getenv (with_env_start);
+            if (!env_value) {
+                Serial.printf ("ENV: %s within %s not found\n", with_env_start, fn);
+                return (false);
+            }
+
+            // copy env_value into with_env for real starting at the $ but sans EOS
+            size_t env_value_len = strlen (env_value);
+            memcpy (with_env_start, env_value, env_value_len);
+
+            // increment length by env value length and advance walk by env name length
+            with_len += env_value_len;
             fn_walk += env_len;
 
         } else if (*fn_walk == '~') {
-            // expand ~ as $HOME
-            embed_value = getenv("HOME");
-            // fn_walk++ in for loop is sufficient
-        }
 
-        // append to fn_exp
-        if (embed_value) {
-            // add embedded value to fn_exp
-            int val_len = strlen (embed_value);
-            fn_exp = (char *) realloc (fn_exp, exp_len + val_len);
-            memcpy (fn_exp + exp_len, embed_value, val_len);
-            exp_len += val_len;
+            // expand ~ as $HOME
+            char *home = getenv ("HOME");
+            if (!home) {
+                Serial.printf ("ENV: no HOME to expand %s\n", fn);
+                return (false);
+            }
+
+            // copy to with_env
+            while (*home != '\0') {
+                if (with_len < max_len - 1)
+                    with_env[with_len++] = *home++;
+                else {
+                    Serial.printf ("ENV: expanding ~ in %s exceeds max %ld\n", fn, (long)max_len);
+                    return (false);
+                }
+            }
+
         } else {
-            // no embedded found, just add fn_walk to fn_exp
-            fn_exp = (char *) realloc (fn_exp, exp_len + 1);
-            fn_exp[exp_len++] = *fn_walk;
+
+            if (with_len < max_len - 1)
+                with_env[with_len++] = *fn_walk;
+            else {
+                Serial.printf ("ENV: expanded %s exceeds max %ld\n", fn, (long)max_len);
+                return (false);
+            }
         }
     }
 
     // add EOS
-    fn_exp = (char *) realloc (fn_exp, exp_len + 1);
-    fn_exp[exp_len++] = '\0';
+    with_env[with_len] = '\0';
 
     // ok
-    return (fn_exp);
+    return (true);
 }
 
 /* handy means to break time interval into HHhMM or MM:SS given dt in hours.

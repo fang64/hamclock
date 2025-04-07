@@ -101,18 +101,18 @@ class WatchList {
         /* upon entry all we know is token contains '-'.
          * must be in format n1-n2{subband,m,mhz} else error.
          */
-        bool checkBandRange (const char *token, char ynot[], size_t n_ynot)
+        bool checkBandRange (const char *token, Message &ynot)
         {
             // should find 2 numbers separated by - followed by units
             float f1, f2;
             char units[10];
             int n_s = sscanf (token, "%g-%g%9s", &f1, &f2, units);
             if (n_s < 2) {
-                snprintf (ynot, n_ynot, "busted range");
+                ynot.set ("busted range");
                 return (false);
             }
             if (n_s == 2) {
-                snprintf (ynot, n_ynot, "no units");
+                ynot.set ("no units");
                 return (false);
             }
 
@@ -129,7 +129,7 @@ class WatchList {
                 float f1_kHz = f1*1e3F;                         // MHz to kHz
                 float f2_kHz = f2*1e3F;
                 if (findHamBand (f1_kHz) == HAMBAND_NONE || findHamBand (f2_kHz) == HAMBAND_NONE) {
-                    snprintf (ynot, n_ynot, "limits? %g-%g", f1, f2);
+                    ynot.printf ("limits? %g-%g", f1, f2);
                     return (false);
                 }
                 addFreqRange (f1_kHz, f2_kHz);
@@ -138,7 +138,7 @@ class WatchList {
 
             // other than MHz check for valid units, including "m"
             if (strcasecmp (units, "m") && !isValidSubBand(units)) {
-                snprintf (ynot, n_ynot, "subband? %s", units);
+                ynot.printf ("subband? %s", units);
                 return (false);
             }
 
@@ -146,23 +146,23 @@ class WatchList {
             int f1_int = (int)f1;
             int f2_int = (int)f2;
             if (f1_int != f1) {
-                snprintf (ynot, n_ynot, "fraction? %g", f1);
+                ynot.printf ("fraction? %g", f1);
                 return (false);
             }
             if (f2_int != f2) {
-                snprintf (ynot, n_ynot, "fraction? %g", f2);
+                ynot.printf ("fraction? %g", f2);
                 return (false);
             }
 
             // find each ham band selection
             int h1 = (int)findHamBand (f1_int);                 // type int means meters
             if (h1 == HAMBAND_NONE) {
-                snprintf (ynot, n_ynot, "band? %g", f1);
+                ynot.printf ("band? %g", f1);
                 return (false);
             }
             int h2 = (int)findHamBand (f2_int);                 // type int means meters
             if (h2 == HAMBAND_NONE) {
-                snprintf (ynot, n_ynot, "band? %g", f2);
+                ynot.printf ("band? %g", f2);
                 return (false);
             }
 
@@ -181,7 +181,7 @@ class WatchList {
             for (int i = h1; i < h2; i++)
                 n_ranges += addSubBand ((HamBandSetting)i, units);
             if (n_ranges == 0) {
-                snprintf (ynot, n_ynot, "no matches");
+                ynot.set ("no matches");
                 return (false);
             }
 
@@ -192,12 +192,12 @@ class WatchList {
         /* determine if token is a single band spec (ie, no '-') else a generic prefix.
          * return whether it looks reasonable either way.
          */
-        bool checkPrefix (const char *token, char ynot[], size_t n_ynot)
+        bool checkPrefix (const char *token, Message &ynot)
         {
             // first we scan for any weird chars other than / at the end
             for (const char *tp = token; *tp; tp++) {
                 if (!isalnum(*tp) && strcmp (tp, "/")) {
-                    snprintf (ynot, n_ynot, "char? %c", *tp);
+                    ynot.printf ("char? %c", *tp);
                     return (false);
                 }
             }
@@ -207,7 +207,7 @@ class WatchList {
             int n = strtol (token, &modeptr, 10);
             if (*modeptr == '\0') {
                 // pure number
-                snprintf (ynot, n_ynot, "number? %s", token);
+                ynot.printf ("number? %s", token);
                 return (false);
             }
             if (modeptr > token) {
@@ -216,7 +216,7 @@ class WatchList {
                 if (h == HAMBAND_NONE) {
                     // not valid band not a prefix either if over 9
                     if (n >= 10) {
-                        snprintf (ynot, n_ynot, "band? %d", n);
+                        ynot.printf ("band? %d", n);
                         return (false);
                     }
                 } else {
@@ -224,7 +224,7 @@ class WatchList {
                     if (strcasecmp (modeptr, "m") == 0 || isValidSubBand(modeptr)) {
                         // valid mode too so we're commited to this not being a generic prefix
                         if (addSubBand (h, modeptr) == 0) {
-                            snprintf (ynot, n_ynot, "no match");
+                            ynot.set ("no match");
                             return (false);
                         }
                         return (true);
@@ -427,7 +427,7 @@ class WatchList {
         /* try to compile the given watch list specifications.
          * if trouble return false with short excuse in ynot[].
          */
-        bool compile (const char *wl_specs, char ynot[], size_t n_ynot)
+        bool compile (const char *wl_specs, Message &ynot)
         {
             // fresh start
             resetStorage();
@@ -465,7 +465,7 @@ class WatchList {
 
                 // ADIF?
                 if (strcasecmp (token, NOTADIFDXCC_KW) == 0) {
-                    if (!checkADIFFilename (getADIFilename(), ynot, n_ynot))
+                    if (!checkADIFFilename (getADIFilename(), ynot))
                         return (false);
                     checkNewSpec();                                     // insure at least 1
                     OneSpec &s = specs[n_specs-1];                      // current spec
@@ -473,7 +473,7 @@ class WatchList {
                     continue;
                 }
                 if (strcasecmp (token, NOTADIFBAND_KW) == 0) {
-                    if (!checkADIFFilename (getADIFilename(), ynot, n_ynot))
+                    if (!checkADIFFilename (getADIFilename(), ynot))
                         return (false);
                     checkNewSpec();                                     // insure at least 1
                     OneSpec &s = specs[n_specs-1];                      // current spec
@@ -481,7 +481,7 @@ class WatchList {
                     continue;
                 }
                 if (strcasecmp (token, NOTADIFPREF_KW) == 0) {
-                    if (!checkADIFFilename (getADIFilename(), ynot, n_ynot))
+                    if (!checkADIFFilename (getADIFilename(), ynot))
                         return (false);
                     checkNewSpec();                                     // insure at least 1
                     OneSpec &s = specs[n_specs-1];                      // current spec
@@ -489,7 +489,7 @@ class WatchList {
                     continue;
                 }
                 if (strcasecmp (token, NOTADIFGRID_KW) == 0) {
-                    if (!checkADIFFilename (getADIFilename(), ynot, n_ynot))
+                    if (!checkADIFFilename (getADIFilename(), ynot))
                         return (false);
                     checkNewSpec();                                     // insure at least 1
                     OneSpec &s = specs[n_specs-1];                      // current spec
@@ -499,19 +499,19 @@ class WatchList {
 
                 // if contains '-' then freq range?
                 if (strchr (token, '-')) {
-                    if (!checkBandRange (token, ynot, n_ynot))
+                    if (!checkBandRange (token, ynot))
                         return (false);
                     continue;
                 }
 
                 // something else?
-                if (!checkPrefix (token, ynot, n_ynot))
+                if (!checkPrefix (token, ynot))
                     return (false);
             }
 
             // disallow empty
             if (n_specs == 0) {
-                snprintf (ynot, n_ynot, "empty");
+                ynot.set ("empty");
                 return (false);
             }
 
@@ -572,24 +572,24 @@ WatchListShow checkWatchListSpot (WatchListId wl_id, const DXSpot &dxsp)
 /* compile the given string on the given watch list.
  * return false with brief reason if trouble.
  */
-bool compileWatchList (WatchListId wl_id, const char *wl_str, char ynot[], size_t n_ynot)
+bool compileWatchList (WatchListId wl_id, const char *wl_str, Message &ynot)
 {
     if (!wlIdOk(wl_id))
         fatalError ("compileWatchList bogus is %d", (int)wl_id);
 
     // avoid recusive references
     if (wl_id == WLID_ADIF && anyWLADIFKW (wl_str)) {
-        snprintf (ynot, n_ynot, "ADIF recursion");
+        ynot.set ("ADIF recursion");
         return (false);
     }
 
     Serial.printf ("WLIST %s: compiling %s\n", getWatchListName(wl_id), wl_str);
-    bool ok = wlists[wl_id].compile (wl_str, ynot, n_ynot);
+    bool ok = wlists[wl_id].compile (wl_str, ynot);
 
     if (ok)
         wlists[wl_id].print (wl_id);
     else
-        Serial.printf ("WLIST %s: %s\n", getWatchListName(wl_id), ynot);
+        Serial.printf ("WLIST %s: %s\n", getWatchListName(wl_id), ynot.get());
 
     return (ok);
 }
@@ -598,7 +598,7 @@ bool compileWatchList (WatchListId wl_id, const char *wl_str, char ynot[], size_
  * N.B. _menu_text->label contains the WL state name, ->text contains the watchlist
  * N.B. just feign success if WLA_OFF.
  */
-static bool compileTestWatchList (struct _menu_text *tfp, char ynot[], size_t n_ynot)
+static bool compileTestWatchList (struct _menu_text *tfp, Message &ynot)
 {
     // just say yes if state is Off
     if (lookupWatchListState(tfp->label) == WLA_OFF)
@@ -608,20 +608,20 @@ static bool compileTestWatchList (struct _menu_text *tfp, char ynot[], size_t n_
     WatchList anon_wl;
     
     Serial.printf ("WLIST anon: compiling %s\n", tfp->text);
-    bool ok = anon_wl.compile (tfp->text, ynot, n_ynot);
+    bool ok = anon_wl.compile (tfp->text, ynot);
 
     Serial.printf ("WLIST anon: compiled %s\n", tfp->text);
     if (ok)
         anon_wl.print (WLID_N);
     else
-        Serial.printf ("WLIST anon: state %s compiled %s: %s\n", tfp->label, tfp->text, ynot);
+        Serial.printf ("WLIST anon: state %s compiled %s: %s\n", tfp->label, tfp->text, ynot.get());
 
     return (ok);
 }
 
 /* like compileTestWatchList but for use only for compiling WL_ADIF.
  */
-static bool compileTestADIFWatchList (struct _menu_text *tfp, char ynot[], size_t n_ynot)
+static bool compileTestADIFWatchList (struct _menu_text *tfp, Message &ynot)
 {
     // just say yes if state is Off
     if (lookupWatchListState(tfp->label) == WLA_OFF)
@@ -629,7 +629,7 @@ static bool compileTestADIFWatchList (struct _menu_text *tfp, char ynot[], size_
 
     // avoid recusive references
     if (anyWLADIFKW (tfp->text)) {
-        snprintf (ynot, n_ynot, "ADIF recursion");
+        ynot.set ("ADIF recursion");
         return (false);
     }
 
@@ -637,12 +637,12 @@ static bool compileTestADIFWatchList (struct _menu_text *tfp, char ynot[], size_
     WatchList anon_wl;
     
     Serial.printf ("WLIST anon: compiling %s\n", tfp->text);
-    bool ok = anon_wl.compile (tfp->text, ynot, n_ynot);
+    bool ok = anon_wl.compile (tfp->text, ynot);
 
     if (ok)
         anon_wl.print (WLID_N);
     else
-        Serial.printf ("WLIST anon: state %s compiled %s: %s\n", tfp->label, tfp->text, ynot);
+        Serial.printf ("WLIST anon: state %s compiled %s: %s\n", tfp->label, tfp->text, ynot.get());
 
     return (ok);
 }

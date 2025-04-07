@@ -470,7 +470,7 @@ void setup()
     // ask to update if new version available -- never returns if update succeeds
     if (!skip_skip) {
         char nv[50];
-        if (newVersionIsAvailable (nv, sizeof(nv)) && askOTAupdate (nv)) {
+        if (newVersionIsAvailable (nv, sizeof(nv)) && askOTAupdate (nv, false)) {
             if (askPasswd ("upgrade", false))
                 doOTAupdate(nv);
             eraseScreen();
@@ -929,7 +929,7 @@ static void checkTouch()
     } else if (inBox (s, version_b)) {
         char nv[50];
         if (newVersionIsAvailable(nv, sizeof(nv))) {
-            if (askOTAupdate (nv) && askPasswd ("upgrade", false))
+            if (askOTAupdate (nv, false) && askPasswd ("upgrade", false))
                 doOTAupdate(nv);
         } else {
             eraseScreen();
@@ -1216,33 +1216,56 @@ void shadowString (const char *str, bool shadow, uint16_t color, uint16_t x0, ui
     tft.print (str);
 }
 
-/* draw version just below cs_info if time to recheck or force
+/* return whether this is a beta version
  */
-static void drawVersion(bool force)
+static bool weAreBeta (void)
 {
-    // how often to check for new version -- check much more often when we are beta
-    const uint32_t check_dt = strchr (hc_version, 'b') ? 5*60*1000UL : 6*3600*1000UL;   // millis
+    return (strchr (hc_version, 'b') != NULL);
+}
 
-    // get out fast if nothing to do yet
-    static uint32_t check_t;
-    if (!timesUp (&check_t, check_dt) && !force)
-        return;
+/* draw current version if desired and occasionally check for new.
+ */
+static void drawVersion (bool draw)
+{
+    // occasionally check for new version, much more often if beta
+    const uint32_t checkv_dt = weAreBeta() ? 5*60*1000UL : 6*3600*1000UL;   // millis
+    static uint32_t checkv_t;
+    static bool new_avail;
+    static char new_version[20];
+    if (timesUp (&checkv_t, checkv_dt))
+        new_avail = newVersionIsAvailable (new_version, sizeof(new_version));
 
-    // check for new version and reset timeout
-    char line[50];
-    bool new_avail = newVersionIsAvailable (line, sizeof(line));
-    check_t = millis();
+    // perform update if scheduled
+    if (new_avail) {
+        int update_hour;
+        if (autoUpgrade(update_hour)) {
+            int hour_now = hour (nowWO() + getTZ (de_tz));
+            if (hour_now == update_hour) {
+                static int last_check_hour = -1;                // don't ask again in the same hour
+                if (hour_now != last_check_hour) {
+                    last_check_hour = hour_now;
+                    if (askOTAupdate (new_version, true) && askPasswd ("upgrade", false))
+                        doOTAupdate(new_version);               // never returns
+                    initScreen();
+                }
+            }
+        }
+    }
 
-    // show current version, but highlight if new version is available
-    uint16_t col = new_avail ? RA8875_RED : GRAY;
-    selectFontStyle (LIGHT_FONT, FAST_FONT);
-    snprintf (line, sizeof(line), "V%s", hc_version);
-    uint16_t vw = getTextWidth (line);
-    tft.setTextColor (col);
-    tft.setCursor (version_b.x+version_b.w-vw, version_b.y+1);        // right justify
-    fillSBox (version_b, RA8875_BLACK);
-    // drawSBox (version_b, RA8875_GREEN);         // RBF
-    tft.print (line);
+    // draw if desired
+    if (draw) {
+        // show current version, but highlight if new version is available
+        char ver[50];
+        uint16_t col = new_avail ? RA8875_RED : GRAY;
+        selectFontStyle (LIGHT_FONT, FAST_FONT);
+        snprintf (ver, sizeof(ver), "V%s", hc_version);
+        uint16_t vw = getTextWidth (ver);
+        tft.setTextColor (col);
+        tft.setCursor (version_b.x+version_b.w-vw, version_b.y+1);      // right justify
+        fillSBox (version_b, RA8875_BLACK);
+        // drawSBox (version_b, RA8875_GREEN);         // RBF
+        tft.print (ver);
+    }
 }
 
 /* draw one of several possible rotating message beneath the call sign.
@@ -1283,16 +1306,16 @@ static void drawRotatingMessage()
                 bool ok = (is_dbm && rssi_avg >= MIN_WIFI_DBM) || (!is_dbm && rssi_avg >= MIN_WIFI_PERCENT);
 
                 // show meter if too low unless ignored
-                if (!rssi_ignore && !ok)
+                if (!ok && !rssi_ignore)
                     runWiFiMeter (true, rssi_ignore);
 
                 // display value
                 snprintf (str, sizeof(str), "WiFi %4d%s", rssi_avg, is_dbm ? " dBm" : "%");
                 show_red = !ok;
 
-                // log if changed more than a few db
+                // log if changed more than a few
                 if (abs(rssi_avg-prev_logv) > 3) {
-                    Serial.printf ("Up %u s: RSSI %d\n", millis()/1000U, rssi_avg);
+                    Serial.printf ("RSSI %d\n", rssi_avg);
                     prev_logv = rssi_avg;
                 }
             }
@@ -1577,13 +1600,14 @@ void drawAllSymbols()
     if (overMap(moon_c.s))
         drawMoon();
     updateBeacons(true);
-    drawDEMarker(false);
-    drawDXMarker(false);
     if (!overRSS(deap_c.s))
         drawDEAPMarker();
     drawOnTheAirSpotsOnMap();
     drawDXClusterSpotsOnMap();
     drawADIFSpotsOnMap();
+    drawDXPedsOnMap();
+    drawDEMarker(false);
+    drawDXMarker(false);
     drawFarthestPSKSpots();
     drawSanta ();
 

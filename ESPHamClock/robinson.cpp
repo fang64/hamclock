@@ -117,9 +117,10 @@ bool s2llRobinson (const SCoord &s, LatLong &ll)
     // check bounds before adjustments
     bool ok = fabsf (ll.lat_d) <= 90 && fabsf (ll.lng_d) <= 180;
 
-    // adjust to center lng, rely on normalizeLL to handle wrap
-    float deg_pan = 360.0F*pan_zoom.pan_x/map_b.w;
-    ll.lng_d += getCenterLng() + deg_pan;
+    // adjust to pan and center lng, rely on normalizeLL to handle wrap
+    ll.lng_d += 360.0F*pan_zoom.pan_x/map_b.w;
+    if (core_map != CM_USER)
+        ll.lng_d += getCenterLng();
     normalizeLL (ll);
 
     // ok?

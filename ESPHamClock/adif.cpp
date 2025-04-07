@@ -1,11 +1,6 @@
 /* support for the ADIF file pane and mapping.
  * based on https://www.adif.org/314/ADIF_314.htm
  * pane layout and operations are similar to dxcluster.
- * 
- * debug guidelines:
- *   level 1: log each successful spot, no errors
- *   level 2: 1+ errors in final check
- *   level 3: 2+ all else
  */
 
 #include "HamClock.h"
@@ -90,7 +85,6 @@ static bool showing_set_adif;                           // set when not checking
 static bool newfile_pending;                            // set when find new file while scrolled away
 static FileSignature fsig;                              // used to decide whether to read file again
 static int n_adif_bad;                                  // n bad spots found, global to maintain context
-
 
 
 /* save sort and file name
@@ -193,49 +187,53 @@ void drawADIFPane (const SBox &box, const char *filename)
 
 /* test whether the given file name is suitable for ADIF, else return brief reason.
  */
-bool checkADIFFilename (const char *fn, char *ynot, size_t n_ynot)
+bool checkADIFFilename (const char *fn, Message &ynot)
 {
     // at all?
     if (!fn) {
-        snprintf (ynot, n_ynot, "no file");
+        ynot.set ("no file");
         return (false);
     }
     // edge tests
     if (strchr (fn, ' ')) {
-        snprintf (ynot, n_ynot, "no blanks");
+        ynot.set("no blanks");
         return (false);
     }
     size_t fn_l = strlen (fn);
     if (fn_l == 0) {
-        snprintf (ynot, n_ynot, "empty");
+        ynot.set("empty");
         return (false);
     }
     if (fn_l > NV_ADIFFN_LEN-1) {
-        snprintf (ynot, n_ynot, "too long");
+        ynot.set("too long");
         return (false);
     }
 
     // worth trying for real
-    char *fn_exp = expandENV (fn);
-    FILE *fp = fopen (fn_exp, "r");
-    bool ok = fp != NULL;
-    if (ok)
-        fclose (fp);
-    else {
-        snprintf (ynot, n_ynot, "open failed");
-        Serial.printf ("ADIF: %s %s\n", fn_exp, strerror(errno));
+    char fn_exp[1000];
+    if (!expandENV (fn, fn_exp, sizeof(fn_exp))) {
+        ynot.set("env lookup failed");
+        Serial.printf ("ADIF: %s env expand failed\n", fn);
+        return (false);
     }
-    free (fn_exp);
-    return (ok);
+
+    FILE *fp = fopen (fn_exp, "r");
+    if (fp) {
+        fclose (fp);
+        return (true);
+    } else {
+        ynot.set("open failed");
+        Serial.printf ("ADIF: %s %s\n", fn_exp, strerror(errno));
+        return (false);
+    }
 }
 
 /* callback for testing adif file name in the given MenuText->text
  */
-static bool testADIFFilename (struct _menu_text *tfp, char ynot[], size_t n_ynot)
+static bool testADIFFilename (struct _menu_text *tfp, Message &ynot)
 {
-    return (checkADIFFilename (tfp->text, ynot, n_ynot));
+    return (checkADIFFilename (tfp->text, ynot));
 }
-
 
 /* run the ADIF menu
  */
@@ -296,10 +294,9 @@ static void runADIFMenu (const SBox &box)
             fatalError ("runADIFMenu no sort set");
 
         // must recompile to update WL but runMenu already insured wl compiles ok
-        char ynot[100];
-        if (lookupWatchListState (wl_mt.label) != WLA_OFF
-                                        && !compileWatchList (WLID_ADIF, wl_mt.text, ynot, sizeof(ynot)))
-            fatalError ("ADIF failed recompling wl %s: %s", wl_mt.text, ynot);
+        Message ynot;
+        if (lookupWatchListState (wl_mt.label) != WLA_OFF && !compileWatchList (WLID_ADIF, wl_mt.text, ynot))
+            fatalError ("ADIF failed recompling wl %s: %s", wl_mt.text, ynot.get());
         setWatchList (WLID_ADIF, wl_mt.label, wl_mt.text);
         Serial.printf ("ADIF: set WL to %s %s\n", wl_mt.label, wl_mt.text);
 
@@ -322,8 +319,8 @@ static void runADIFMenu (const SBox &box)
 }
 
 /* freshen the ADIF file if used and necessary then update pane if in use.
- * io errors are shown in pane else map
- * leave with newfile_pending set if file changed but not in a position to show new entries.
+ * leave with newfile_pending set if file changed but we're currently not in a position to show new entries.
+ * N.B. io errors are fatal.
  */
 void freshenADIFFile (void)
 {
@@ -331,43 +328,41 @@ void freshenADIFFile (void)
     if (showing_set_adif)
         return;
 
-    // check for new/changed file
-    const char *fn = getADIFilename();          // file name -- can't be NULL see plotChoiceIsAvailable()
+    // get full filename
+    const char *fn = getADIFilename();
     if (!fn)
-        return;
-    char *fn_exp = expandENV (fn);              // malloced expanded file name -- N.B. mustfree
-    if (fsig.fileChanged (fn_exp))              // latch if flag file changes
+        return;                                                         // not interested
+    char fn_exp[1000];
+    if (!expandENV (fn, fn_exp, sizeof(fn_exp)))
+        fatalError ("ADIF %s failed ENV expansion", fn);
+
+    // check for new/changed file
+    if (fsig.fileChanged (fn_exp))
         newfile_pending = true;
 
-    // read file is newer and not scrolled away
+    // read file if newer and not scrolled away
     if (newfile_pending && adif_ss.atNewest()) {
-        PlotPane pp = findPaneChoiceNow (PLOT_CH_ADIF);
+
+        // open
         FILE *fp = fopen (fn_exp, "r");
-        if (!fp) {
-            char errmsg[100];
-            snprintf (errmsg, sizeof(errmsg), "%s: %s", fn_exp, strerror(errno));
-            if (pp == PANE_NONE)
-                mapMsg (4000, "%s", errmsg);
-            else
-                plotMessage (plot_b[pp], RA8875_RED, errmsg);
-        } else {
-            GenReader gr(fp);
-            int n_good;
-            loadADIFFile (gr, n_good, n_adif_bad);
-            fclose (fp);
+        if (!fp)
+            fatalError ("ADIF %s: %s", fn_exp, strerror(errno));        // never returns
 
-            // update list if showing
-            if (pp != PANE_NONE)
-                drawADIFPane (plot_b[pp], getADIFilename());
+        // ingest
+        GenReader gr(fp);
+        int n_good;
+        loadADIFFile (gr, n_good, n_adif_bad);
+        fclose (fp);
 
-            // caught up
-            newfile_pending = false;
-        }
+        // update list if showing
+        PlotPane pp = findPaneChoiceNow (PLOT_CH_ADIF);
+        if (pp != PANE_NONE)
+            drawADIFPane (plot_b[pp], getADIFilename());
+
+        // caught up
+        newfile_pending = false;
         showing_set_adif = false;
     }
-
-    // clean up our malloc
-    free (fn_exp);
 }
 
 /* replace our adif_spots with those found in the given GenReader.
@@ -378,11 +373,14 @@ void freshenADIFFile (void)
  */
 void loadADIFFile (GenReader &gr, int &n_good, int &n_bad)
 {
+    // announce but no waiting, message will remain until this function returns
+    mapMsg (0, "Loading ADIF file");
+
     // restart list and insure settings are loaded
     resetADIFMem();
     loadADIFSettings();
 
-    // crack file
+    // crack file, adds good entries to adif_spots[]
     adif_ss.n_data = readADIFFile (gr, adif_spots, true, n_bad);
 
     // report
@@ -390,12 +388,15 @@ void loadADIFFile (GenReader &gr, int &n_good, int &n_bad)
     n_adif_bad = n_bad;
     Serial.printf ("ADIF: loaded %d qualifying %d busted spots\n", n_good, n_bad);
 
-    // sort and prep for display
+    // sort spots and prep for display
     qsort (adif_spots, adif_ss.n_data, sizeof(DXSpot), adif_pqsf[adif_sort]);
     adif_ss.scrollToNewest();
 
     // note new source type ready
     showing_set_adif = gr.isClient();
+    
+    // final message
+    mapMsg (1000, "Loaded ADIF file");
 }
 
 /* called frequently to check for new ADIF records.
@@ -435,11 +436,15 @@ void drawADIFSpotsOnMap()
     for (int i = 0; i < adif_ss.n_data; i++) {
         DXSpot &si = adif_spots[i];
         drawSpotPathOnMap (si);
+        if ((i % 1000) == 0)
+            updateClocks(true);
     }
     for (int i = 0; i < adif_ss.n_data; i++) {
         DXSpot &si = adif_spots[i];
         drawSpotLabelOnMap (si, LOME_TXEND, LOMD_ALL);
         drawSpotLabelOnMap (si, LOME_RXEND, LOMD_ALL);
+        if ((i % 1000) == 0)
+            updateClocks(true);
     }
 }
 
@@ -505,7 +510,7 @@ bool checkADIFTouch (const SCoord &s, const SBox &box)
 bool getClosestADIFSpot (const LatLong &ll, DXSpot *sp, LatLong *llp)
 {
     return (adif_spots && findPaneForChoice(PLOT_CH_ADIF) != PANE_NONE
-                && getClosestSpot (adif_spots, adif_ss.n_data, LOME_BOTH, ll, sp, llp));
+                && getClosestSpot (adif_spots, adif_ss.n_data, NULL, LOME_BOTH, ll, sp, llp));
 }
 
 

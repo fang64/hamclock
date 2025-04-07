@@ -354,6 +354,10 @@ static const uint8_t nv_sizes[NV_N] = {
     // 230
     1,                          // NV_UDPSETSDX
     4,                          // NV_SPCWXCHOICE
+    1,                          // NV_DXPEDS
+    1,                          // NV_UDPSPOTS
+    1,                          // NV_AUTOUPGRADE
+
 
 };
 
@@ -597,6 +601,13 @@ void NVWriteUInt8 (NV_Name e, uint8_t u)
     nvramWriteBytes (e, (uint8_t*)&u, 1);
 }
 
+/* write the given int8_t value to the given NV_name
+ */
+void NVWriteInt8 (NV_Name e, int8_t i)
+{
+    nvramWriteBytes (e, (uint8_t*)&i, 1);
+}
+
 /* write the given string value to the given NV_name
  */
 void NVWriteString (NV_Name e, const char *str)
@@ -652,6 +663,13 @@ bool NVReadInt16 (NV_Name e, int16_t *ip)
 bool NVReadUInt8 (NV_Name e, uint8_t *up)
 {
     return (nvramReadBytes (e, (uint8_t*)up, 1));
+}
+
+/* read the given NV_Name int8_t value, return whether found in NVRAM.
+ */
+bool NVReadInt8 (NV_Name e, int8_t *ip)
+{
+    return (nvramReadBytes (e, (uint8_t*)ip, 1));
 }
 
 /* read the given NV_Name string value, return whether found in NVRAM.

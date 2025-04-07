@@ -241,6 +241,34 @@ static const char *units_names[UNITS_N] = {
 
 
 
+// entangled auto upgrade settings
+#define AUP_SETTINGS                    \
+    X(AUP_OFF,     "Off",    -1)        \
+    X(AUP_P1,      "03:00",   3)        \
+    X(AUP_P2,      "12:00",  12)        \
+    X(AUP_P3,      "21:00",  21)
+
+typedef struct {
+    const char *label;                  // menu label
+    int local_hour;                     // local hour to ask upgrade
+} AutoUpSetting;
+
+#define X(a,b,c)  a,                    // expands AUP_SETTINGS to each enum and comma
+typedef enum {
+    AUP_SETTINGS
+    AUP_N
+} AUTOUP_ID;
+#undef X
+
+// table of auto upgrade labels and times
+#define X(a,b,c) {b,c},                 // expands AUP_SETTINGS to each array initialization in {}
+static AutoUpSetting autoup_tbl[AUP_N] = {
+    AUP_SETTINGS
+};
+#undef X
+
+
+
 // label names
 #define X(a,b)  b,                              // expands LABELSTYLES to each name plus comma
 static const char *lbl_styles[LBL_N] = {
@@ -430,7 +458,7 @@ typedef enum {
 
     // page "2"
     CLUSTER_BPR,
-    CLISWSJTX_BPR,
+    CLISUDP_BPR,
     DXWLISTA_BPR,
     DXWLISTB_BPR,
     DXCLCMDPGA_BPR,
@@ -487,8 +515,11 @@ typedef enum {
     PANE_ROTPB_BPR,
     QRZBIOA_BPR,
     QRZBIOB_BPR,
-    AUTOMAP_BPR,
+    UDPSPOTS_BPR,
     UDPSETSDX_BPR,
+    AUTOMAP_BPR,
+    AUTOUPA_BPR,
+    AUTOUPB_BPR,
     WEB_FULLSCRN_BPR,
     X11_FULLSCRN_BPR,
 
@@ -709,15 +740,29 @@ static BoolPrompt bool_pr[N_BPR] = {
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
 
 
-    {4, { 10, R2Y(8), 190, PR_H},  {200, R2Y(8), 170, PR_H}, false, "Auto SpcWx map?", "No", "Yes", NOMATE},
+    {4, { 10, R2Y(8), 190, PR_H},  {200, R2Y(8), 170, PR_H}, false, "Show UDP spots?", "By me", "All",NOMATE},
 
     {4, {400, R2Y(8), 190, PR_H},  {590, R2Y(8), 170, PR_H}, false, "UDP sets DX?", "No", "Yes", NOMATE},
 
 
 
-    {4, { 10, R2Y(9), 190, PR_H},  {200, R2Y(9), 170, PR_H}, false, "Full scrn web?", "No", "Yes", NOMATE},
+    {4, { 10, R2Y(9), 190, PR_H},  {200, R2Y(9), 170, PR_H}, false, "Auto SpcWx map?", "No", "Yes", NOMATE},
 
-    {4, {400, R2Y(9), 190, PR_H},  {590, R2Y(9), 170, PR_H}, false, "Full scrn direct?", "No", "Yes", NOMATE},
+
+
+
+    {4, {400, R2Y(9), 190, PR_H},  {590, R2Y(9), 170, PR_H}, false, "Auto upgrade?",
+                                    autoup_tbl[AUP_OFF].label, autoup_tbl[AUP_P1].label, AUTOUPB_BPR},
+    {4, {400, R2Y(9), 190, PR_H},  {590, R2Y(9), 170, PR_H}, false, NULL,
+                                    autoup_tbl[AUP_P2].label, autoup_tbl[AUP_P3].label, AUTOUPA_BPR},
+                                                // 4x entangled: FF -> TF -> FT -> TT -> ...
+
+
+
+
+    {4, { 10, R2Y(10), 190, PR_H}, {200, R2Y(10), 170, PR_H}, false, "Full scrn web?", "No", "Yes", NOMATE},
+
+    {4, {400, R2Y(10), 190, PR_H}, {590, R2Y(10), 170, PR_H}, false, "Full scrn direct?", "No", "Yes",NOMATE},
                                                 // N.B. state box must be wide enough for "Won't fit"
 
 
@@ -1396,13 +1441,13 @@ static bool boolIsRelevant (BoolPrompt *bp)
         #endif
     }
 
-    if (bp == &bool_pr[CLISWSJTX_BPR]) {
+    if (bp == &bool_pr[CLISUDP_BPR]) {
         if (!bool_pr[CLUSTER_BPR].state)
             return (false);
     }
 
     if (bp == &bool_pr[DXCLCMDPGA_BPR] || bp == &bool_pr[DXCLCMDPGB_BPR]) {
-        if (!bool_pr[CLUSTER_BPR].state || bool_pr[CLISWSJTX_BPR].state)
+        if (!bool_pr[CLUSTER_BPR].state || bool_pr[CLISUDP_BPR].state)
             return (false);
     }
 
@@ -1414,7 +1459,7 @@ static bool boolIsRelevant (BoolPrompt *bp)
     if (bp >= &bool_pr[DXCLCMD0_BPR] && bp < &bool_pr[DXCLCMD0_BPR + N_DXCLCMDS]) {
         int pr_page = (bp - &bool_pr[DXCLCMD0_BPR])/4 + 1;
         int cmd_page = atoi (getEntangledValue (DXCLCMDPGA_BPR, DXCLCMDPGB_BPR));
-        if (cmd_page != pr_page || !bool_pr[CLUSTER_BPR].state || bool_pr[CLISWSJTX_BPR].state)
+        if (cmd_page != pr_page || !bool_pr[CLUSTER_BPR].state || bool_pr[CLISUDP_BPR].state)
             return (false);
     }
 
@@ -1503,14 +1548,14 @@ static bool stringIsRelevant (StringPrompt *sp)
     }
 
     if (sp == &string_pr[DXLOGIN_SPR]) {
-        if (!bool_pr[CLUSTER_BPR].state || bool_pr[CLISWSJTX_BPR].state)
+        if (!bool_pr[CLUSTER_BPR].state || bool_pr[CLISUDP_BPR].state)
             return (false);
     }
 
     if (sp >= &string_pr[DXCLCMD0_SPR] && sp < &string_pr[DXCLCMD0_SPR + N_DXCLCMDS]) {
         int pr_page = (sp - &string_pr[DXCLCMD0_SPR])/4 + 1;
         int cmd_page = atoi (getEntangledValue (DXCLCMDPGA_BPR, DXCLCMDPGB_BPR));
-        if (cmd_page != pr_page || !bool_pr[CLUSTER_BPR].state || bool_pr[CLISWSJTX_BPR].state)
+        if (cmd_page != pr_page || !bool_pr[CLUSTER_BPR].state || bool_pr[CLISUDP_BPR].state)
             return (false);
     }
 
@@ -1606,7 +1651,7 @@ static void nextTabFocus (bool backwards)
         // page 2
 
         { NULL, &bool_pr[CLUSTER_BPR] },
-        { NULL, &bool_pr[CLISWSJTX_BPR] },
+        { NULL, &bool_pr[CLISUDP_BPR] },
         { NULL, &bool_pr[DXWLISTA_BPR] },
         {       &string_pr[DXWLIST_SPR], NULL},
         {       &string_pr[DXPORT_SPR], NULL},
@@ -1687,8 +1732,10 @@ static void nextTabFocus (bool backwards)
         { NULL, &bool_pr[MAP_ROTPA_BPR] },
         { NULL, &bool_pr[PANE_ROTPA_BPR] },
         { NULL, &bool_pr[QRZBIOA_BPR] },
-        { NULL, &bool_pr[AUTOMAP_BPR] },
+        { NULL, &bool_pr[UDPSPOTS_BPR] },
         { NULL, &bool_pr[UDPSETSDX_BPR] },
+        { NULL, &bool_pr[AUTOMAP_BPR] },
+        { NULL, &bool_pr[AUTOUPA_BPR] },
         { NULL, &bool_pr[WEB_FULLSCRN_BPR] },
         { NULL, &bool_pr[X11_FULLSCRN_BPR] },
 
@@ -2393,7 +2440,7 @@ static void drawCurrentPageFields()
         drawNTPPrompts();
 
     // draw spider header if appropriate
-    if (cur_page == SPIDER_PAGE && bool_pr[CLUSTER_BPR].state && !bool_pr[CLISWSJTX_BPR].state)
+    if (cur_page == SPIDER_PAGE && bool_pr[CLUSTER_BPR].state && !bool_pr[CLISUDP_BPR].state)
         drawSpiderCommandsHeader();
 
     #if defined(_WIFI_ALWAYS)
@@ -3267,8 +3314,8 @@ static bool validateStringPrompts (bool show_errors)
     uint8_t n_badsids = 0;
 
     // optional error msg -- can only handle one at a time
-    char *err_msg = NULL;
-    char err_buf[100];
+    Message err_buf;
+    const char *err_msg = NULL;               // points to err_buf.get() if we want to report an error
     SPIds err_sid = N_SPR;
 
     // check call
@@ -3293,11 +3340,11 @@ static bool validateStringPrompts (bool show_errors)
     // check cluster info if used
     if (bool_pr[CLUSTER_BPR].state) {
         char *clhost = string_pr[DXHOST_SPR].v_str;
-        if (!hostOK(clhost,NV_DXHOST_LEN))
+        if (!bool_pr[CLISUDP_BPR].state && !hostOK(clhost,NV_DXHOST_LEN)) // DXHOST_SPR not required for UDP
             badsids[n_badsids++] = DXHOST_SPR;
-        if (!portOK (string_pr[DXPORT_SPR].v_str, 23, &dx_port))        // 23 is telnet
+        if (!portOK (string_pr[DXPORT_SPR].v_str, 23, &dx_port))          // 23 is telnet
             badsids[n_badsids++] = DXPORT_SPR;
-        if (!bool_pr[CLISWSJTX_BPR].state && !clusterLoginOk())         // no used with wsjt
+        if (!bool_pr[CLISUDP_BPR].state && !clusterLoginOk())             // login is not used with wsjt
             badsids[n_badsids++] = DXLOGIN_SPR;
 
         // clean up any extra white space in the commands then check for blank entries that are on
@@ -3309,8 +3356,8 @@ static bool validateStringPrompts (bool show_errors)
 
         // watch list must compile successfully if being used
         if (getWatchListState (WLID_DX, NULL) != WLA_OFF) {
-            if (!compileWatchList (WLID_DX, dx_wlist, err_buf, sizeof(err_buf))) {
-                err_msg = err_buf;
+            if (!compileWatchList (WLID_DX, dx_wlist, err_buf)) {
+                err_msg = err_buf.get();
                 badsids[n_badsids++] = err_sid = DXWLIST_SPR;
             }
         }
@@ -3319,8 +3366,8 @@ static bool validateStringPrompts (bool show_errors)
     // ONTA watch list must compile successfully if being used
     if (getWatchListState (WLID_ONTA, NULL) != WLA_OFF) {
         strtrim (onta_wlist);
-        if (!compileWatchList (WLID_ONTA, onta_wlist, err_buf, sizeof(err_buf))) {
-            err_msg = err_buf;
+        if (!compileWatchList (WLID_ONTA, onta_wlist, err_buf)) {
+            err_msg = err_buf.get();
             badsids[n_badsids++] = err_sid = ONTAWL_SPR;
         }
     }
@@ -3328,8 +3375,8 @@ static bool validateStringPrompts (bool show_errors)
     // ADIF watch list must compile successfully
     if (getWatchListState (WLID_ADIF, NULL) != WLA_OFF) {
         strtrim (adif_wlist);
-        if (!compileWatchList (WLID_ADIF, adif_wlist, err_buf, sizeof(err_buf))) {
-            err_msg = err_buf;
+        if (!compileWatchList (WLID_ADIF, adif_wlist, err_buf)) {
+            err_msg = err_buf.get();
             badsids[n_badsids++] = err_sid = ADIFWL_SPR;
         }
     }
@@ -3395,8 +3442,8 @@ static bool validateStringPrompts (bool show_errors)
 
     // require plausible NMEA file name if used
     if (bool_pr[NMEAON_BPR].state) {
-        if (!checkNMEAFilename (string_pr[NMEAFILE_SPR].v_str, err_buf, sizeof(err_buf))) {
-            err_msg = err_buf;
+        if (!checkNMEAFilename (string_pr[NMEAFILE_SPR].v_str, err_buf)) {
+            err_msg = err_buf.get();
             badsids[n_badsids++] = err_sid = NMEAFILE_SPR;
         }
     }
@@ -3434,8 +3481,8 @@ static bool validateStringPrompts (bool show_errors)
 
     // check ADIF file name
     if (bool_pr[ADIFSET_BPR].state) {
-        if (!checkADIFFilename (adif_fn, err_buf, sizeof(err_buf))) {
-            err_msg = err_buf;
+        if (!checkADIFFilename (adif_fn, err_buf)) {
+            err_msg = err_buf.get();
             badsids[n_badsids++] = err_sid = ADIFFN_SPR;
         }
     }
@@ -3862,7 +3909,7 @@ static void initSetup()
             nv_wsjt = 0;
         NVWriteUInt8 (NV_WSJT_DX, nv_wsjt);
     }
-    bool_pr[CLISWSJTX_BPR].state = (nv_wsjt != 0);
+    bool_pr[CLISUDP_BPR].state = (nv_wsjt != 0);
 
     uint8_t nv_dx;
     if (!NVReadUInt8 (NV_USEDXCLUSTER, &nv_dx)) {
@@ -4245,6 +4292,34 @@ static void initSetup()
         NVWriteUInt8 (NV_UDPSETSDX, udpsetsdx);
     }
     bool_pr[UDPSETSDX_BPR].state = (udpsetsdx != 0);
+
+    uint8_t udpspots;
+    if (!NVReadUInt8 (NV_UDPSPOTS, &udpspots)) {
+        udpspots = 0;
+        NVWriteUInt8 (NV_UDPSPOTS, udpspots);
+    }
+    bool_pr[UDPSPOTS_BPR].state = (udpspots != 0);
+
+    int8_t aup_hr;
+    bool aup_ok = false;
+    if (!NVReadInt8 (NV_AUTOUPGRADE, &aup_hr)) {
+        aup_hr = autoup_tbl[AUP_OFF].local_hour;
+        NVWriteInt8 (NV_AUTOUPGRADE, aup_hr);
+    }
+    for (int i = 0; i < AUP_N; i++) {
+        if (aup_hr == autoup_tbl[i].local_hour) {
+            setEntangledValue (AUTOUPA_BPR, AUTOUPB_BPR, autoup_tbl[i].label);
+            aup_ok = true;
+            break;
+        }
+    }
+    if (!aup_ok) {
+        int8_t fixed_aup_hr = autoup_tbl[AUP_OFF].local_hour;
+        Serial.printf ("Setup: fixing bogus NV_AUTOUPGRADE from %d to %d\n", aup_hr, fixed_aup_hr);
+        aup_hr = fixed_aup_hr;
+        NVWriteInt8 (NV_AUTOUPGRADE, aup_hr);
+        setEntangledValue (AUTOUPA_BPR, AUTOUPB_BPR, autoup_tbl[AUP_OFF].label);
+    }
 }
 
 
@@ -4675,7 +4750,7 @@ static void runSetup()
                 }
             }
 
-            else if (bp == &bool_pr[CLUSTER_BPR] || bp == &bool_pr[CLISWSJTX_BPR]) {
+            else if (bp == &bool_pr[CLUSTER_BPR] || bp == &bool_pr[CLISUDP_BPR]) {
                 // so many show/hide dx cluster prompts easier to just redraw the page
                 changePage (cur_page);
             }
@@ -4861,7 +4936,7 @@ static void saveParams2NV()
     NVWriteString (NV_NMEAFILE, nmea_file);
     NVWriteUInt16 (NV_NMEABAUD, (uint16_t) atoi(getEntangledValue (NMEABAUDA_BPR, NMEABAUDB_BPR)));
     NVWriteUInt8 (NV_USEDXCLUSTER, bool_pr[CLUSTER_BPR].state);
-    NVWriteUInt8 (NV_WSJT_DX, bool_pr[CLISWSJTX_BPR].state);
+    NVWriteUInt8 (NV_WSJT_DX, bool_pr[CLISUDP_BPR].state);
     NVWriteString (NV_DXHOST, dx_host);
 
     NVWriteString (NV_DXWLIST, dx_wlist);
@@ -4926,7 +5001,7 @@ static void saveParams2NV()
     NVWriteUInt8 (NV_AUTOMAP, autoMap());
     NVWriteUInt8 (NV_GRAYDPY, (uint8_t)getGrayDisplay());
     NVWriteUInt8 (NV_QRZID, getQRZId());
-    NVWriteUInt8 (NV_UDPSETSDX, UDPSetsDX());
+    NVWriteUInt8 (NV_UDPSPOTS, bool_pr[UDPSPOTS_BPR].state);
 
     // save and engage user's X11 settings
     uint16_t x11flags = 0;
@@ -4957,6 +5032,11 @@ static void saveParams2NV()
         NVWriteString(NV_DE_GRID, scrubGrid(string_pr[GRID_SPR].v_str));
         // N.B. do not set TZ here because network not yet up -- rely on main setup()
     }
+
+    // save auto update time
+    int aup;
+    (void) autoUpgrade (aup);
+    NVWriteInt8 (NV_AUTOUPGRADE, (int8_t)aup);
 }
 
 /* draw the given string with border centered inside the given box using the current font.
@@ -5496,14 +5576,14 @@ void getDXClCommands(const char *cmds[N_DXCLCMDS], bool on[N_DXCLCMDS])
 /* set a new host and port, return reason if false.
  * N.B. host is trimmed IN PLACE
  */
-bool setDXCluster (char *host, char *port_str, char ynot[])
+bool setDXCluster (char *host, char *port_str, Message &ynot)
 {
     if (!hostOK(host,NV_DXHOST_LEN)) {
-        strcpy (ynot, "Bad host");
+        ynot.set ("Bad host");
         return (false);
     }
     if (!portOK (port_str, 1000, &dx_port)) {
-        strcpy (ynot, "Bad port");
+        ynot.set ("Bad port");
         return (false);
     }
     strncpy (dx_host, host, NV_DXHOST_LEN-1);
@@ -5568,11 +5648,11 @@ bool getPathDashed (ColorSelection id)
     return (csel_pr[id].a_state);
 }
 
-/* return whether dx host is actually WSJT-X, else 
+/* return whether dx host is actually WSJT-X or actually any UDP source.
  */
 bool useWSJTX(void)
 {
-    return (bool_pr[CLISWSJTX_BPR].state);
+    return (bool_pr[CLISUDP_BPR].state);
 }
 
 /* return name of ADIF, else NULL if not set
@@ -5802,4 +5882,37 @@ bool showDistKm(void)
 bool UDPSetsDX(void)
 {
     return (bool_pr[UDPSETSDX_BPR].state);
+}
+
+/* return whether to accept the given spot based on rx_call equal (or not) to our call
+ */
+bool useUDPSpot (const DXSpot &s)
+{
+    // true means any spot is ok, false means accept iff rx_call is our call
+
+    if (bool_pr[UDPSPOTS_BPR].state)
+        return (true);
+
+    if (strcistr (s.rx_call, cs_info.call) != NULL)
+        return (true);
+    else {
+        Serial.printf("DXC: UDP: rejecting tx_call %s because rx_call %s != %s\n",
+                                    s.tx_call, s.rx_call, cs_info.call);
+        return (false);
+    }
+}
+
+/* return whether to upgrade automatically when available and pass back the local hour to do so.
+ */
+bool autoUpgrade (int &local_hour)
+{
+    const char *label = getEntangledValue (AUTOUPA_BPR, AUTOUPB_BPR);
+    for (int i = 0; i < AUP_N; i++) {
+        if (strcmp (label, autoup_tbl[i].label) == 0) {
+            local_hour = autoup_tbl[i].local_hour;
+            return (i != AUP_OFF);
+        }
+    }
+    fatalError ("unknown auto up: %s", label);
+    return (false);  // lint
 }

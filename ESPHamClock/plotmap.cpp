@@ -163,7 +163,7 @@ void plotServerFile (const char *filename, const char *title, const char y_label
     bool ok = false;
 
     Serial.println (filename);
-    if (wifiOk() && map_client.connect (backend_host, backend_port)) {
+    if (map_client.connect (backend_host, backend_port)) {
         updateClocks(false);
         resetWatchdog();
 

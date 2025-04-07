@@ -31,7 +31,7 @@ static bool retrieveRSS (void)
     rss_ntitles = rss_title_i = 0;
 
     Serial.println(rss_page);
-    if (wifiOk() && rss_client.connect(backend_host, backend_port)) {
+    if (rss_client.connect(backend_host, backend_port)) {
 
         updateClocks(false);
 

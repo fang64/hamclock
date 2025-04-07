@@ -584,7 +584,7 @@ void Adafruit_RA8875::setCursor(uint16_t x, uint16_t y)
 	cursor_y = SCALESZ*y;
 }
 
-void Adafruit_RA8875::getTextBounds(char *string, int16_t x, int16_t y,
+void Adafruit_RA8875::getTextBounds(const char *string, int16_t x, int16_t y,
     int16_t *x1, int16_t *y1, uint16_t *w, uint16_t *h)
 {
         (void) x;

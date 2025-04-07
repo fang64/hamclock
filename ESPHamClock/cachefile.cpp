@@ -25,9 +25,13 @@ static bool fileSizeOk (const char *path, int min_size)
 }
 
 /* return whether the given file is no older than the given age in seconds
+ * or CACHE_FOREVER means the files never expire.
  */
 static bool fileAgeOk (const char *path, int max_age)
 {
+    if (max_age == CACHE_FOREVER)
+        return (true);
+
     struct stat sbuf;
     if (stat (path, &sbuf) < 0)
         Serial.printf ("Cache: age stat(%s) %s\n", path, strerror(errno));
@@ -72,7 +76,7 @@ FILE *openCachedFile (const char *fn, const char *url, int max_age, int min_size
     // download
     WiFiClient cache_client;
     Serial.println (url);
-    if (wifiOk() && cache_client.connect(backend_host, backend_port)) {
+    if (cache_client.connect(backend_host, backend_port)) {
 
         updateClocks(false);
 
@@ -138,13 +142,14 @@ FILE *openCachedFile (const char *fn, const char *url, int max_age, int min_size
     return (NULL);
 }
 
-/* remove files that contain the given string and older than 2x the given age in seconds.
+/* remove files that contain the given string and older than the given age in seconds
  * return whether any where removed.
  */
 bool cleanCache (const char *contains, int max_age)
 {
-    // 2x just to let it linger
-    max_age *= 2;
+    // just ignore if CACHE_FOREVER
+    if (max_age == CACHE_FOREVER)
+        return (true);
 
     // open our working directory
     DIR *dirp = opendir (our_dir.c_str());

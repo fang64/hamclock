@@ -251,7 +251,7 @@ static bool retrievePSK (void)
 
     // fetch and fill reports[]
     resetWatchdog();
-    if (wifiOk() && psk_client.connect(backend_host, backend_port)) {
+    if (psk_client.connect(backend_host, backend_port)) {
         updateClocks(false);
         resetWatchdog();
 

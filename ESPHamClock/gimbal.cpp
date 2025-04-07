@@ -313,12 +313,6 @@ static bool connectHamlib (const SBox &box)
     if (debugLevel (DEBUG_GIMBAL, 1))
         Serial.printf ("GBL: starting connection attempt\n");
 
-    // pointless going further if no wifi
-    if (!wifiOk()) {
-        plotMessage (box, RA8875_RED, "No network");
-        return (false);
-    }
-
     // get connection info
     char host[NV_ROTHOST_LEN];
     int port;
@@ -1161,14 +1155,14 @@ float &az, float &el)
  * state=[un]stop|[un]auto
  * return true else false with brief reason ynot.
  */
-bool commandRotator (const char *new_state, const char *new_az, const char *new_el, char ynot[])
+bool commandRotator (const char *new_state, const char *new_az, const char *new_el, Message &ynot)
 {
     if (!haveGimbal()) {
-        strcpy (ynot, "Rotator not enabled");
+        ynot.set("Rotator not enabled");
         return (false);
     }
     if (!connectionOk()) {
-        strcpy (ynot, "Rotator not connected");
+        ynot.set("Rotator not connected");
         return (false);
     }
 
@@ -1186,7 +1180,7 @@ bool commandRotator (const char *new_state, const char *new_az, const char *new_
             if (user_stop)
                 toggleStop();
         } else {
-            strcpy (ynot, "state must be stop, unstop, auto or unauto");
+            ynot.set("state must be stop, unstop, auto or unauto");
             return (false);
         }
     }
@@ -1194,7 +1188,7 @@ bool commandRotator (const char *new_state, const char *new_az, const char *new_
     if (new_az) {
         float cmd_az = atof (new_az);
         if (cmd_az < az_min || cmd_az > az_max) {
-            snprintf (ynot, 100, "az must be %g .. %g\n", az_min, az_max);
+            ynot.printf ("az must be %g .. %g\n", az_min, az_max);
             return (false);
         }
         az_target = cmd_az;
@@ -1203,7 +1197,7 @@ bool commandRotator (const char *new_state, const char *new_az, const char *new_
     if (new_el) {
         float cmd_el = atof (new_el);
         if (cmd_el < el_min || cmd_el > el_max) {
-            snprintf (ynot, 100, "el must be %g .. %g\n", el_min, el_max);
+            ynot.printf ("el must be %g .. %g\n", el_min, el_max);
             return (false);
         }
         el_target = cmd_el;

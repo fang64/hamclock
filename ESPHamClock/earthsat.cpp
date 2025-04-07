@@ -574,7 +574,24 @@ static void drawSatPassMarker()
         tft.fillCircle (x, y, SAT_UP_R, SAT_COLOR);
 }
 
-/* draw event label and time dt in the dx_info box unless dt < 0 then just show title.
+/* show current az el in dx_info_b at the given y.
+ * N.B. we assume sat is indeed in play and font is already set
+ */
+static void drawSatAzEl (uint16_t y)
+{
+    DateTime t_now = userDateTime(nowWO());
+    float el, az, range, rate;
+    sat->predict (t_now);
+    sat->topo (obs, el, az, range, rate);
+
+    char str[100];
+    snprintf (str, sizeof(str), "Az: %.0f    El: %.0f", az, el);
+    tft.setCursor (dx_info_b.x + (dx_info_b.w - getTextWidth(str))/2, y);
+    tft.printf (str);
+}
+
+
+/* draw event label with time dt and current az/el in the dx_info box unless dt < 0 then just show label.
  * dt is in days: if > 1 hour show HhM else M:S
  */
 static void drawSatTime (bool force, const char *label, uint16_t color, float dt)
@@ -582,69 +599,47 @@ static void drawSatTime (bool force, const char *label, uint16_t color, float dt
     if (!sat)
         return;
 
-
-    // previous state
-    static char prev_label[3];                  // use just first few chars
-    static uint8_t prev_a, prev_b;
-
     // layout
-    const uint16_t font_y = dx_info_b.y+2*FONT_H-FONT_D;
-    const uint16_t erase_h = 26;
-    const uint16_t erase_y = font_y-erase_h+3;
+    const uint16_t fast_h = 12;                                 // spacing for FAST_FONT
+    const uint16_t rs_y = dx_info_b.y+FONT_H + 6;               // below name
+    const uint16_t azel_y = rs_y + fast_h;
 
-    // prep font
-    selectFontStyle (LIGHT_FONT, SMALL_FONT);
+    // erase drawing area
+    tft.fillRect (dx_info_b.x+1, rs_y, dx_info_b.w-2, 2*fast_h, RA8875_BLACK);
+    // tft.drawRect (dx_info_b.x+1, rs_y, dx_info_b.w-2, 2*fast_h, RA8875_RED);    // RBF
     tft.setTextColor (color);
-    uint16_t l_w = getTextWidth(label) + 2;     // right end can be slightly chopped
-
-    // note whether label has changed
-    bool new_label = force || strncmp (label, prev_label, sizeof(prev_label)) != 0;
-    if (new_label)
-        memcpy (prev_label, label, sizeof(prev_label));
 
     // draw
     if (dt >= 0) {
 
-        // draw label and time
-
-        // draw label right-justified in left half
-        if (new_label) {
-            tft.fillRect (dx_info_b.x+1, erase_y, dx_info_b.w/2-1, erase_h, RA8875_BLACK);
-            // tft.drawRect (dx_info_b.x+1, erase_y, dx_info_b.w/2-1, erase_h, RA8875_RED);
-        }
-        tft.setCursor (dx_info_b.x + dx_info_b.w/2 - l_w, font_y);
-        tft.print (label);
+        // fast font
+        selectFontStyle (LIGHT_FONT, FAST_FONT);
 
         // format time as HhM else M:S
-        dt *= 24;                               // dt is now hours
+        dt *= 24;                                               // dt is now hours
         int a, b;
         char sep;
         formatSexa (dt, a, sep, b);
 
-        // draw time centered in right half
-        if (new_label || a != prev_a || b != prev_b) {
-            char t_buf[10];
-            snprintf (t_buf, sizeof(t_buf), "%2d%c%02d", a, sep, b);
-            uint16_t t_w = getTextWidth(t_buf);
-            tft.fillRect (dx_info_b.x + dx_info_b.w/2, erase_y, dx_info_b.w/2-1, erase_h, RA8875_BLACK);
-            // tft.drawRect (dx_info_b.x + dx_info_b.w/2, erase_y, dx_info_b.w/2-1, erase_h, RA8875_RED);
-            tft.setCursor (dx_info_b.x + dx_info_b.w/2 + (dx_info_b.w/2-t_w)/2, font_y);
-            tft.print(t_buf);
-        }
+        // build label + time
+        char str[100];
+        snprintf (str, sizeof(str), "%s %2d%c%02d", label, a, sep, b);
 
-        // remember last time drawn
-        prev_a = a;
-        prev_b = b;
+        // draw centered
+        uint16_t s_w = getTextWidth(str);
+        tft.setCursor (dx_info_b.x + (dx_info_b.w-s_w)/2, rs_y);
+        tft.print(str);
+
+        // draw az and el
+        drawSatAzEl (azel_y);
 
     } else {
 
         // just draw label centered across entire box
 
-        if (new_label) {
-            tft.fillRect (dx_info_b.x+1, erase_y, dx_info_b.w-2, erase_h, RA8875_BLACK);
-            // tft.drawRect (dx_info_b.x+1, erase_y, dx_info_b.w-2, erase_h, RA8875_RED);
-        }
-        tft.setCursor (dx_info_b.x + (dx_info_b.w-l_w)/2, font_y);
+        selectFontStyle (LIGHT_FONT, SMALL_FONT);               // larger font
+        uint16_t s_w = getTextWidth(label);
+        tft.setCursor (dx_info_b.x + (dx_info_b.w-s_w)/2, rs_y + FONT_H - FONT_D);
         tft.print(label);
     }
 }
@@ -790,7 +785,7 @@ static bool satLookup ()
             wdDelay(2000);
 
         // connect
-        if (!wifiOk() || !tle_client.connect (backend_host, backend_port)) {
+        if (!tle_client.connect (backend_host, backend_port)) {
             strcpy (err_msg, "network error");
             tle_client.stop();
             continue;
@@ -942,7 +937,7 @@ static bool askSat()
 
     // open connection
     WiFiClient sat_client;
-    if (!wifiOk() || !sat_client.connect (backend_host, backend_port))
+    if (!sat_client.connect (backend_host, backend_port))
         goto out;
 
     // query page and skip header
@@ -1229,7 +1224,7 @@ static bool checkSatUpToDate (bool *updated)
     return (true);
 }
 
-/* show pass time of sat_rs
+/* show pass time of sat_rs(void)
  */
 static void drawSatRSEvents(bool force)
 {
@@ -1384,7 +1379,7 @@ void updateSatPass()
         if (fresh_update) 
             drawSatPass();              // full display update
         else
-            drawSatRSEvents(false);     // just update time
+            drawSatRSEvents(false);     // just update time and az/el
     }
 }
 
@@ -1753,7 +1748,7 @@ const char **getAllSatNames()
 
     // open connection
     WiFiClient sat_client;
-    if (!wifiOk() || !sat_client.connect (backend_host, backend_port))
+    if (!sat_client.connect (backend_host, backend_port))
         return (NULL);
 
     // query page and skip header

@@ -39,7 +39,8 @@
 #define MENU_IS         6               // indicator size
 #define MENU_BB         5               // ok/cancel button horizontal border
 #define MENU_BDX        2               // ok/cancel button text horizontal offset
-#define MENU_BDY        2               // ok/cancel button text vertical offset
+#define MENU_BG         2               // ok/cancel button text vertical gap
+#define MENU_BDROP      2               // text cursor drop below top of box
 #define MENU_FW         6               // MENU_TEXT font width
 #define MENU_CD         2               // cursor rows below text baseline
 #define MENU_TIMEOUT    MENU_TO         // timeout, millis
@@ -86,7 +87,7 @@ static void drawMenuText (const MenuItem &mi, const SBox &pb, bool draw_label, b
         if (debugLevel (DEBUG_MENUS, 1))
             tft.drawRect (MENU_LX(pb), pb.y, MENU_LW(mi), pb.h, RA8875_GREEN);
 
-        tft.setCursor (MENU_LX(pb), pb.y+2);
+        tft.setCursor (MENU_LX(pb), pb.y + MENU_BDROP);
         tft.print (tfp->label);
     }
 
@@ -110,7 +111,7 @@ static void drawMenuText (const MenuItem &mi, const SBox &pb, bool draw_label, b
         tfp->w_pos = tfp->c_pos - t_n + 1;
 
     // print starting at w_pos
-    tft.setCursor (MENU_TX(pb,mi), pb.y+2);
+    tft.setCursor (MENU_TX(pb,mi), pb.y + MENU_BDROP);
     tft.printf ("%.*s", t_n, tfp->text + tfp->w_pos);
 
     // draw cursor if desired (already erased above)
@@ -127,7 +128,7 @@ static void drawMenuTextMsg (const MenuItem &mi, const SBox &pb, const char *msg
 {
     // overlay the given msg
     tft.fillRect (MENU_TX(pb,mi), pb.y, MENU_TW(pb,mi), pb.h, MENU_BGC);
-    tft.setCursor (MENU_TX(pb,mi), pb.y+2);
+    tft.setCursor (MENU_TX(pb,mi), pb.y + MENU_BDROP);
     selectFontStyle (LIGHT_FONT, FAST_FONT);
     tft.setTextColor(MENU_ERRC);
     tft.print (msg);
@@ -167,7 +168,7 @@ static void menuDrawItem (const MenuItem &mi, const SBox &pb, bool draw_label, b
 
     case MENU_LABEL:
         if (draw_label) {
-            tft.setCursor (pb.x + mi.indent, pb.y+2);
+            tft.setCursor (pb.x + mi.indent, pb.y + MENU_BDROP);
             tft.print (no__copy);
         }
         drawSBox (pb, kb_focus ? MENU_FOCC : MENU_BGC);
@@ -183,7 +184,7 @@ static void menuDrawItem (const MenuItem &mi, const SBox &pb, bool draw_label, b
             tft.drawCircle (pb.x + mi.indent + MENU_IS/2, pb.y + MENU_RH/2, MENU_IS/2, MENU_FGC);
         }
         if (draw_label) {
-            tft.setCursor (pb.x + mi.indent + MENU_IS + MENU_IS/2, pb.y+2);
+            tft.setCursor (pb.x + mi.indent + MENU_IS + MENU_IS/2, pb.y + MENU_BDROP);
             tft.print (no__copy);
         }
         drawSBox (pb, kb_focus ? MENU_FOCC : MENU_BGC);
@@ -198,7 +199,7 @@ static void menuDrawItem (const MenuItem &mi, const SBox &pb, bool draw_label, b
             tft.drawRect (pb.x + mi.indent, pb.y + (MENU_RH-MENU_IS)/2, MENU_IS, MENU_IS, MENU_FGC);
         }
         if (draw_label) {
-            tft.setCursor (pb.x + mi.indent + MENU_IS + MENU_IS/2, pb.y+2);
+            tft.setCursor (pb.x + mi.indent + MENU_IS + MENU_IS/2, pb.y + MENU_BDROP);
             tft.print (no__copy);
         }
         drawSBox (pb, kb_focus ? MENU_FOCC : MENU_BGC);
@@ -599,7 +600,7 @@ bool runMenu (MenuInfo &menu)
     int n_tblrows = (n_table + menu.n_cols - 1)/menu.n_cols;
 
     // set menu height, +1 for each MENU_TEXT, +1 for ok/cancel
-    menu.menu_b.h = MENU_TBM + (n_tblrows + n_mt + 1)*MENU_RH + MENU_TBM;
+    menu.menu_b.h = MENU_TBM + (n_tblrows + n_mt + 1)*MENU_RH + MENU_TBM + MENU_BG;
 
     // set ok button size, don't know position yet
     menu.ok_b.w = getTextWidth (ok_label) + MENU_BDX*2;
@@ -653,12 +654,12 @@ bool runMenu (MenuInfo &menu)
     // display ok/cancel buttons
     fillSBox (menu.ok_b, MENU_BGC);
     drawSBox (menu.ok_b, MENU_FGC);
-    tft.setCursor (menu.ok_b.x+MENU_BDX, menu.ok_b.y+MENU_BDY);
+    tft.setCursor (menu.ok_b.x+MENU_BDX, menu.ok_b.y + MENU_BDROP);
     tft.print (ok_label);
     if (menu.cancel == M_CANCELOK) {
         fillSBox (cancel_b, MENU_BGC);
         drawSBox (cancel_b, MENU_FGC);
-        tft.setCursor (cancel_b.x+MENU_BDX, cancel_b.y+MENU_BDY);
+        tft.setCursor (cancel_b.x+MENU_BDX, cancel_b.y + MENU_BDROP);
         tft.print (cancel_label);
     }
 
@@ -739,10 +740,10 @@ bool runMenu (MenuInfo &menu)
                 if (menu.items[i].type == MENU_TEXT) {
                     MenuItem &mi = menu.items[i];
                     MenuText *tfp = mi.textf;
-                    char ynot[50];
-                    if (tfp->text_fp && !(tfp->text_fp)(tfp, ynot, sizeof(ynot))) {
+                    Message ynot;
+                    if (tfp->text_fp && !(tfp->text_fp)(tfp, ynot)) {
                         SBox &pb = pick_boxes[i];
-                        drawMenuTextMsg (mi, pb, ynot);
+                        drawMenuTextMsg (mi, pb, ynot.get());
                         ok = false;
                     }
                 }
@@ -829,7 +830,7 @@ void menuRedrawOk (SBox &ok_b, MenuOkState oks)
     }
 
     selectFontStyle (LIGHT_FONT, FAST_FONT);
-    tft.setCursor (ok_b.x+MENU_BDX, ok_b.y+MENU_BDY);
+    tft.setCursor (ok_b.x+MENU_BDX, ok_b.y + MENU_BDROP);
     tft.print (ok_label);
 
     // immediate draw if over map

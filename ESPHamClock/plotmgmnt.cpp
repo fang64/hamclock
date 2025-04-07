@@ -124,6 +124,7 @@ bool plotChoiceIsAvailable (PlotChoice pc)
     case PLOT_CH_BZBT:          // fallthru
     case PLOT_CH_ONTA:          // fallthru
     case PLOT_CH_AURORA:        // fallthru
+    case PLOT_CH_DXPEDS:        // fallthru
         return (true);
 
     case PLOT_CH_N:
@@ -450,6 +451,11 @@ bool checkPlotTouch (const SCoord &s, PlotPane pp)
         if (checkADIFTouch (s, box))
             return (true);
         in_top = true;
+    case PLOT_CH_DXPEDS:
+        if (checkDXPedsTouch (s, box))
+            return (true);
+        in_top = true;
+        break;
         break;
 
     // tapping a BME below top rotates just among other BME and disables auto rotate.
@@ -651,204 +657,6 @@ void showRotatingBorder ()
         drawSBox (NCDXF_b, GRAY);
 
 }
-
-/* read a 24 BPP bmp image from the given connection and display in the given box.
- * return true else false with short reason in ynot[].
- */
-bool install24BMP (GenReader &gr, const SBox &box, char ynot[], size_t ynot_len)
-{
-    // stay alert
-    resetWatchdog();
-    updateClocks(false);
-
-    // composite types
-    union { char c[4]; uint32_t x; } i32;
-    union { char c[2]; uint16_t x; } i16;
-
-    // keep track of our offset in the image file
-    uint32_t byte_os = 0;
-    char c;
-
-    // read first two bytes to confirm correct format
-    if (!gr.getChar(&c) || c != 'B' || !gr.getChar(&c) || c != 'M') {
-        snprintf (ynot, ynot_len, "File not BMP");
-        return (false);
-    }
-    byte_os += 2;
-
-    // skip down to byte 10 which is the offset to the pixels offset
-    while (byte_os++ < 10) {
-        if (!gr.getChar(&c)) {
-            snprintf (ynot, ynot_len, "Header offset error");
-            return (false);
-        }
-    }
-    for (uint8_t i = 0; i < 4; i++, byte_os++) {
-        if (!gr.getChar(&i32.c[i])) {
-            snprintf (ynot, ynot_len, "Pix_start error");
-            return (false);
-        }
-    }
-    uint32_t pix_start = i32.x;
-    // Serial.printf ("pixels start at %d\n", pix_start);
-
-    // next word is subheader size, must be 40 BITMAPINFOHEADER
-    for (uint8_t i = 0; i < 4; i++, byte_os++) {
-        if (!gr.getChar(&i32.c[i])) {
-            snprintf (ynot, ynot_len, "Hdr size error");
-            return (false);
-        }
-    }
-    uint32_t subhdr_size = i32.x;
-    if (subhdr_size != 40) {
-        Serial.printf ("DIB must be 40: %d\n", subhdr_size);
-        snprintf (ynot, ynot_len, "DIB err");
-        return (false);
-    }
-
-    // next word is width
-    for (uint8_t i = 0; i < 4; i++, byte_os++) {
-        if (!gr.getChar(&i32.c[i])) {
-            snprintf (ynot, ynot_len, "Width error");
-            return (false);
-        }
-    }
-    int32_t img_w = i32.x;
-
-    // next word is height
-    for (uint8_t i = 0; i < 4; i++, byte_os++) {
-        if (!gr.getChar(&i32.c[i])) {
-            snprintf (ynot, ynot_len, "Height error");
-            return (false);
-        }
-    }
-    int32_t img_h = i32.x;
-    int32_t n_pix = img_w*img_h;
-    Serial.printf ("image is %d x %d = %d\n", img_w, img_h, img_w*img_h);
-
-    // next short is n color planes
-    for (uint8_t i = 0; i < 2; i++, byte_os++) {
-        if (!gr.getChar(&i16.c[i])) {
-            snprintf (ynot, ynot_len, "Planes error");
-            return (false);
-        }
-    }
-    uint16_t n_planes = i16.x;
-    if (n_planes != 1) {
-        Serial.printf ("planes must be 1: %d\n", n_planes);
-        snprintf (ynot, ynot_len, "N Planes error");
-        return (false);
-    }
-
-    // next short is bits per pixel
-    for (uint8_t i = 0; i < 2; i++, byte_os++) {
-        if (!gr.getChar(&i16.c[i])) {
-            snprintf (ynot, ynot_len, "bits/pix error");
-            return (false);
-        }
-    }
-    uint16_t n_bpp = i16.x;
-    if (n_bpp != 24) {
-        Serial.printf ("bpp must be 24: %d\n", n_bpp);
-        snprintf (ynot, ynot_len, "BPP error");
-        return (false);
-    }
-
-    // next word is compression method
-    for (uint8_t i = 0; i < 4; i++, byte_os++) {
-        if (!gr.getChar(&i32.c[i])) {
-            snprintf (ynot, ynot_len, "Compression error");
-            return (false);
-        }
-    }
-    uint32_t comp = i32.x;
-    if (comp != 0) {
-        Serial.printf ("compression must be 0: %d\n", comp);
-        snprintf (ynot, ynot_len, "Comp error");
-        return (false);
-    }
-
-    // skip down to start of pixels
-    while (byte_os++ <= pix_start) {
-        if (!gr.getChar(&c)) {
-            snprintf (ynot, ynot_len, "Header 3 error");
-            return (false);
-        }
-    }
-
-    // prep logical box
-    prepPlotBox (box);
-
-    // display box depends on actual output size.
-    SBox v_b;
-    v_b.x = box.x * tft.SCALESZ;
-    v_b.y = box.y * tft.SCALESZ;
-    v_b.w = box.w * tft.SCALESZ;
-    v_b.h = box.h * tft.SCALESZ;
-
-    // center the image within v_b
-    uint16_t imgx_border = img_w > v_b.w ? (img_w - v_b.w)/2 : 0;
-    uint16_t imgy_border = img_h > v_b.h ? (img_h - v_b.h)/2 : 0;
-    uint16_t boxx_border = img_w < v_b.w ? (v_b.w - img_w)/2 : 0;
-    uint16_t boxy_border = img_h < v_b.h ? (v_b.h - img_h)/2 : 0;
-
-    // scan all pixels ...
-    for (uint16_t img_y = 0; img_y < img_h; img_y++) {
-
-        // keep time active
-        resetWatchdog();
-        updateClocks(false);
-
-        for (uint16_t img_x = 0; img_x < img_w; img_x++) {
-
-            char b, g, r;
-
-            // read next pixel -- note order!
-            if (!gr.getChar (&b) || !gr.getChar (&g) || !gr.getChar (&r)) {        // not RGB!
-                // allow a little loss because ESP TCP stack can fall behind while also drawing
-                int32_t n_draw = img_y*img_w + img_x;
-                if (n_draw > 9*n_pix/10) {
-                    // close enough
-                    Serial.printf ("read error after %d pixels but good enough\n", n_draw);
-                    goto out;
-                } else {
-                    Serial.printf ("read error after %d pixels\n", n_draw);
-                    snprintf (ynot, ynot_len, "File is short");
-                    return (false);
-                }
-            }
-
-            // ... but only draw what fits inside box
-            if (img_x > imgx_border && img_x < img_w - imgx_border - tft.SCALESZ
-                        && img_y > imgy_border && img_y < img_h - imgy_border - tft.SCALESZ) {
-
-                uint8_t ur = r;
-                uint8_t ug = g;
-                uint8_t ub = b;
-                uint16_t color16 = RGB565(ur,ug,ub);
-                tft.drawPixelRaw (v_b.x + boxx_border + img_x - imgx_border,
-                        v_b.y + v_b.h - (boxy_border + img_y - imgy_border) - 1, color16); // vertical flip
-            }
-        }
-
-        // skip padding to bring total row length to multiple of 4
-        uint8_t extra = img_w % 4;
-        if (extra > 0) {
-            for (uint8_t i = 0; i < 4 - extra; i++) {
-                if (!gr.getChar(&c)) {
-                    snprintf (ynot, ynot_len, "Row padding error");
-                    return (false);
-                }
-            }
-        }
-    }
-
-  out:
-
-    // finally!
-    return (true);
-}
-
 
 /* given min and max and an approximate number of divisions desired,
  * fill in ticks[] with nicely spaced values and return how many.

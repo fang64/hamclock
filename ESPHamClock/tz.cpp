@@ -63,14 +63,14 @@ int getTZ (TZInfo &tz)
         Serial.printf ("getTZ: detected recursion\n");
 
     if (tz.auto_tz && !here_again) {
-        char ynot[100];
+        Message ynot;
         here_again = true;
         const WXInfo *wip = findTZCache (tz.ll, is_de, ynot);
         here_again = false;
         if (wip)
             tz.tz_secs = wip->timezone;
         else
-            Serial.printf ("TZ: %s getTZ err: %s\n", is_de ? "DE" : "DX", ynot);
+            Serial.printf ("TZ: %s getTZ err: %s\n", is_de ? "DE" : "DX", ynot.get());
     }
 
     return (tz.tz_secs);

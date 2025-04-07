@@ -28,6 +28,7 @@ typedef struct {
     SBox lbl_b;                                 // main control label
     SBox time_b;                                // main time display
     SBox bc_alarm_b;                            // bc alarm control
+    char *title;                                // malloced title, if any
 } AlarmOnce;
 
 // daily alarm info
@@ -630,14 +631,11 @@ static void eraseContestTitle(void)
  */
 static void drawContestTitle(void)
 {
-    if (sws_display == SWD_MAIN && alarm_once.state == ALMS_ARMED) {
-        const char *con_ttle = getAlarmedContestTitle (alarm_once.time);
-        if (con_ttle) {
-            selectFontStyle (LIGHT_FONT, FAST_FONT);
-            tft.setTextColor (sw_col);
-            tft.setCursor (ALMO_TX0 + (ALMO_TW-getTextWidth(con_ttle))/2, ALMO_TITY+2);
-            tft.print (con_ttle);
-        }
+    if (sws_display == SWD_MAIN && alarm_once.state == ALMS_ARMED && alarm_once.title) {
+        selectFontStyle (LIGHT_FONT, FAST_FONT);
+        tft.setTextColor (sw_col);
+        tft.setCursor (ALMO_TX0 + (ALMO_TW-getTextWidth(alarm_once.title))/2, ALMO_TITY+2);
+        tft.print (alarm_once.title);
     }
 }
 
@@ -940,12 +938,12 @@ static void drawBCDateInfo (int hr, int dy, int wd, int mo)
 static bool drawBCDEWxInfo(void)
 {
     WXInfo wi;
-    char ynot[100];
+    Message ynot;
     bool ok = getCurrentWX (de_ll, true, &wi, ynot);
     if (ok)
         plotWX (bc_wx_b, BAC_FCOL, wi);
     else
-        plotMessage (bc_wx_b, RA8875_RED, ynot);
+        plotMessage (bc_wx_b, RA8875_RED, ynot.get());
 
     // undo border
     drawSBox (bc_wx_b, RA8875_BLACK);
@@ -1637,15 +1635,11 @@ static void showAlarmRinging()
         prepPlotBox (b);
 
         // tag, if present
-        const char *con_ttle = getAlarmedContestTitle (alarm_once.time);
-        if (con_ttle) {
-            char *title_copy = strdup (con_ttle);   // for use by scrubContestTitleLine()
+        if (alarm_once.title) {
             selectFontStyle (LIGHT_FONT, FAST_FONT);
-            scrubContestTitleLine (title_copy, b);
             tft.setTextColor (RA8875_WHITE);
-            tft.setCursor (b.x + (b.w-getTextWidth(title_copy))/2, b.y + b.h/9);
-            tft.print (title_copy);
-            free (title_copy);
+            tft.setCursor (b.x + (b.w-getTextWidth(alarm_once.title))/2, b.y + b.h/9);
+            tft.print (alarm_once.title);
         }
 
         // alarm!
@@ -2686,24 +2680,29 @@ void getOneTimeAlarmState (AlarmState &as, time_t &t_utc, bool &utc, char str[],
 /* set the one-time alarm state and time from the given ISO8601 string.
  *   as:  desired state
  *   utc: whether user expects to see time as UTC else DE's TZ
- *   str: time as ISO8601 as user expects to see it; final :SS is optional
+ *   t_str: time as ISO8601 as user expects to see it; final :SS is optional
+ *   title: title to display, if any
  * return whether succussful, eg, fails if bogus str format or time is in the past.
  */
-bool setOneTimeAlarmState (AlarmState as, bool utc, const char time_str[])
+bool setOneTimeAlarmState (AlarmState as, bool utc, const char *t_str, const char *title)
 {
     if (as == ALMS_OFF) {
         alarm_once.state = ALMS_OFF;
+        if (alarm_once.title) {
+            free (alarm_once.title);
+            alarm_once.title = NULL;
+        }
         eraseContestTitle();
     } else {
         // crack time str
-        time_t user_t = crackISO8601 (time_str);
+        time_t user_t = crackISO8601 (t_str);
         if (user_t)
             user_t -= (user_t % 60);                                    // always store in whole minutes
         else {
             // try adding :00 because caller is not required to include :SS
-            int new_len = strlen (time_str) + 4;                        // +4 for ":SS\0"
+            int new_len = strlen (t_str) + 4;                           // +4 for ":SS\0"
             char *with_secs = (char *) malloc (new_len);
-            snprintf (with_secs, new_len, "%s:00", time_str);
+            snprintf (with_secs, new_len, "%s:00", t_str);
             user_t = crackISO8601 (with_secs);
             free (with_secs);
         }
@@ -2716,6 +2715,13 @@ bool setOneTimeAlarmState (AlarmState as, bool utc, const char time_str[])
         alarm_once.state = as;
         alarm_once.time = user_t;                                       // now UTC
         alarm_once.utc = utc;
+
+        if (alarm_once.title) {
+            free (alarm_once.title);
+            alarm_once.title = NULL;
+        }
+        if (title)
+            alarm_once.title = strdup (title);
     }
     saveSWNV();
 
@@ -2732,12 +2738,17 @@ bool setOneTimeAlarmState (AlarmState as, bool utc, const char time_str[])
  *   as:    desired state
  *   utc:   whether user expects to see time as UTC else DE's TZ
  *   t_utc: new time, always in UTC
+ *   title: title to display, if any
  * return whether succussful, eg, fails if time is in the past.
  */
-bool setOneTimeAlarmState (AlarmState as, bool utc, time_t t_utc)
+bool setOneTimeAlarmState (AlarmState as, bool utc, time_t t_utc, const char *title)
 {
     if (as == ALMS_OFF) {
         alarm_once.state = ALMS_OFF;
+        if (alarm_once.title) {
+            free (alarm_once.title);
+            alarm_once.title = NULL;
+        }
         eraseContestTitle();
     } else {
         t_utc -= (t_utc % 60);                          // always store in whole minutes
@@ -2746,6 +2757,13 @@ bool setOneTimeAlarmState (AlarmState as, bool utc, time_t t_utc)
         alarm_once.state = as;
         alarm_once.time = t_utc;
         alarm_once.utc = utc;
+
+        if (alarm_once.title) {
+            free (alarm_once.title);
+            alarm_once.title = NULL;
+        }
+        if (title)
+            alarm_once.title = strdup (title);
     }
     saveSWNV();
 

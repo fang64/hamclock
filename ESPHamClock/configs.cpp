@@ -652,7 +652,7 @@ static bool runConfigMenu (char **names, int n_cfgs, bool &restore_def)
     ctbl.top_cfg = 0;
 
     // init the save controls
-    ctbl.save_tb = {SAVE_TX, SAVE_Y-TB_SZ, TB_SZ, TB_SZ};
+    ctbl.save_tb = {{SAVE_TX, SAVE_Y-TB_SZ, TB_SZ, TB_SZ}, OTHER_CIDX, false};
     memset (ctbl.save_name.name, 0, sizeof(ctbl.save_name.name));
     ctbl.save_name.cursor = 0;
     ctbl.save_name.box = {SAVE_NX, SAVE_Y-FONT_DY, NAME_W, NAME_H};
@@ -777,12 +777,17 @@ static bool runConfigMenu (char **names, int n_cfgs, bool &restore_def)
     while (waitForUser(ui)) {
 
         // done when ESC or Cancel
-        if (kbc == CHAR_ESC || inBox (s, cancel_b))
+        if (kbc == CHAR_ESC || inBox (s, cancel_b)) {
+            drawStringInBox ("Cancel", cancel_b, true, RA8875_WHITE);
+            wdDelay(500);
             break;
+        }
 
         // engage when CR or Ok but beware blank save
         if (kbc == CHAR_NL || kbc == CHAR_CR || inBox (s, ok_b)) {
             if (!ctbl.save_tb.on || isCfgNameOk (ctbl.save_name)) {
+                drawStringInBox ("Ok", ok_b, true, RA8875_WHITE);
+                wdDelay(500);
                 user_ok = true;
                 break;
             }

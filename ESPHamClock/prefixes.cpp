@@ -25,7 +25,7 @@ static int n_cty, n_malloc;                     // n entries used, n malloced
 static int cty_radix[_N_RADIX];                 // table of cty_list index from first character
 static char prev_radix;                         // used to detect change in radis index
 static time_t next_refresh;                     // time of next download
-#define MAX_CTY_AGE     (2*24*3600)             // normally update city file this often, secs
+#define MAX_CTY_AGE     (1*24*3600)             // normally update city file this often, secs
 #define MIN_CTY_SIZ     800000                  // min believable file size
 #define RETRY_DT        60                      // retry interval if trouble, secs
 #define MAX_DIST        12                      // max dist from target, degrees
@@ -869,9 +869,7 @@ static bool loadCtyFile(void)
     initCty();
     char line[100];
     while (fgets (line, sizeof(line), fp)) {
-        char *nl = strchr (line, '\n');
-        if (nl)
-            *nl = '\0';
+        chompString (line);
         addCtyLine (line);
     }
 
@@ -894,19 +892,18 @@ static const CtyLoc *searchCty (const char *prefix)
     int radix_index = prefix[0] - '0';
     if (radix_index >= 0 && radix_index < _N_RADIX) {
         int start = cty_radix[radix_index];
-        int len_match = 0;
-        // printf ("********* %c start %d .. ", prefix[0], start);
-        for (int i = start; i < n_cty; i++) {
+        int len_match = 0;                              // find longest match
+        for (int i = start; i < n_cty; i++) {           // start at this radix, go to end or next radix
             const CtyLoc *cp = &cty_list[i];
-            if (cp->call[0] != prefix[0]) {
-                // printf ("%d\n", i);
-                break;
-            }
+            if (cp->call[0] != prefix[0])
+                break;                                  // end of this radix
             if (strncmp (cp->call, prefix, cp->call_len) == 0) {
                 int cc_len = strlen(cp->call);
                 if (cc_len > len_match) {
                     len_match = cc_len;
                     candidate = cp;
+                    if (debugLevel (DEBUG_CTY, 1))
+                        Serial.printf ("CTY: match for %s now %s length %d\n", prefix, cp->call, len_match);
                 }
             }
         }
@@ -914,6 +911,7 @@ static const CtyLoc *searchCty (const char *prefix)
 
     return (candidate);
 }
+
 
 /* given a call sign or prefix find its lat/long by querying the cty table.
  * return whether successful.

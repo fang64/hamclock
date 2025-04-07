@@ -17,7 +17,7 @@
 
 // state
 static bool wifi_meter_up;              // whether visible now
-static int rssi_min, rssi_max;          // range seen so far
+static int rssi_min, rssi_max;          // range seen so far, undefined if both zero
 static int min_plot, max_plot, min_ok;  // WN_MIN_DB/PC or WN_MAX_DB/PC or MIN_WIFI_DBM/PC depending on units
 
 // handy conversion of RSSI to graphics x
@@ -92,26 +92,20 @@ bool readWiFiRSSI(int &rssi, bool &is_dbm)
     if (!WiFi.RSSI (value, is_dbm))
         return (false);
 
-    if (is_dbm) {
-        if (value < 10) {                       // 10 is crazy hi
-            rssi = value;
-            if (rssi_min == 0 || value < rssi_min)
-                rssi_min = rssi;
-            if (rssi_max == 0 || value > rssi_max)
-                rssi_max = rssi;
-            return (true);
+    if (is_dbm && value > 10)           // 10 dBm is crazy hi
+        return (false);
 
-        } else {
-            return (false);
-        }
-    } else {
-        rssi = value;
-        if (rssi_min == 0 || value < rssi_min)
-            rssi_min = rssi;
-        if (rssi_max == 0 || value > rssi_max)
-            rssi_max = rssi;
-        return (true);
-    }
+    rssi = value;
+
+    // uodate range; both 0 means undef
+    if (rssi_min == rssi_max && rssi_min == 0)
+        rssi_min = rssi_max = value;
+    else if (value < rssi_min)
+        rssi_min = value;
+    else if (value > rssi_max)
+        rssi_max = value;
+
+    return (true);
 }
 
 /* run the wifi meter screen until op taps Dismiss or Ignore.

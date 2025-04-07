@@ -417,16 +417,16 @@ static void crackArgs (int ac, char *av[])
                 case 'a': {
                         if (ac < 2)
                             usage ("missing name=level for -a");
-                        char *mya = strdup(*++av);              // copy so we don't modify av[]
-                        char *mya_eq = strchr (mya, '=');
-                        if (mya_eq) {
-                            *mya_eq = '\0';                     // put EOS after name
-                            if (!setDebugLevel (mya, atoi(mya_eq+1))) {
-                                prDebugs();
-                                exit(1);
-                            }
-                        } else 
-                            usage ("no = in -a arg");
+                        char *debug_name = strdup (*++av);              // copy so we don't modify av[]
+                        char *debug_level = strchr (debug_name, '=');   // find name=level separator
+                        if (!debug_level)
+                            usage ("missing name=level for -a");
+                        *debug_level++ = '\0';                          // terminate name and advance to level
+                        if (!setDebugLevel (debug_name, atoi(debug_level))) {
+                            prDebugs();
+                            exit(1);
+                        }
+                        free (debug_name);
                         ac--;
                     }
                     break;
@@ -637,29 +637,37 @@ int main (int ac, char *av[])
         printf ("Calling Arduino setup()\n");
 	setup();
 
-        // performance measurements
-        int cpu_us = 0, et_us = 0;      // cpu and elapsed time
-        int sleep_us = 100;             // initial sleep, usecs
-        const int sleep_dt = 10;        // sleep adjustment, usecs
-        const int max_sleep = 50000;    // max sleep each loop, usecs
-
-        #define TVUSEC(tv0,tv1) (((tv1).tv_sec-(tv0).tv_sec)*1000000 + ((tv1).tv_usec-(tv0).tv_usec))
-
 	// call Arduino loop forever
-        // this loop by itself would run 100% CPU so try to be a better citizen and throttle back
+        // this loop by itself would run 100% CPU so offer a means to be a better citizen and throttle back
         printf ("Starting Arduino loop()\n");
-	for (;;) {
 
-            // get time and usage before calling loop()
-            struct rusage ru0;
-            getrusage (RUSAGE_SELF, &ru0);
-            struct timeval tv0;
-            gettimeofday (&tv0, NULL);
+        if (max_cpu_usage == 1) {
 
-            // Ardino loop
-	    loop();
+            // pure loop
+            for (;;)
+                loop();
 
-            if (max_cpu_usage < 1) {
+        } else {
+
+            // init performance metrics in order to throttle usage
+            int cpu_us = 0, et_us = 0;      // cpu and elapsed time
+            int sleep_us = 100;             // initial sleep, usecs
+            const int sleep_dt = 10;        // sleep adjustment, usecs
+            const int max_sleep = 50000;    // max sleep each loop, usecs
+
+            #define TVUSEC(tv0,tv1) (((tv1).tv_sec-(tv0).tv_sec)*1000000 + ((tv1).tv_usec-(tv0).tv_usec))
+
+            for (;;) {
+
+                // get time and usage before calling loop()
+                struct rusage ru0;
+                getrusage (RUSAGE_SELF, &ru0);
+                struct timeval tv0;
+                gettimeofday (&tv0, NULL);
+
+                // Ardino loop
+                loop();
+
                 // cap cpu usage by sleeping controlled by a simple integral controller
                 if (cpu_us > et_us*max_cpu_usage) {
                     // back off
@@ -695,5 +703,5 @@ int main (int ac, char *av[])
 
                 // printf ("sleep_us= %10d cpu= %10d et= %10d %g\n", sleep_us, cpu_us, et_us, fmin(100,100.0*cpu_us/et_us));
             }
-	}
+        }
 }

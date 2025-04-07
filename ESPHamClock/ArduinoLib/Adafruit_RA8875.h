@@ -123,7 +123,7 @@ class Adafruit_RA8875 {
 	void fillScreen (uint16_t color16);
 	void setTextColor(uint16_t color16);
 	void setCursor(uint16_t x, uint16_t y);
-	void getTextBounds(char *string, int16_t x, int16_t y,
+	void getTextBounds(const char *string, int16_t x, int16_t y,
 		int16_t *x1, int16_t *y1, uint16_t *w, uint16_t *h);
 	void print (char c);
 	void print (char *s);

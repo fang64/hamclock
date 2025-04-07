@@ -55,64 +55,12 @@ static const char muf_v_style[] = "MUFMap";
 #define ZOOM_W  (HC_MAP_W*pan_zoom.zoom)
 #define ZOOM_H  (HC_MAP_H*pan_zoom.zoom)
 
-/* like fopen() but filename is in our working directory
- */
-static FILE *fopenOurs (const char *filename, const char *how)
-{
-    char full[1000];
-    snprintf (full, sizeof(full), "%s/%s", our_dir.c_str(), filename);
-    return (fopen (full, how));
-}
 
-
-/* don't assume we can access unaligned 32 bit values
- */
-static uint32_t unpackLE4 (char *buf)
-{
-        union {
-            uint32_t le4;
-            char a[4];
-        } le4;
-
-        le4.a[0] = buf[0];
-        le4.a[1] = buf[1];
-        le4.a[2] = buf[2];
-        le4.a[3] = buf[3];
-
-        return (le4.le4);
-}
-
-/* return whether the given header is the correct BMP format and the total expected file size.
- */
-static bool bmpHdrOk (char *buf, uint32_t w, uint32_t h, uint32_t *filesizep)
-{
-        if (buf[0] != 'B' || buf[1] != 'M') {
-            Serial.printf ("Hdr err: ");
-            for (int i = 0; i < 10; i++)
-                Serial.printf ("0x%02X %c, ", (unsigned)buf[i], (unsigned char)buf[i]);
-            Serial.printf ("\n");
-            return (false);
-        }
-
-        *filesizep = unpackLE4(buf+2);
-        uint32_t type = unpackLE4(buf+14);
-        uint32_t nrows = - (int32_t)unpackLE4(buf+22);          // nrows<0 means display upside down
-        uint32_t ncols = unpackLE4(buf+18);
-        uint32_t npixbytes = unpackLE4(buf+34);
-
-        if (npixbytes != nrows*ncols*BPERBMPPIX || type != HDRVER || w != ncols || h != nrows) {
-            Serial.printf ("Hdr err: %d %d %d %d\n", npixbytes, type, nrows, ncols);
-            return (false);
-        }
-
-        return (true);
-}
-
-/* download and save the given file from zlib compression arriving on client.
+/* download and save the given file from its zlib compression arriving on client.
  * client is already postioned at first byte of compressed image then expect len more bytes.
- * if all ok return true and leave client positioned at end of image.
+ * if all ok return true and leave client positioned at end of image -- there might be another :-)
  */
-static bool downloadMapFile (WiFiClient &client, const char *filename, long len)
+static bool downloadZFile (WiFiClient &client, const char *filename, long len)
 {
         // create file
         FILE *fp = fopenOurs (filename, "w");
@@ -126,7 +74,7 @@ static bool downloadMapFile (WiFiClient &client, const char *filename, long len)
         fclose (fp);
         if (!ok) {
             Serial.printf ("%s: inflate failed\n", filename);
-            unlink (filename);
+            unlinkOurs (filename);
         }
 
         return (ok);
@@ -168,6 +116,27 @@ static uint16_t RGB565TOGRAY (uint16_t c)
         uint16_t b = RGB565_B(c);
         uint16_t gray = RGB2GRAY(r,g,b);
         return (RGB565 (gray, gray, gray));
+}
+
+/* make the day and night file names for the given map style
+ */
+static void mkMapFilenames (CoreMaps cm, char dfile[], char nfile[], int zoom, size_t fn_l)
+{
+        int zoom_w = HC_MAP_W * zoom;
+        int zoom_h = HC_MAP_H * zoom;
+
+        if (cm == CM_DRAP) {
+            snprintf (dfile, fn_l, "map-D-%dx%d-DRAP-S.bmp", zoom_w, zoom_h);
+            snprintf (nfile, fn_l, "map-N-%dx%d-DRAP-S.bmp", zoom_w, zoom_h);
+        } else if (cm == CM_WX) {
+            const char *units = showATMhPa() ? "mB" : "in";
+            snprintf (dfile, fn_l, "map-D-%dx%d-Wx-%s.bmp", zoom_w, zoom_h, units);
+            snprintf (nfile, fn_l, "map-N-%dx%d-Wx-%s.bmp", zoom_w, zoom_h, units);
+        } else {
+            const char *style = cm_info[cm].name;
+            snprintf (dfile, fn_l, "map-D-%dx%d-%s.bmp", zoom_w, zoom_h, style);
+            snprintf (nfile, fn_l, "map-N-%dx%d-%s.bmp", zoom_w, zoom_h, style);
+        }
 }
 
 /* prepare open day_fp and night_fp for pixel access.
@@ -292,6 +261,7 @@ const float MHz, char query[], char dfn[], char nfn[], size_t qdn_len)
         snprintf (dfn, qdn_len, "map-D-%s-%s-%010u.bmp", style, page, stringHash(query));
         snprintf (nfn, qdn_len, "map-N-%s-%s-%010u.bmp", style, page, stringHash(query));
 
+        // test for existance
         bool ok = false;
         FILE *fp = fopenOurs (dfn, "r");
         if (fp) {
@@ -306,17 +276,17 @@ const float MHz, char query[], char dfn[], char nfn[], size_t qdn_len)
         return (ok);
 }
 
-/* install maps that require a query unless file with same query already exists.
+/* install maps that require a query, spreading load across current hour if possible.
  * page is the fetch*.pl CGI handler, we add the query here based on current circumstances.
- * clean style cache of any older than maxage.
+ * clean style cache of any older than max_age.
  * return whether ok
  */
 static bool installQueryMaps (const char *page, const char *msg, const char *style, const float MHz,
-long maxage)
+long max_age)
 {
         // fresh start
         invalidatePixels();
-        (void) cleanCache (style, 3*maxage);
+        (void) cleanCache (style, 2*max_age);           // don't hammer immediately
 
         // get user clock time
         time_t t = nowWO();
@@ -330,36 +300,41 @@ long maxage)
         char q_dfn[QBUFLEN];
         char q_nfn[QBUFLEN];
 
-        // check if already exist, if not try random portion of previous hour to avoid all using top of hour.
+        // check if suitable file already exist
         bool ok = checkDayNightFiles (yr, mo, hr, page, style, MHz, query, q_dfn, q_nfn, QBUFLEN);
         if (!ok) {
-            // prepare a random offset up to about one hour, in seconds
-            static long ran_offset;
-            if (ran_offset == 0) {
-                ran_offset = 1 + random(3600-300);
-                Serial.printf ("maps update at %02ld:%02ld after the hour\n", ran_offset/60, ran_offset%60);
-            }
-            t -= ran_offset;
-            yr = year(t);
-            mo = month(t);
-            hr = hour(t);
 
-            // accept previous hour for a while
-            ok = checkDayNightFiles (yr, mo, hr, page, style, MHz, query, q_dfn, q_nfn, QBUFLEN);
+            // avoid all maps updating at top of the hour when in rotation group
+            static int use_prev_minute;                 // prev hour ok if current minute is less than this
+            if (use_prev_minute == 0) {
+                use_prev_minute = 1 + random(58);       // [1,58]
+                Serial.printf ("maps can update after %d min after the hour\n", use_prev_minute);
+            }
+
+            // reuse previous hour's file if early enough within this hour
+            if (minute(t) < use_prev_minute) {
+                // see if file for previous hour exists
+                time_t prev_t = t - 3600;
+                int prev_yr = year(prev_t);
+                int prev_mo = month(prev_t);
+                int prev_hr = hour(prev_t);
+                ok = checkDayNightFiles (prev_yr, prev_mo, prev_hr, page, style, MHz, query,
+                                                                        q_dfn, q_nfn, QBUFLEN);
+                if (!ok) {
+                    // no file for previous hour either so might as well download for current hour
+                    ok = checkDayNightFiles (yr, mo, hr, page, style, MHz, query, q_dfn, q_nfn, QBUFLEN);
+                }
+             }
         }
 
-        if (ok)
-            Serial.printf ("%s: D and N files found locally\n", style);
-        else
-            Serial.printf ("%s: D and N files not found locally\n", style);
-
-        // if not, download both
-        if (!ok) {
-
+        if (ok) {
+            Serial.printf ("%s: using local D and N files\n", style);
+        } else {
             // download new twin voacap maps
+            Serial.printf ("%s: downloading fresh D and N files\n", style);
             updateClocks(false);
             WiFiClient client;
-            if (wifiOk() && client.connect(backend_host, backend_port)) {
+            if (client.connect(backend_host, backend_port)) {
                 mapMsg (0, "%s", msg);
                 char url[2*QBUFLEN];
                 snprintf (url, sizeof(url), "/%s?%s", page, query);
@@ -369,12 +344,16 @@ long maxage)
                 if (httpSkipHeader (client, "X-2Z-lengths: ", x_len, sizeof(x_len))) {
                     long l1, l2;
                     if (sscanf (x_len, "%ld %ld", &l1, &l2) == 2) {
-                        ok = downloadMapFile (client, q_dfn, l1) && downloadMapFile (client, q_nfn, l2);
+                        ok = downloadZFile (client, q_dfn, l1) && downloadZFile (client, q_nfn, l2);
                     } else {
                         Serial.printf ("%s: bogus multipart: '%s'\n", page, x_len);
                     }
+                } else {
+                    Serial.printf ("%s: header failed\n", page);
                 }
                 client.stop();
+            } else {
+                Serial.printf ("%s: connection failed\n", page);
             }
         }
 
@@ -398,93 +377,182 @@ long maxage)
  */
 static FILE *openMapFile (CoreMaps cm, const char *filename, const char *title)
 {
-        // putting all variables up here avoids pendantic goto warnings
-        FILE *fp;
-        WiFiClient client;
-        uint32_t filesize;
-        uint32_t npixbytes = ZOOM_W*ZOOM_H*BPERBMPPIX;
-        int age = 0;
-        char hdr_buf[BHDRSZ];
-        int nr = 0;
-        bool file_ok = false;
+        // trust but verify
+        bool ok = true;
 
-        // open local file, "bad" if absent
-        fp = fopenOurs (filename, "r");
+        // open local file
+        FILE *fp = fopenOurs (filename, "r");
         if (!fp) {
             Serial.printf ("%s: not local\n", filename);
-            goto out;
+            ok = false;
         }
 
-        // file is "bad" if too old
-        struct stat sbuf;
-        if (fstat (fileno(fp), &sbuf) < 0) {
-            printf ("%s: time fstat(%d): %s\n", filename, fileno(fp), strerror(errno));
-            goto out;
-        }
-        age = myNow() - sbuf.st_mtime;
-        if (age > cm_info[cm].maxage) {
-            Serial.printf ("%s too old: %d > %d secs\n", filename, age, cm_info[cm].maxage);
-            goto out;
-        } else
-            Serial.printf ("%s: age ok: %d < %d\n", filename, age, cm_info[cm].maxage);
-
-        // read header
-        nr = fread (hdr_buf, 1, BHDRSZ, fp);
-        if (nr != BHDRSZ) {
-            Serial.printf ("%s: header size %d != %d\n", filename, nr, BHDRSZ);
-            goto out;
+        // check age if care
+        if (ok && cm_info[cm].max_age != CACHE_FOREVER) {
+            struct stat sbuf;
+            if (fstat (fileno(fp), &sbuf) < 0) {
+                printf ("%s: time fstat(%d): %s\n", filename, fileno(fp), strerror(errno));
+                ok = false;
+            } else {
+                long age = myNow() - sbuf.st_mtime;
+                if (age > cm_info[cm].max_age) {
+                    Serial.printf ("%s too old: %ld > %d secs\n", filename, age, cm_info[cm].max_age);
+                    ok = false;
+                } else
+                    Serial.printf ("%s: age ok: %ld < %d\n", filename, age, cm_info[cm].max_age);
+            }
         }
 
-        // check header
-        if (!bmpHdrOk (hdr_buf, ZOOM_W, ZOOM_H, &filesize)) {
-            Serial.printf ("%s: bad header format\n", filename);
-            goto out;
-        }
-        if (filesize != npixbytes + BHDRSZ) {
-            Serial.printf ("%s: wrong npixbytes: %u != %u\n", filename, filesize, npixbytes + BHDRSZ);
-            goto out;
-        }
-        if (filesize != (uint32_t)sbuf.st_size) {
-            Serial.printf ("%s: wrong size: %u != %ld\n", filename, filesize, (long)sbuf.st_size);
-            goto out;
+
+        // if still looks promising, read the header
+        int img_w = 0, img_h = 0, img_bpp = 0, img_pad = 0;
+        if (ok) {
+            GenReader gr(fp);
+            Message ynot;
+            if (!readBMPHeader (gr, img_w, img_h, img_bpp, img_pad, ynot)) {
+                Serial.printf ("%s: %s\n", filename, ynot.get());
+                ok = false;
+            }
         }
 
-        // all good
-        file_ok = true;
+        // suitable for Earth map?
+        if (ok) {
+            // negative img_h is required to indicate pixels can be displayed top-to-bottom
+            if (img_w != ZOOM_W || -img_h != ZOOM_H || img_bpp != 16 || img_pad != 0) {
+                Serial.printf ("%s: unsuitable image: w= %d h= %d bpp= %d pad= %d\n", filename,
+                                        img_w, img_h, img_bpp, img_pad);
+                ok = false;
+            }
+        }
 
+        // if no good, try downloading unless CM_USER
+        if (!ok) {
 
-    out:
-
-        // download if not ok for any reason
-        if (!file_ok) {
-
+            // start over
             if (fp) {
-                // file exists but is not correct in some way
                 fclose(fp);
                 fp = NULL;
-                unlink(filename);
+                unlinkOurs(filename);
             }
 
-            // download and open again if success
-            if (wifiOk() && client.connect(backend_host, backend_port)) {
-                if (BUILD_W * pan_zoom.zoom > 4800)
-                    mapMsg (0, "%s", title);
-                char url[256];
-                snprintf (url, sizeof(url), "/maps/%s.z", filename);
-                Serial.printf ("downloading %s\n", url);
-                httpHCGET (client, backend_host, url);
-                char c_l[100];
-                if (httpSkipHeader (client, "Content-Length: ", c_l, sizeof(c_l)) &&
-                                        downloadMapFile (client, filename, atol(c_l)))
-                    fp = fopenOurs (filename, "r");
-                client.stop();
+            if (cm != CM_USER) {
+
+                // download and open again if success
+                WiFiClient client;
+                if (client.connect(backend_host, backend_port)) {
+                    // show message for larger images
+                    if (BUILD_W * pan_zoom.zoom > 4800)
+                        mapMsg (0, "%s", title);
+                    char url[256];
+                    snprintf (url, sizeof(url), "/maps/%s.z", filename);
+                    Serial.printf ("downloading %s\n", url);
+                    httpHCGET (client, backend_host, url);
+                    char c_l[100];
+                    if (httpSkipHeader (client, "Content-Length: ", c_l, sizeof(c_l)) &&
+                                                    downloadZFile (client, filename, atol(c_l)))
+                        fp = fopenOurs (filename, "r");
+                    client.stop();
+                }
+                if (!fp)
+                    mapMsg (1000, "%s: download failed", title);
             }
-            if (!fp)
-                mapMsg (1000, "%s: download failed", title);
         }
 
         // return result, open if good or closed if not
         return (fp);
+}
+
+/* read any BMP from the given web connection and save for use by CM_USER.
+ * client is positioned at start of image.
+ * return whether image is suitable with reason why if not.
+ */
+bool installWebMapImages (WiFiClient &client, long content_length, ImageRefit fit, Message &ynot)
+{
+        // time download
+        struct timeval tv0;
+        if (debugLevel(DEBUG_BMP, 1))
+            gettimeofday (&tv0, NULL);
+
+        // read contents
+        char *image = (char *) malloc (content_length);                         // N.B. free!
+        if (!image)
+            fatalError ("No memory for User image %ld", content_length);
+        long n_read;
+        for (long i = 0; i < content_length; i += n_read) {
+            n_read = client.readArray ((uint8_t*)&image[i], content_length - i);
+            if (n_read == 0) {
+                ynot.printf ("image is short: %ld < %ld", i, content_length);
+                free (image);
+                return (false);
+            }
+        }
+
+        if (debugLevel(DEBUG_BMP, 1)) {
+            struct timeval tv1;
+            gettimeofday (&tv1, NULL);
+            Serial.printf ("BMP: download %ld bytes in %ld us\n", content_length, (long)TVDELUS(tv0,tv1));
+        }
+
+        // save at each possible zoom level
+        for (int z = MIN_ZOOM; z <= MAX_ZOOM; z++) {
+            char dfile[100], nfile[100];
+            GenReader gr(image, content_length);
+            SBox z_b;
+            z_b.x = z_b.y = 0;
+            z_b.w = HC_MAP_W * z;
+            z_b.h = HC_MAP_H * z;
+            uint16_t *z_565;
+            mkMapFilenames (CM_USER, dfile, nfile, z, sizeof(dfile));
+            if (!readBMPImage (gr, z_b, z_565, fit, ynot)) {                    // N.B. free!
+                free (image);
+                return(false);
+            }
+            if (!writeBMP565File (dfile, z_565, z_b.w, z_b.h, ynot)) {
+                free (z_565);
+                free (image);
+                return(false);
+            }
+            if (!writeBMP565File (nfile, z_565, z_b.w, z_b.h, ynot)) {
+                free (z_565);
+                free (image);
+                return(false);
+            }
+            free (z_565);
+        }
+
+        // clean up
+        free (image);
+
+        // ok!
+        return (true);
+}
+
+/* remove any CM_USER images
+ */
+void rmWebMapImages (void)
+{
+    cleanCache (cm_info[CM_USER].name, CACHE_NONE);
+}
+
+/* return whether all required CM_USER images are present
+ */
+bool allWebMapImagesOk (void)
+{
+    for (int z = MIN_ZOOM; z <= MAX_ZOOM; z++) {
+        char dfile[100], nfile[100];
+        mkMapFilenames (CM_USER, dfile, nfile, z, sizeof(dfile));
+        FILE *dfp = fopenOurs (dfile, "r");
+        if (!dfp)
+            return (false);
+        fclose (dfp);
+        FILE *nfp = fopenOurs (nfile, "r");
+        if (!nfp)
+            return (false);
+        fclose (nfp);
+    }
+
+    // all present
+    return (true);
 }
 
 /* install maps for the given CoreMap that are just files maintained on the server, no update query required.
@@ -504,24 +572,13 @@ static bool installFileMaps (CoreMaps cm)
         char dtitle[NV_COREMAPSTYLE_LEN+10];
         char ntitle[NV_COREMAPSTYLE_LEN+10];
 
-        if (cm == CM_DRAP) {
-            snprintf (dfile, 32, "map-D-%dx%d-DRAP-S.bmp", ZOOM_W, ZOOM_H);
-            snprintf (nfile, 32, "map-N-%dx%d-DRAP-S.bmp", ZOOM_W, ZOOM_H);
-        } else if (cm == CM_WX) {
-            const char *units = showATMhPa() ? "mB" : "in";
-            snprintf (dfile, 32, "map-D-%dx%d-Wx-%s.bmp", ZOOM_W, ZOOM_H, units);
-            snprintf (nfile, 32, "map-N-%dx%d-Wx-%s.bmp", ZOOM_W, ZOOM_H, units);
-        } else {
-            snprintf (dfile, 32, "map-D-%dx%d-%s.bmp", ZOOM_W, ZOOM_H, style);
-            snprintf (nfile, 32, "map-N-%dx%d-%s.bmp", ZOOM_W, ZOOM_H, style);
-        }
-
+        mkMapFilenames (cm, dfile, nfile, pan_zoom.zoom, sizeof(dfile));
         snprintf (dtitle, NV_COREMAPSTYLE_LEN+10, "%s D map", style);
         snprintf (ntitle, NV_COREMAPSTYLE_LEN+10, "%s N map", style);
 
         // fresh start
         invalidatePixels();
-        (void) cleanCache (style, 3*cm_info[cm].maxage);
+        (void) cleanCache (style, 2*cm_info[cm].max_age);         // don't hammer immediately
         if (day_fp)
             fclose(day_fp);
         if (night_fp)
@@ -550,14 +607,14 @@ bool installFreshMaps()
         switch (core_map) {
         case CM_PMTOA:
             ok = installQueryMaps ("fetchVOACAP-TOA.pl", msg, prop_style,
-                                propBand2MHz(cm_info[CM_PMTOA].band), cm_info[CM_PMTOA].maxage);
+                                propBand2MHz(cm_info[CM_PMTOA].band), cm_info[CM_PMTOA].max_age);
             break;
         case CM_PMREL:
             ok = installQueryMaps ("fetchVOACAPArea.pl", msg, prop_style,
-                                propBand2MHz(cm_info[CM_PMREL].band), cm_info[CM_PMREL].maxage);
+                                propBand2MHz(cm_info[CM_PMREL].band), cm_info[CM_PMREL].max_age);
             break;
         case CM_MUF_V:
-            ok = installQueryMaps ("fetchVOACAP-MUF.pl", msg, muf_v_style, 0, cm_info[CM_MUF_V].maxage);
+            ok = installQueryMaps ("fetchVOACAP-MUF.pl", msg, muf_v_style, 0, cm_info[CM_MUF_V].max_age);
             break;
         case CM_COUNTRIES:
         case CM_TERRAIN:
@@ -566,6 +623,7 @@ bool installFreshMaps()
         case CM_AURORA:
         case CM_CLOUDS:
         case CM_WX:
+        case CM_USER:
             ok = installFileMaps (core_map);
             break;
         case CM_N:              // lint
@@ -599,6 +657,14 @@ void initCoreMaps()
         if (!NVReadUInt16 (NV_MAPROTSET, &map_rotset)) {
             map_rotset = 0;
             NVWriteUInt16 (NV_MAPROTSET, map_rotset);
+        }
+
+        // init CM_USER if not installed
+        if (IS_CMROT(CM_USER) && !allWebMapImagesOk()) {
+            Serial.printf ("removing CM_USER from initial rotset\n");
+            RM_CMROT (CM_USER);
+            insureCoreMap();
+            saveCoreMaps();
         }
 
         // init BC bands
@@ -729,6 +795,7 @@ bool mapScaleIsUp(void)
     case CM_COUNTRIES:
     case CM_TERRAIN:
     case CM_CLOUDS:
+    case CM_USER:
     case CM_N:          // lint
         return (false);
     }
@@ -812,6 +879,7 @@ void drawMapScale()
     case CM_COUNTRIES:
     case CM_TERRAIN:
     case CM_CLOUDS:
+    case CM_USER:
     case CM_N:                                          // lint
         // no scale
         return;
@@ -1087,11 +1155,11 @@ void rotateNextMap()
 }
 
 
-/* Decompress in_n bytes from in_client to out_fp until stream ends or EOF.
+/* Decompress in_n bytes from client to out_fp until stream ends or EOF.
  * return whether successful.
  * modeled after zpipe.
  */
-bool zinfWiFiFILE (WiFiClient &in_client, int in_n, FILE *out_fp)
+bool zinfWiFiFILE (WiFiClient &client, int in_n, FILE *out_fp)
 {
     #define CHUNK 16384
     int ret;
@@ -1116,19 +1184,14 @@ bool zinfWiFiFILE (WiFiClient &in_client, int in_n, FILE *out_fp)
 
     // decompress until deflate stream ends, read in_n bytes or end of file
     do {
-        // fill in[] AMAP
-        strm.avail_in = 0;
-        while (in_read < in_n && strm.avail_in < CHUNK) {
-            if (!getTCPChar (in_client, (char *)&in[strm.avail_in])) {
-                (void)inflateEnd(&strm);
-                Serial.printf ("zinfWiFiFILE read short: %d %d %d\n", in_read, in_n, strm.avail_in);
-                return (false);
-            }
-            strm.avail_in++;
-            in_read++;
-        }
+        // fill in[]
+        int n_read = in_n - in_read;
+        if (n_read > CHUNK)
+            n_read = CHUNK;
+        strm.avail_in = client.readArray (in, n_read);
         if (strm.avail_in == 0)
             break;
+        in_read += strm.avail_in;
         strm.next_in = in;
 
         // run inflate() on input until output buffer not full
@@ -1157,13 +1220,45 @@ bool zinfWiFiFILE (WiFiClient &in_client, int in_n, FILE *out_fp)
         // done when inflate() says it's done
     } while (ret != Z_STREAM_END);
 
-    // clean up and return
+    // clean up and return.
     (void)inflateEnd(&strm);
     if (ret == Z_STREAM_END) {
-        Serial.printf ("inflated %d -> %d\n", in_n, out_n);
-        return (true);
+        // N.B. an empty file will return Z_STREAM_END!
+        if (out_n > in_n) {
+            Serial.printf ("inflated %d -> %d\n", in_n, out_n);
+            return (true);
+        }
+        Serial.printf ("inflate did not expand: %d -> %d\n", in_n, out_n);
+        return (false);
     } else {
         Serial.printf ("inflate failed: %s\n", strm.msg);
         return (false);
     }
+}
+
+/* like fopen() but filename is in our working directory.
+ * chown to read uid if creating.
+ */
+FILE *fopenOurs (const char *filename, const char *how)
+{
+    // full path
+    std::string dp = our_dir + filename;
+    const char *full = dp.c_str();
+    FILE *fp = fopen (full, how);
+
+    // chown to the real us if creating
+    if (fp && (strchr(how,'w') || strchr(how,'a')) && fchown(fileno(fp), getuid(), getgid()) < 0)
+        Serial.printf ("chown(%s): %s\n", filename, strerror(errno));
+
+    return (fp);
+}
+
+/* like unlink() but filename is in our working directory
+ */
+void unlinkOurs (const char *filename)
+{
+    std::string dp = our_dir + filename;
+    const char *path = dp.c_str();
+    if (unlink (path) < 0)
+        Serial.printf ("unlink(%s): %s\n", filename, strerror(errno));
 }

@@ -81,8 +81,6 @@ typedef enum {
 } DemoChoice;
 static bool runDemoChoice (DemoChoice choice, bool &slow, char msg[], size_t msg_len);
 
-// hack around frame buffer readback weirdness that requires ignoring the very first pixel
-static bool first_pixel = true;
 
 // some color names culled from rgb.txt
 typedef struct {
@@ -474,70 +472,31 @@ static bool getWiFiCaptureBMP(WiFiClient &client, char *unused_line, size_t line
     (void)(unused_line);
     (void)(line_len);
 
-    #define CORESZ 14                           // always 14 bytes at front
-    #define HDRVER 108                          // BITMAPV4HEADER, also n bytes in subheader
-    #define BHDRSZ (CORESZ+HDRVER)              // total header size
-    uint8_t buf[300];                           // any modest size ge BHDRSZ and mult of 2
+    // hack around frame buffer readback weirdness that requires ignoring the very first pixel
+    static bool first_pixel = true;
 
-    resetWatchdog();
-
-    // build BMP header 
-    uint32_t npix = BUILD_W*BUILD_H;            // n pixels
-    uint32_t nbytes = npix*2;                   // n bytes of image data
-
-    // 14 byte header common to all formats
-    buf[0] = 'B';                               // id
-    buf[1] = 'M';                               // id
-    *((uint32_t*)(buf+ 2)) = BHDRSZ+nbytes;     // total file size: header + pixels
-    *((uint16_t*)(buf+ 6)) = 0;                 // reserved 0
-    *((uint16_t*)(buf+ 8)) = 0;                 // reserved 0
-    *((uint32_t*)(buf+10)) = BHDRSZ;            // offset to start of pixels
-
-    // we use BITMAPV4INFOHEADER which supports RGB565
-    *((uint32_t*)(buf+14)) = HDRVER;            // subheader type
-    *((uint32_t*)(buf+18)) = BUILD_W;           // width
-    *((uint32_t*)(buf+22)) = -BUILD_H;          // height, neg means starting at the top row
-    *((uint16_t*)(buf+26)) = 1;                 // n planes
-    *((uint16_t*)(buf+28)) = 16;                // bits per pixel -- 16 RGB565 
-    *((uint32_t*)(buf+30)) = 3;                 // BI_BITFIELDS to indicate RGB bitmasks are present
-    *((uint32_t*)(buf+34)) = nbytes;            // image size in bytes
-    *((uint32_t*)(buf+38)) = 0;                 // X pixels per meter -- 0 is don't care
-    *((uint32_t*)(buf+42)) = 0;                 // Y pixels per meter -- 0 is don't care
-    *((uint32_t*)(buf+46)) = 0;                 // colors in table
-    *((uint32_t*)(buf+50)) = 0;                 // important colors
-    *((uint32_t*)(buf+54)) = 0xF800;            // red mask
-    *((uint32_t*)(buf+58)) = 0x07E0;            // green mask
-    *((uint32_t*)(buf+62)) = 0x001F;            // blue mask
-    *((uint32_t*)(buf+66)) = 0;                 // alpha mask
-    *((uint32_t*)(buf+70)) = 1;                 // CSType: 1 means ignore all the remaining fields!
-    *((uint32_t*)(buf+74)) = 0;                 // RedX
-    *((uint32_t*)(buf+78)) = 0;                 // RedY
-    *((uint32_t*)(buf+82)) = 0;                 // RedZ
-    *((uint32_t*)(buf+86)) = 0;                 // GreenX
-    *((uint32_t*)(buf+90)) = 0;                 // GreenY
-    *((uint32_t*)(buf+94)) = 0;                 // GreenZ
-    *((uint32_t*)(buf+99)) = 0;                 // BlueX
-    *((uint32_t*)(buf+102)) = 0;                // BlueY
-    *((uint32_t*)(buf+106)) = 0;                // BlueZ
-    *((uint32_t*)(buf+110)) = 0;                // GammaRed
-    *((uint32_t*)(buf+114)) = 0;                // GammaGreen
-    *((uint32_t*)(buf+118)) = 0;                // GammaBlue
-
+    // build BMP header
+    const int bpp = sizeof(uint16_t);                   // bytes per pixel
+    uint8_t *hdr;                                       // must free!
+    int hdr_len;
+    int n_bytes;                                        // total bytes in file
+    createBMP565Header (hdr, hdr_len, n_bytes, BUILD_W, BUILD_H);
+    
     // send the web page header
     resetWatchdog();
     client.println ("HTTP/1.0 200 OK");
     sendUserAgent (client);
     client.println ("Content-Type: image/bmp");
     client.println ("Cache-Control: no-cache");
-    client.print ("Content-Length: "); client.println (BHDRSZ+nbytes);
+    client.print ("Content-Length: "); client.println (n_bytes);
     client.println ("Connection: close\r\n");
     // Serial.println("web header sent");
 
-    // send the image header
-    client.write ((uint8_t*)buf, BHDRSZ);
-    // Serial.println("img header sent");
+    // send the image header then free
+    client.write (hdr, hdr_len);
+    free (hdr);
 
-    // send the pixels
+    // send the RGB565 pixels
     resetWatchdog();
     tft.graphicsMode();
     tft.setXY(0,0);
@@ -548,25 +507,19 @@ static bool getWiFiCaptureBMP(WiFiClient &client, char *unused_line, size_t line
         tft.readData();
         first_pixel = false;
     }
-    uint16_t bufl = 0;
-    for (uint32_t i = 0; i < npix; i++) {
-        if ((i % tft.width()) == 0)
-            resetWatchdog();
+    for (int y = 0; y < BUILD_H; y++) {                 // increment by pixel
 
-        // swap bytes
-        buf[bufl+1] = tft.readData();
-        buf[bufl+0] = tft.readData();
-        bufl += 2;
-
-        if (bufl == sizeof(buf) || i == npix-1) {
-            client.write ((uint8_t*)buf, bufl);
-            bufl = 0;
-            resetWatchdog();
+        // fill and send each row
+        char row[BUILD_W*bpp];                          // 2-byte pixels
+        for (int x = 0; x < BUILD_W*2; x += bpp) {      // increment by byte
+            // read 2-byte pixels swap bytes
+            row[x+1] = tft.readData();
+            row[x+0] = tft.readData();
         }
+        client.write ((uint8_t*)row, BUILD_W*bpp);
     }
-    // Serial.println("pixels sent");
 
-    // never fails
+    // never fails :-)
     return (true);
 }
 
@@ -721,7 +674,8 @@ static bool getWiFiDEDXInfo_helper (WiFiClient &client, char line[], size_t line
     // get weather
     StackMalloc wxi_mem(sizeof(WXInfo));
     WXInfo *wip = (WXInfo *) wxi_mem.getMem();
-    if (getCurrentWX (ll, want_de, wip, buf)) {
+    Message ynot;
+    if (getCurrentWX (ll, want_de, wip, ynot)) {
         float x;
 
         x = showTempC() ? wip->temperature_c : CEN2FAH(wip->temperature_c);
@@ -756,7 +710,7 @@ static bool getWiFiDEDXInfo_helper (WiFiClient &client, char line[], size_t line
     } else {
         client.print(prefix);
         client.print("WxErr      ");
-        client.println(buf);
+        client.println(ynot.get());
     }
 
     // ok
@@ -895,24 +849,66 @@ static bool getWiFiContests (WiFiClient &client, char *unused_line, size_t line_
     (void)(unused_line);
     (void)(line_len);
 
-    const char *credp;
-    const ContestEntry *cep;
-    int n_con = getContests (&credp, &cep);
+    // fetch
+    char **titles, **dates;
+    int n_con = getContests (titles, dates);
 
     // start reply
     startPlainText (client);
 
     if (n_con > 0) {
-        client.print ("# ");
-        client.println (credp);
+
+        // print and free
         for (int i = 0; i < n_con; i++) {
-            const ContestEntry &ce = cep[i];
-            client.println (ce.title);
-            client.println (ce.date_str);
-            client.println (ce.url);
+            char str[1000];
+            snprintf (str, sizeof(str), "%-40s %s\n", titles[i], dates[i]);
+            client.print (str);
+            free (titles[i]);
+            free (dates[i]);
         }
+
+        free (titles);
+        free (dates);
+
     } else {
-        client.print ("no contests until pane opened\n");
+        client.print ("no contests until pane is opened\n");
+    }
+
+    // done
+    return (true);
+
+}
+
+/* remote report current known set of DXpeditions
+ */
+static bool getWiFiDXPeds (WiFiClient &client, char *unused_line, size_t line_len)
+{
+    (void)(unused_line);
+    (void)(line_len);
+
+    // fetch
+    char **titles, **dates;
+    int n_dxp = getDXPeds (titles, dates);
+
+    // start reply
+    startPlainText (client);
+
+    if (n_dxp > 0) {
+
+        // print and free
+        for (int i = 0; i < n_dxp; i++) {
+            char str[1000];
+            snprintf (str, sizeof(str), "%-40s %s\n", titles[i], dates[i]);
+            client.print (str);
+            free (titles[i]);
+            free (dates[i]);
+        }
+
+        free (titles);
+        free (dates);
+
+    } else {
+        client.print ("no expeditions until pane is opened\n");
     }
 
     // done
@@ -1923,6 +1919,42 @@ static bool setWiFiDemo (WiFiClient &client, char line[], size_t line_len)
     return (true);
 }
 
+/* inject a spot into the dxcluster stream
+ */
+static bool setWiFiSpot (WiFiClient &client, char line[], size_t line_len)
+{
+    // define all possible args
+    WebArgs wa;
+    wa.nargs = 0;
+    wa.name[wa.nargs++] = "tx_call";
+    wa.name[wa.nargs++] = "rx_call";
+    wa.name[wa.nargs++] = "kHz";
+
+    // parse
+    if (!parseWebCommand (wa, line, line_len))
+        return (false);
+
+    // all required
+    if (!wa.found[0] || !wa.found[1] || !wa.found[2]) {
+        snprintf (line, line_len, "%s", "tx_call=x&rx_call=x&kHz=x");
+        return (false);
+    }
+
+    // inject
+    Message ynot;
+    if (!injectDXClusterSpot (wa.value[0], wa.value[1], wa.value[2], ynot)) {
+        quietStrncpy (line, ynot.get(), line_len);
+        return (false);
+    }
+
+    // ack
+    startPlainText (client);
+    client.print ("ok\n");
+
+    // good
+    return (true);
+}
+
 
 /* remote command to set the DE time format and/or atin
  * set_defmt?fmt=[one from menu]&atin=RSAtAt|RSInAgo"
@@ -2016,8 +2048,11 @@ static bool setWiFiCluster (WiFiClient &client, char line[], size_t line_len)
     char *port = (char*) wa.value[1];   // setDXCluster will trim
 
     // try to save
-    if (!setDXCluster (host, port, line))
+    Message ynot;
+    if (!setDXCluster (host, port, ynot)) {
+        quietStrncpy (line, ynot.get(), line_len);
         return (false);
+    }
 
     // close, it will reopen if active
     closeDXCluster();
@@ -2216,7 +2251,7 @@ static bool setWiFiOnceAlarm (WiFiClient &client, char line[], size_t line_len)
     }
 
     // engage
-    if (!setOneTimeAlarmState (as, utc, str)) {
+    if (!setOneTimeAlarmState (as, utc, str, NULL)) {
         strcpy (line, "time garbled or too old");
         return (false);
     }
@@ -2347,13 +2382,13 @@ static bool setWiFiRotator (WiFiClient &client, char line[], size_t line_len)
         return (false);
 
     // ok or say why not
-    char ynot[100];
+    Message ynot;
     if (commandRotator (wa.value[0], wa.value[1], wa.value[2], ynot)) {
         startPlainText (client);
         client.print ("ok\n");
         return (true);
     } else {
-        snprintf (line, line_len, "%s", ynot);
+        quietStrncpy (line, ynot.get(), line_len);
         return (false);
     }
 }
@@ -2955,39 +2990,135 @@ static bool setWiFiADIF (WiFiClient &client, char line[], size_t line_len)
     }
 }
 
-/* load a BMP file via POST or turn off.
+/* load a BMP file via POST else turn off.
  */
 static bool setWiFiloadBMP (WiFiClient &client, char line[], size_t line_len)
 {
+    // handy wa indices
+    enum {
+        LBMP_PANE,
+        LBMP_FIT,
+        LBMP_OFF,
+        LBMP_N
+    };
+
     // define all possible args
     WebArgs wa;
-    wa.nargs = 0;
-    wa.name[wa.nargs++] = "none";
-    wa.name[wa.nargs++] = "pane";
+    wa.name[LBMP_PANE] = "pane";
+    wa.name[LBMP_FIT] = "fit";
+    wa.name[LBMP_OFF] = "off";
+    wa.nargs = LBMP_N;
 
     // parse
     if (!parseWebCommand (wa, line, line_len))
         return (false);
 
-    // pane arg is required
-    int pane = 0;
-    if (!wa.found[1] || !wa.value[1] || (pane = atoi(wa.value[1])) < PANE_1 || pane >= PANE_N) {
-        snprintf (line, line_len, "pane %d..%d is required", PANE_1, PANE_N-1);
+    // pane arg is always required
+    if (!wa.found[LBMP_PANE] || !wa.value[LBMP_PANE]) {
+        snprintf (line, line_len, "pane %d..%d or map is required", PANE_1, PANE_N-1);
+        return(false);
+    }
+    const char *pane_arg = wa.value[LBMP_PANE];
+
+    // crack fit if given
+    ImageRefit fit = FIT_RESIZE;         // not a default, just required lint
+    bool found_fit = false;
+    if (wa.found[LBMP_FIT] && wa.value[LBMP_FIT]) {
+        if (strcasecmp (wa.value[LBMP_FIT], "resize") == 0) {
+            fit = FIT_RESIZE;
+            found_fit = true;
+        } else if (strcasecmp (wa.value[LBMP_FIT], "crop") == 0) {
+            fit = FIT_CROP;
+            found_fit = true;
+        } else if (strcasecmp (wa.value[LBMP_FIT], "fill") == 0) {
+            fit = FIT_FILL;
+            found_fit = true;
+        }
+    }
+    // fit is required unless off
+    if (found_fit && wa.found[LBMP_OFF]) {
+        strcpy (line, garbcmd);
+        return (false);
+    }
+    if (!wa.found[LBMP_OFF] && !found_fit) {
+        snprintf (line, line_len, "fit=[resize,crop,fill]");
         return(false);
     }
 
-    // show file else restore
-    if (wa.found[0]) {
+    // "map" or pane number
+    if (strcmp (pane_arg, "map") == 0) {
 
-        // "none" means restore pane content
-        scheduleNewPlot(plot_ch[pane]);
+        if (wa.found[LBMP_OFF]) {
+
+            // remove user map
+
+            // fit makes no sense
+            if (wa.found[LBMP_FIT]) {
+                strcpy (line, garbcmd);
+                return (false);
+            }
+
+            // remove supporing files
+            rmWebMapImages ();
+
+            // insure not being displayed
+            if (IS_CMROT(CM_USER)) {
+                Serial.printf ("removing CM_USER from rotset\n");
+                RM_CMROT (CM_USER);
+                insureCoreMap();
+                saveCoreMaps();
+                logMapRotSet();
+                scheduleNewCoreMap (core_map);
+            }
+
+
+        } else {
+
+            // install user map
+
+            // content length is required
+            if (content_length == 0) {
+                quietStrncpy (line, "missing header Content-Length", line_len);
+                return (false);
+            }
+
+            // POST content immediately follows header
+            Message ynot;
+            if (!installWebMapImages (client, content_length, fit, ynot)) {
+                quietStrncpy (line, ynot.get(), line_len);
+                return (false);
+            }
+
+            // engage
+            scheduleNewCoreMap (CM_USER);
+        }
 
     } else {
 
-        // POST content immediately follows header
-        GenReader gr (client);
-        if (!install24BMP (gr, plot_b[pane], line, line_len))
-            return (false);             // error already in line[]
+        // show image in specified pane
+
+        int pane = atoi(pane_arg);
+        if (pane < PANE_1 || pane >= PANE_N) {
+            snprintf (line, line_len, "pane %d..%d or map", PANE_1, PANE_N-1);
+            return(false);
+        }
+
+        // show file else restore
+        if (wa.found[LBMP_OFF]) {
+
+            // "off" means restore pane content
+            scheduleNewPlot(plot_ch[pane]);
+
+        } else {
+
+            // POST content immediately follows header
+            GenReader gr (client);
+            Message ynot;
+            if (!installBMPBox (gr, plot_b[pane], fit, ynot)) {
+                quietStrncpy (line, ynot.get(), line_len);
+                return (false);
+            }
+        }
     }
 
 
@@ -4033,6 +4164,7 @@ static const CmdTble command_table[] = {
     { "get_contests.txt ",  getWiFiContests,       "get current list of contests" },
     { "get_de.txt ",        getWiFiDEInfo,         "get DE info" },
     { "get_dx.txt ",        getWiFiDXInfo,         "get DX info" },
+    { "get_dxpeds.txt ",    getWiFiDXPeds,         "get current list of DXpeditions" },
     { "get_dxspots.txt ",   getWiFiDXSpots,        "get DX spots" },
     { "get_livespots.txt ", getWiFiLiveSpots,      "get live spots list" },
     { "get_livestats.txt ", getWiFiLiveStats,      "get live spots statistics" },
@@ -4047,7 +4179,7 @@ static const CmdTble command_table[] = {
     { "set_adif?",          setWiFiADIF,           "pane=[0123] (POST)" },
     { "set_alarm?",         setWiFiAlarm,          "state=off|armed&time=HR:MN&utc=yes|no" },
     { "set_auxtime?",       setWiFiAuxTime,        "format=[one_from_menu]" },
-    { "set_bmp?",           setWiFiloadBMP,        "pane=[123][&none] (POST)" },
+    { "set_bmp?",           setWiFiloadBMP,        "pane=[1,2,3,map]&fit=[resize,crop,fill][&off] (POST)" },
     { "set_cluster?",       setWiFiCluster,        "host=xxx&port=yyy" },
     { "set_debug?",         setWiFiDebug,          "name=xxx&level=n" },
     { "set_defmt?",         setWiFiDEformat,       "fmt=[one_from_menu]&atin=RSAtAt|RSInAgo" },
@@ -4083,10 +4215,11 @@ static const CmdTble command_table[] = {
 
     // the following entries are never shown with --help -- update N_UNDOC_CMD if change
     { "set_demo?",          setWiFiDemo,           "on|off|n=N" },
+    { "set_spot?",          setWiFiSpot,           "tx_call=x&rx_call=x&kHz=x" },
 };
 
 #define N_CMDTABLE      NARRAY(command_table)           // real n entries in command table
-#define N_UNDOC_CMD     1                               // n undocumented commands at end of table
+#define N_UNDOC_CMD     2                               // n undocumented commands at end of table
 
 /* return whether the given command is allowed in read-only web service
  */
@@ -4519,8 +4652,8 @@ static bool runDemoChoice (DemoChoice choice, bool &slow, char msg[], size_t msg
             newDX (dll, NULL, NULL);
             if (++demo_ll_i == NARRAY(demo_ll))
                 demo_ll_i = 0;
-            demoMsg (ok, choice, msg, msg_len, "NewDX %g %g", dll.lat_d, dll.lng_d);
             ok = true;
+            demoMsg (ok, choice, msg, msg_len, "NewDX %g %g", dll.lat_d, dll.lng_d);
         }
         break;
 
@@ -4557,13 +4690,16 @@ static bool runDemoChoice (DemoChoice choice, bool &slow, char msg[], size_t msg
     case DEMO_MAPSTYLE:
         {
             char s[NV_COREMAPSTYLE_LEN];
-            core_map = (CoreMaps)(random(CM_N));                                // random style
-            if (CM_PMACTIVE())
-                cm_info[core_map].band = (PropMapBand)random(PROPBAND_N);       // random prop band
-            demoMsg (ok, choice, msg, msg_len, "Map %s", getCoreMapStyle (core_map, s));
-            scheduleNewCoreMap (core_map);
-            slow = true;
+            CoreMaps cm = (CoreMaps)(random(CM_N));                             // random style
             ok = true;
+            if (cm == CM_PMTOA || cm == CM_PMREL)
+                cm_info[cm].band = (PropMapBand)random(PROPBAND_N);             // random prop band
+            else if (cm == CM_USER && !allWebMapImagesOk())
+                ok = false;
+            if (ok)
+                scheduleNewCoreMap (cm);
+            demoMsg (ok, choice, msg, msg_len, "Map %s", getCoreMapStyle (cm, s));
+            slow = true;
         }
         break;
 

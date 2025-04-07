@@ -73,7 +73,7 @@ static bool initSWFit(void)
     bool ok = false;
 
     Serial.println (sw_rank_page);
-    if (wifiOk() && sw_client.connect(backend_host, backend_port)) {
+    if (sw_client.connect(backend_host, backend_port)) {
 
         updateClocks(false);
 
@@ -177,12 +177,15 @@ static void runNCDXFSpcWxMenu (void)
     MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_NOCANCEL, 1, NARRAY(mitems), mitems};
     if (runMenu (menu)) {
                 
-        // reset mask which means Auto
-        spcwx_chmask = SPCWX_AUTO;
-
-        // set additional bits and ascending rank to implement chosen params unless explicit Auto
-        int rank = 0;
-        if (!mitems[SPCWX_N+1].set) {
+        // set mask bits and ascending rank to implement chosen params unless explicit Auto
+        if (mitems[SPCWX_N+1].set) {
+            Serial.printf ("SPCWX: NCDXF table is now Auto\n");
+            spcwx_chmask = SPCWX_AUTO;
+            sortSpaceWx();
+        } else {
+            // N.B. assign ranks in same order as initSpaceWX()
+            spcwx_chmask = 0;
+            int rank = 0;
             for (int i = 0; i < SPCWX_N; i++) {
                 if (mitems[i].set) {
                     space_wx[i].rank = rank++;
@@ -191,13 +194,8 @@ static void runNCDXFSpcWxMenu (void)
                     space_wx[i].rank = SPCWX_N;   // impossible rank
                 }
             }       
-        }
-
-        if (rank > NCDXF_B_NFIELDS)
-            Serial.printf ("SPCWX: NDXCF table using only first %d selections\n", NCDXF_B_NFIELDS);
-        else if (rank == 0) {
-            Serial.printf ("SPCWX: NCDXF table is now Auto\n");
-            sortSpaceWx();
+            if (rank > NCDXF_B_NFIELDS)
+                Serial.printf ("SPCWX: NDXCF table using only first %d selections\n", NCDXF_B_NFIELDS);
         }
 
         // save mask
@@ -358,7 +356,7 @@ bool retrieveSunSpots (SunSpotData &ssn)
     ssn.data_ok = ssn_cache.data_ok = false;
 
     Serial.println(ssn_page);
-    if (wifiOk() && ss_client.connect(backend_host, backend_port)) {
+    if (ss_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
@@ -445,7 +443,7 @@ bool retrieveSolarFlux (SolarFluxData &sf)
     sf.data_ok = sf_cache.data_ok = false;
 
     Serial.println (sf_page);
-    if (wifiOk() && sf_client.connect(backend_host, backend_port)) {
+    if (sf_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
@@ -542,7 +540,7 @@ bool retrieveDRAP (DRAPData &drap)
     drap.data_ok = drap_cache.data_ok = false;
 
     Serial.println (drap_page);
-    if (wifiOk() && drap_client.connect(backend_host, backend_port)) {
+    if (drap_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
@@ -678,7 +676,7 @@ bool retrieveKp (KpData &kp)
     kp.data_ok = kp_cache.data_ok = false;
 
     Serial.println(kp_page);
-    if (wifiOk() && kp_client.connect(backend_host, backend_port)) {
+    if (kp_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
@@ -765,7 +763,7 @@ bool retrieveXRay (XRayData &xray)
     xray.data_ok = xray_cache.data_ok = false;
 
     Serial.println(xray_page);
-    if (wifiOk() && xray_client.connect(backend_host, backend_port)) {
+    if (xray_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
@@ -873,7 +871,7 @@ bool retrieveBzBt (BzBtData &bzbt)
     bzbt.data_ok = bzbt_cache.data_ok = false;
 
     Serial.println(bzbt_page);
-    if (wifiOk() && bzbt_client.connect(backend_host, backend_port)) {
+    if (bzbt_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
@@ -979,7 +977,7 @@ bool retrieveSolarWind(SolarWindData &sw)
     sw.data_ok = sw_cache.data_ok = false;
 
     Serial.println (swind_page);
-    if (wifiOk() && swind_client.connect(backend_host, backend_port)) {
+    if (swind_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
@@ -1102,7 +1100,7 @@ bool retrieveNOAASWx (NOAASpaceWxData &noaasw)
     // read scales
     Serial.println(noaaswx_page);
     char line[100];
-    if (wifiOk() && noaaswx_client.connect(backend_host, backend_port)) {
+    if (noaaswx_client.connect(backend_host, backend_port)) {
 
         updateClocks(false);
 
@@ -1214,7 +1212,7 @@ bool retrieveAurora (AuroraData &aurora)
     aurora.data_ok = aurora_cache.data_ok = false;
 
     Serial.println (aurora_page);
-    if (wifiOk() && aurora_client.connect(backend_host, backend_port)) {
+    if (aurora_client.connect(backend_host, backend_port)) {
         updateClocks(false);
 
         // query web page
@@ -1355,4 +1353,12 @@ void initSpaceWX(void)
         NVWriteUInt32 (NV_SPCWXCHOICE, spcwx_chmask);
     }
     Serial.printf ("SPCWX: initial choice mask 0x%08x\n", spcwx_chmask);
+
+    // unless auto, set rank to match choice mask
+    if (spcwx_chmask != SPCWX_AUTO) {
+        // N.B. assign ranks in same order as runNCDXFSpcWxMenu()
+        int rank = 0;
+        for (int i = 0; i < SPCWX_N; i++)
+            space_wx[i].rank = (spcwx_chmask & (1<<i)) ? rank++ : 99;   // 0 is highest rank
+    }
 }

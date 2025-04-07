@@ -136,9 +136,12 @@ typedef enum {
  */
 #define DEBUG_SUBSYS                        \
     X(DEBUG_ADIF,       "ADIF")             \
+    X(DEBUG_BMP,        "BMP")              \
     X(DEBUG_BC,         "BigClock")         \
     X(DEBUG_CONTESTS,   "contests")         \
+    X(DEBUG_CTY,        "cty")              \
     X(DEBUG_DXC,        "dxcluster")        \
+    X(DEBUG_DXPEDS,     "dxpeds")           \
     X(DEBUG_GIMBAL,     "gimbal")           \
     X(DEBUG_IO,         "io")               \
     X(DEBUG_WEB,        "liveweb")          \

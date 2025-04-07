@@ -45,11 +45,11 @@ bool crackClusterSpot (char line[], DXSpot &spot)
     tm.Minute = mn;
     spot.spotted = makeTime (tm);
 
-    // accommodate future from roundoff or we just rolled through midnight before spot did
+    // accommodate future from roundoff
     if (spot.spotted > now) {
         dxcLog ("%s %g: correcting future time %02d:%02d %ld > %ld\n", spot.tx_call, spot.kHz,
-                        tm.Hour, tm.Minute, (long)spot.spotted, (long)now);
-        spot.spotted = now;
+                        tm.Hour, tm.Minute, (long)spot.spotted, (long)(spot.spotted-SECSPERDAY));
+        spot.spotted -= SECSPERDAY;
     }
 
     // find locations and grids
@@ -294,144 +294,116 @@ static bool extractXMLElementContent (const char xml[], const char key[], char c
 
 
 
-/* common parsing for N1MM and DXLog
- */
-static bool crackXMLSpot (const char *whoami, const char xml[], DXSpot &spot)
+/*********************************************************************************************************
+ *
+ * XML such as N1MM or DXLog
+ *   https://n1mmwp.hamdocs.com/appendices/external-udp-broadcasts/
+ *   https://dxlog.net/docs/index.php/Additional_Information#Spot
+ *
+ *********************************************************************************************************/
+
+bool crackXMLSpot (const char xml[], DXSpot &spot)
 {
     // fresh
     memset (&spot, 0, sizeof(spot));
 
-    // extract each field
-
     char buf[100];
     char *endptr;
 
-    // must be a <spot> record from N1MM with our call and an add action
-    if (!strcistr (xml,"<spot>")
-                || (!extractXMLElementContent (xml, "app", buf, sizeof(buf))
-                            || strcasecmp (buf, whoami))
-                || (!extractXMLElementContent (xml, "spottercall", buf, sizeof(buf))
-                            || !strcistr (buf, getCallsign()))
-                || (!extractXMLElementContent (xml, "action", buf, sizeof(buf))
-                            || strcasecmp (buf, "add"))) {
-        return (false);         // ignore
+    // must be a <spot> record action add
+    bool have_spot = strcistr (xml,"<spot>") != NULL;           // not always closed??
+    bool action_add = extractXMLElementContent (xml, "action", buf, sizeof(buf)) && !strcasecmp (buf, "add");
+    if (!have_spot || !action_add)
+        return (false);
+
+    if (!extractXMLElementContent (xml, "spottercall", spot.rx_call, sizeof(spot.rx_call))) {
+        dxcLog ("UDP: no spottercall\n");
+        return (false);
     }
 
     if (!extractXMLElementContent (xml, "dxcall", spot.tx_call, sizeof(spot.tx_call))) {
-        dxcLog ("UDP: %s no dxcall\n", whoami);
+        dxcLog ("UDP: no dxcall\n");
         return (false);
     }
 
     if (!extractXMLElementContent (xml, "mode", spot.mode, sizeof(spot.mode))) {
-        dxcLog ("UDP: %s ignoring no mode for %s\n", whoami, spot.tx_call);
+        dxcLog ("UDP: ignoring no mode for %s\n", spot.tx_call);
     }
 
     if (!extractXMLElementContent (xml, "frequency", buf, sizeof(buf))) {
-        dxcLog ("UDP: %s no frequency for %s\n", whoami, spot.tx_call);
+        dxcLog ("UDP: no frequency for %s\n", spot.tx_call);
         return (false);
     }
     if ( ((spot.kHz = strtod (buf, &endptr)) == 0 && endptr == buf) || findHamBand(spot.kHz) == HAMBAND_NONE){
-        dxcLog ("UDP: %s bogus frequency %s for %s\n", whoami, buf, spot.tx_call);
+        dxcLog ("UDP: bogus frequency %s for %s\n", buf, spot.tx_call);
         return (false);
     }
 
     if (!extractXMLElementContent (xml, "timestamp", buf, sizeof(buf))) {
-        dxcLog ("UDP: %s no timestamp for %s\n", whoami, spot.tx_call);
+        dxcLog ("UDP: no timestamp for %s\n", spot.tx_call);
         return (false);
     }
     if ((spot.spotted = crackISO8601 (buf)) == 0) {
-        dxcLog ("UDP: %s bogus timestamp %s for %s\n", whoami, buf, spot.tx_call);
+        dxcLog ("UDP: bogus timestamp %s for %s\n", buf, spot.tx_call);
         return (false);
     }
 
+
     if (!call2LL (spot.tx_call, spot.tx_ll)) {
-        dxcLog ("UDP: %s could find LL for %s\n", whoami, spot.tx_call);
+        dxcLog ("UDP: could find LL for %s\n", spot.tx_call);
         return (false);
     }
     ll2maidenhead (spot.tx_grid, spot.tx_ll);
 
     if (!call2DXCC (spot.tx_call, spot.tx_dxcc)) {
-        dxcLog ("UDP: %s no DXCC for %s\n", whoami, spot.tx_call);
+        dxcLog ("UDP: no DXCC for %s\n", spot.tx_call);
         return (false);
     }
 
-    // rx is us
 
-    getNVMaidenhead (NV_DE_GRID, spot.rx_grid);
-    spot.rx_ll = de_ll;
-
-    quietStrncpy (spot.rx_call, getCallsign(), sizeof(spot.rx_call));
+    if (!call2LL (spot.rx_call, spot.rx_ll)) {
+        dxcLog ("UDP: could find LL for %s\n", spot.rx_call);
+        return (false);
+    }
+    ll2maidenhead (spot.rx_grid, spot.rx_ll);
 
     if (!call2DXCC (spot.rx_call, spot.rx_dxcc)) {
-        dxcLog ("UDP: %s no DXCC for %s\n", whoami, spot.rx_call);
+        dxcLog ("UDP: no DXCC for %s\n", spot.rx_call);
         return (false);
     }
+
 
     // yes!
     return (true);
 }
 
 
-/*********************************************************************************************************
- *
- * N1MM
- *   https://n1mmwp.hamdocs.com/appendices/external-udp-broadcasts/
- *
- *********************************************************************************************************/
-
-/* crack the given string presumed to contain a <spot> message from N1MM.
- * if ok fill in spot and return true else dxcLog and return false.
- */
-bool crackN1MMSpot (const char xml[], DXSpot &spot)
-{
-    return (crackXMLSpot ("N1MM", xml, spot));
-}
-
-
 
 /*********************************************************************************************************
  *
- * DXLog
- *   https://dxlog.net/docs/index.php/Additional_Information#Spot
- *
- *********************************************************************************************************/
-
-/* crack the given string presumed to contain a <spot> message from DXLog.
- * if ok fill in spot and return true else dxcLog and return false.
- */
-bool crackDXLogSpot (const char xml[], DXSpot &spot)
-{
-    return (crackXMLSpot ("DXLog.net", xml, spot));
-}
-
-
-/*********************************************************************************************************
- *
- * Log4OM
+ * ADIF such as Log4OM
  *   https://www.log4om.com/l4ong/usermanual/Log4OMNG_ENU.pdf
  *
  *********************************************************************************************************/
 
-/* crack the given string presumed to contain and ADIF message from Log4OM.
+/* crack the given string presumed to contain and ADIF message.
  * if ok fill in spot and return true else dxcLog and return false.
  */
-bool crackLog4OMSpot (const char string[], DXSpot &spot)
+bool crackADIFSpot (const char string[], DXSpot &spot)
 {
     GenReader gr(string, strlen (string));
     DXSpot *spots = NULL;
-    int n_good, n_bad;
-    n_good = readADIFFile (gr, spots, false, n_bad);
+    int n_bad;
+    int n_good = readADIFFile (gr, spots, false, n_bad);
     bool ok = false;
     if (n_good > 0) {
         if (n_good > 1)
-            dxcLog ("UDP: Log4OM: using only first of %d ADIF records\n", n_good);
+            dxcLog ("UDP: using only first of %d ADIF records\n", n_good);
         spot = spots[0];
         ok = true;
     } else {
         if (n_bad > 0)
-            dxcLog ("UDP: Log4OM: packet contained %d bad ADIF records\n", n_bad);
-        else
-            dxcLog ("UDP: Log4OM: packet contained no valid ADIF records\n");
+            dxcLog ("UDP: packet contained %d bad ADIF records\n", n_bad);
     }
     if (spots)
         free (spots);
