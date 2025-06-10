@@ -318,7 +318,7 @@ void TwoWire::beginTransmission(uint8_t dev)
         setDev(dev);
 
         // init
-        if (debugLevel (DEBUG_IO, 1))
+        if (debugLevel (DEBUG_IO, 2))
             printf ("I2C: beginTransmission(0x%02X) ok\n", dev);
         transmitting = true;
         n_txdata = 0;
@@ -383,7 +383,7 @@ uint8_t TwoWire::endTransmission(bool sendStop)
         }
 
         if (!sendStop) {
-            if (debugLevel (DEBUG_IO, 1))
+            if (debugLevel (DEBUG_IO, 2))
                 printf ("I2C: endTransmission(!sendStop)\n");
             return (0); // feign success for now
         }

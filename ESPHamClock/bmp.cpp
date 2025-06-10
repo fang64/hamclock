@@ -539,7 +539,7 @@ bool readBMPHeader (GenReader &gr, int &img_w, int &img_h, int &img_bpp, int &im
 }
 
 /* read any BMP file and pass back a malloced array of RGB565 pixels ready for box, else why not.
- * N.B. we only support images with even number of columns.
+ * N.B. images with odd width will have last column truncated.
  * N.B. if we return true then caller must free box_565
  */
 bool readBMPImage (GenReader &gr, const SBox &box, uint16_t *&box_565, ImageRefit fit, Message &ynot)
@@ -552,17 +552,16 @@ bool readBMPImage (GenReader &gr, const SBox &box, uint16_t *&box_565, ImageRefi
     if (!readBMPHeader (gr, img_w, img_h, img_bpp, img_pad, ynot))
         return (false);
 
-    // we only accept an even width because we don't want our 565 to have padding
-    // TODO: discard last column??
+    // discard last column if width is odd because we don't want our 565 to have padding
     if (img_w & 1) {
-        ynot.printf ("width must be even: %d", img_w);
-        return (false);
+        img_w -= 1;
+        img_pad += img_bpp/8;
     }
 
     // get memory for box
     const int n_box_pix = (int)box.w * (int)box.h;
     const int n_box_bytes = n_box_pix * sizeof(uint16_t);
-    box_565 = (uint16_t *) malloc (n_box_bytes);                        // N.B. free!
+    box_565 = (uint16_t *) malloc (n_box_bytes);                // N.B. free if we fail
     if (!box_565)
         fatalError ("no mem for %d x %d BMP box", box.w, box.h);
 
@@ -577,13 +576,13 @@ bool readBMPImage (GenReader &gr, const SBox &box, uint16_t *&box_565, ImageRefi
     // get memory for reading RGB565 image
     const int n_img_pix = img_w * abs(img_h);
     const int n_img_bytes = n_img_pix * sizeof(uint16_t);
-    uint16_t *img_565 = (uint16_t *) malloc (n_img_bytes);              // N.B. free!
+    StackMalloc new_mem(n_img_bytes);
+    uint16_t *img_565 = (uint16_t *) new_mem.getMem();
     if (!img_565)
         fatalError ("no mem for %d x %d BMP image", img_w, img_h);
 
     // read image converting to RGB565 pixels, inverting rows if img_h > 0
     if (!read565TB (gr, img_565, img_w, img_h, img_bpp, img_pad, ynot)) {
-        free (img_565);
         free (box_565);
         return (false);
     }
@@ -603,9 +602,6 @@ bool readBMPImage (GenReader &gr, const SBox &box, uint16_t *&box_565, ImageRefi
         fatalError ("readBMPImage bogus fit %d", (int)fit);
         break;
     }
-
-    // finished with image
-    free (img_565);
 
     // ok!
     return (true);

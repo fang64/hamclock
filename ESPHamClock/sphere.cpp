@@ -38,15 +38,3 @@ void solveSphere (float A, float b, float cc, float sc, float *cap, float *Bp)
             *Bp = atan2f (y,x);
         }
 }
-
-
-/* simple angular separation between two LatLong, all in rads.
- * to get path length in miles, multiply result by ERAD_M.
- */
-float simpleSphereDist (const LatLong &ll1, const LatLong &ll2)
-{
-        float ca;
-        solveSphere (ll1.lng - ll2.lng, M_PI_2F-ll2.lat, cosf (M_PI_2F-ll1.lat), sinf (M_PI_2F-ll1.lat),
-                        &ca, NULL);
-        return (acosf(ca));
-}

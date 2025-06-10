@@ -124,18 +124,13 @@ void plotMapData (const char title[], const char y_label[], float x_data[], floa
     tft.drawPR();
 
     // report info for tap times until time out or do anything
-    SCoord s;
-    char c;
     UserInput ui = {
         map_b,
         UI_UFuncNone,
         UF_UNUSED,
         30000,
         UF_CLOCKSOK,
-        s,
-        c,
-        false,
-        false
+        {0, 0}, TT_NONE, '\0', false, false
     };
     (void) waitForUser(ui);
 

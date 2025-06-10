@@ -268,7 +268,7 @@ out:
 
         de_ll.lat_d = lat;
         de_ll.lng_d = lng;
-        normalizeLL (de_ll);
+        de_ll.normalize();
         NVWriteFloat (NV_DE_LAT, de_ll.lat_d);
         NVWriteFloat (NV_DE_LNG, de_ll.lng_d);
         setNVMaidenhead (NV_DE_GRID, de_ll);
@@ -414,6 +414,10 @@ static void initWiFi (bool verbose)
  */
 void initSys()
 {
+    // "Skip" tooltip text
+    static const char skip_ttt[] = "click to proceed immediately to HamClock";
+
+
     // insure core_map is defined -- N.B. before initWiFi calls sendUserAgent()
     initCoreMaps();
 
@@ -437,7 +441,7 @@ void initSys()
 
             // good -- set de_ll
             de_ll = ll;
-            normalizeLL (de_ll);
+            de_ll.normalize();
             NVWriteFloat (NV_DE_LAT, de_ll.lat_d);
             NVWriteFloat (NV_DE_LNG, de_ll.lng_d);
             setNVMaidenhead(NV_DE_GRID, de_ll);
@@ -459,7 +463,7 @@ void initSys()
 
             // good -- set de_ll
             de_ll = ll;
-            normalizeLL (de_ll);
+            de_ll.normalize();
             NVWriteFloat (NV_DE_LAT, de_ll.lat_d);
             NVWriteFloat (NV_DE_LNG, de_ll.lng_d);
             setNVMaidenhead(NV_DE_GRID, de_ll);
@@ -530,12 +534,17 @@ void initSys()
                 }
 
                 // cancel scan if found at least one good and tapped or typed
+                TouchType tt = TT_NONE;
                 if (best_ntp && (skip_skip || tft.getChar(NULL,NULL)
-                                   || (readCalTouchWS(s) != TT_NONE && inBox (s, skip_b)))) {
-                    drawStringInBox ("Skip", skip_b, true, RA8875_WHITE);
-                    Serial.printf ("NTP search cancelled with %s\n", best_ntp->server);
-                    skipped_here = true;
-                    break;
+                                   || ((tt = readCalTouchWS(s)) != TT_NONE && inBox (s, skip_b)))) {
+                    if (tt == TT_TAP_BX)
+                        tooltip (s, skip_ttt);
+                    else {
+                        drawStringInBox ("Skip", skip_b, true, RA8875_WHITE);
+                        Serial.printf ("NTP search cancelled with %s\n", best_ntp->server);
+                        skipped_here = true;
+                        break;
+                    }
                 }
             }
             if (!skip_skip)
@@ -591,9 +600,14 @@ void initSys()
         drainTouch();
         for (uint8_t ds_left = TO_DS; !skip_skip && ds_left > 0; --ds_left) {
             SCoord s;
-            if (tft.getChar(NULL,NULL) || (readCalTouchWS(s) != TT_NONE && inBox(s, skip_b))) {
-                drawStringInBox ("Skip", skip_b, true, RA8875_WHITE);
-                break;
+            TouchType tt = TT_NONE;
+            if (tft.getChar(NULL,NULL) || ((tt = readCalTouchWS(s)) != TT_NONE && inBox(s, skip_b))) {
+                if (tt == TT_TAP_BX)
+                    tooltip (s, skip_ttt);
+                else {
+                    drawStringInBox ("Skip", skip_b, true, RA8875_WHITE);
+                    break;
+                }
             }
             if ((TO_DS - (millis() - t0)/100)/10 < s_left) {
                 // just printing every ds_left/10 is too slow due to overhead
@@ -1508,6 +1522,38 @@ static bool updateKp(const SBox &box)
     return (ok);
 }
 
+/* retrieve and plot latest and predicted DST indices, return whether io ok
+ */
+static bool updateDST(const SBox &box)
+{
+    DSTData dst;
+
+    bool ok = retrieveDST (dst);
+
+    updateClocks(false);
+
+    if (ok) {
+
+        if (!dst.data_ok) {
+            plotMessage (box, DST_COLOR, "DST data invalid");
+        } else {
+            // plot
+            plotXY (box, dst.age_hrs, dst.values, DST_NV, "Hours", "Dist Storm Time, nT", DST_COLOR, 0, 0,
+                                                                                space_wx[SPCWX_DST].value);
+        }
+
+        // update NCDXF box too either way
+        if (brb_mode == BRB_SHOW_SWSTATS)
+            drawNCDXFSpcWxStats(RA8875_BLACK);
+
+    } else {
+        plotMessage (box, DST_COLOR, "DST connection failed");
+    }
+
+    // done
+    return (ok);
+}
+
 /* retrieve and plot latest xray indices, return whether io ok
  */
 static bool updateXRay(const SBox &box)
@@ -2261,6 +2307,15 @@ void updateWiFi(void)
             }
             break;
 
+        case PLOT_CH_DST:
+            if (t0 >= next_update[pp]) {
+                if (updateDST(box))
+                    next_update[pp] = nextPaneUpdate (pc, DST_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
         case PLOT_CH_N:
             break;              // lint
         }
@@ -2432,6 +2487,14 @@ int getNTPServers (const NTPServer **listp)
 time_t nextPaneRotation(PlotPane pp)
 {
     return (next_rotation[pp]);
+}
+
+/* force the given pane to rotate now.
+ * it's ok if pp is not actually rotating.
+ */
+void forcePaneRotation (PlotPane pp)
+{
+    next_rotation[pp] = 0;
 }
 
 /* return pane for which taps are to be ignored because a revert is in progress, if any

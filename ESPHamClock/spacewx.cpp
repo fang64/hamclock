@@ -15,7 +15,8 @@ static const char kp_page[] = "/geomag/kindex.txt";
 static const char xray_page[] = "/xray/xray.txt";
 static const char noaaswx_page[] = "/NOAASpaceWX/noaaswx.txt";
 static const char aurora_page[] = "/aurora/aurora.txt";
-static const char sw_rank_page[] = "/NOAASpaceWX/rank_coeffs.txt";
+static const char dst_page[] = "/dst/dst.txt";
+static const char sw_rank_page[] = "/NOAASpaceWX/rank2_coeffs.txt";
 
 // caches
 static BzBtData bzbt_cache;
@@ -27,8 +28,9 @@ static XRayData xray_cache;
 static KpData kp_cache;
 static NOAASpaceWxData noaasw_cache = {0, false, {'R', 'S', 'G'}, {}};
 static AuroraData aurora_cache;
+static DSTData dst_cache;
 
-#define X(a,b,c,d,e,f,g,h) {a,b,c,d,e,f,g,h},     // expands SPCWX_DATA to each array initialization in {}
+#define X(a,b,c,d,e,f,g,h,i) {a,b,c,d,e,f,g,h,i},     // expands SPCWX_DATA to each array initialization in {}
 SpaceWeather_t space_wx[SPCWX_N] = {
     SPCWX_DATA
 };
@@ -44,7 +46,12 @@ static uint32_t spcwx_chmask;
 
 
 // handy conversion from space_wx value to it ranking contribution
-#define SW_RANKV(sp)     ((int)roundf((sp)->m * (sp)->value + (sp)->b))
+/* compute rank from space weather value
+ */
+static int computeSWRank (const SpaceWeather_t *sp)
+{
+    return ((int) roundf ((sp->a * sp->value + sp->b) * sp->value + sp->c));
+}
 
 /* qsort-style function to compare the scaled value of two SpaceWeather_t.
  * N.B. largest first, any bad values at the end
@@ -59,8 +66,8 @@ static int swQSF (const void *v1, const void *v2)
     else if (!s2->value_ok)
         return (-1);
 
-    int rank_val1 = SW_RANKV(s1);
-    int rank_val2 = SW_RANKV(s2);
+    int rank_val1 = computeSWRank(s1);
+    int rank_val2 = computeSWRank(s2);
     return (rank_val2 - rank_val1);
 }
 
@@ -86,11 +93,10 @@ static bool initSWFit(void)
             goto out;
         }
 
-        // local until know all are good
-        StackMalloc m_mem (SPCWX_N * sizeof(float));
-        StackMalloc b_mem (SPCWX_N * sizeof(float));
-        float *m = (float *) m_mem.getMem();
-        float *b = (float *) b_mem.getMem();
+        // local defaults until know all are good
+        float a[SPCWX_N];
+        float b[SPCWX_N];
+        float c[SPCWX_N];
 
         for (int n_c = 0; n_c < SPCWX_N; ) {
             // read line
@@ -103,9 +109,9 @@ static bool initSWFit(void)
             if (line[0] == '#' || line[0] == '\0')
                 continue;
 
-            // require matching index and m and b coeffs
+            // require matching index and coeffs
             int get_i;
-            if (sscanf (line, "%d %f %f", &get_i, &m[n_c], &b[n_c]) != 3 || get_i != n_c) {
+            if (sscanf (line, "%d %f %f %f", &get_i, &a[n_c], &b[n_c], &c[n_c]) != 4 || get_i != n_c) {
                 Serial.printf ("RANKSW: bad rank line: %s\n", line);
                 goto out;
             }
@@ -114,13 +120,14 @@ static bool initSWFit(void)
             n_c++;
         }
 
-        // all good, log and store
-        Serial.println ("RANKSW:   Coeffs Name       m       b");
+        // all good: log and store
+        Serial.println ("RANKSW:   Coeffs Name       a       b       c");
         for (int i = 0; i < SPCWX_N; i++) {
             SpaceWeather_t &sw_i = space_wx[i];
-            sw_i.m = m[i];
+            sw_i.a = a[i];
             sw_i.b = b[i];
-            Serial.printf ("RANKSW: %13s %7g %7g\n", plot_names[sw_i.pc], sw_i.m, sw_i.b);
+            sw_i.c = c[i];
+            Serial.printf ("RANKSW: %13s %7g %7g %7g\n", plot_names[sw_i.pc], sw_i.a, sw_i.b, sw_i.c);
         }
 
         ok = true;
@@ -139,9 +146,8 @@ static bool initSWFit(void)
 static void sortSpaceWx()
 {
     // copy space_wx and sort best first
-    StackMalloc sw_mem (sizeof(space_wx));
-    SpaceWeather_t *sw_sort = (SpaceWeather_t *) sw_mem.getMem();
-    memcpy (sw_sort, space_wx, sizeof(space_wx));
+    SpaceWeather_t sw_sort[SPCWX_N];
+    memcpy (sw_sort, space_wx, sizeof(sw_sort));
     qsort (sw_sort, SPCWX_N, sizeof(SpaceWeather_t), swQSF);
     
     // set and log rank of each entry, 0 is best
@@ -151,7 +157,7 @@ static void sortSpaceWx()
         SpaceWeather_t &sw_i = space_wx[sp_i];
         sw_i.rank = i;
         Serial.printf ("RANKSW: %d %12s %8.2g %3d\n", i, plot_names[sw_i.pc], sw_i.value,
-                                SW_RANKV(&sw_i));
+                                computeSWRank(&sw_i));
     }
 }
 
@@ -169,7 +175,6 @@ static void runNCDXFSpcWxMenu (void)
     // its box  
     SBox menu_b = NCDXF_b;                      // copy, not ref!
     menu_b.x += 1;  
-    menu_b.y += 5;
     menu_b.w = 0;                               // shrink wrap
                 
     // run          
@@ -201,10 +206,10 @@ static void runNCDXFSpcWxMenu (void)
         // save mask
         NVWriteUInt32 (NV_SPCWXCHOICE, spcwx_chmask);
         Serial.printf ("SPCWX: choice mask 0x%08x\n", spcwx_chmask);
-    }
 
-    // redraw box if for no other reason than to erase menu
-    drawNCDXFSpcWxStats(RA8875_BLACK);
+        // refresh box
+        drawNCDXFSpcWxStats(RA8875_BLACK);
+    }
 }
 
 /* handle touch location s known to be within NCDXF_b showing space weather stats.
@@ -308,6 +313,11 @@ void drawNCDXFSpcWxStats(uint16_t color)
                     case SPCWX_AURORA:
                         snprintf (values[i], sizeof(values[i]), "%.0f", space_wx[SPCWX_AURORA].value);
                         colors[i] = AURORA_COLOR;
+                        break;
+
+                    case SPCWX_DST:
+                        snprintf (values[i], sizeof(values[i]), "%.0f", space_wx[SPCWX_DST].value);
+                        colors[i] = DST_COLOR;
                         break;
 
                     case SPCWX_N:
@@ -696,7 +706,6 @@ bool retrieveKp (KpData &kp)
         for (kp_i = 0; kp_i < KP_NV && getTCPLine (kp_client, line, sizeof(line), NULL); kp_i++) {
             kp_cache.x[kp_i] = (kp_i-now_i)/(float)KP_VPD;
             kp_cache.p[kp_i] = atof(line);
-            // Serial.printf ("%2d%c: kp[%5.3f] = %g from \"%s\"\n", kp_i, kp_i == now_i ? '*' : ' ', kpx[kp_i], kp[kp_i], line);
         }
 
         // record sw
@@ -740,6 +749,107 @@ static bool checkForNewKp (void)
     return (retrieveKp (kp));
 }
 
+/* retrieve DST and SPCWX_DST if it's time, else use cache.
+ * return whether transaction was ok (even if data was not)
+ */
+bool retrieveDST (DSTData &dst)
+{
+    // check cache first
+    if (myNow() < dst_cache.next_update) {
+        dst = dst_cache;
+        return (true);
+    }
+
+    // get fresh
+    WiFiClient dst_client;                              // wifi client connection
+    char line[100];                                     // text line
+    bool ok = false;                                    // set if no network errors
+
+    // mark value as bad until proven otherwise
+    space_wx[SPCWX_DST].value_ok = false;
+    dst.data_ok = dst_cache.data_ok = false;
+
+    Serial.println(dst_page);
+    if (dst_client.connect(backend_host, backend_port)) {
+        updateClocks(false);
+
+        // query web page
+        httpHCGET (dst_client, backend_host, dst_page);
+
+        // skip response header
+        if (!httpSkipHeader (dst_client)) {
+            Serial.print ("DST: header short\n");
+            goto out;
+        }
+
+        // transaction successful even if data is not
+        ok = true;
+
+        // handy now for finding age
+        time_t now = myNow();
+
+        // read lines into DST array and build cache
+        // 2025-04-15T00:00:00 -25
+        int dst_i = 0;
+        for (dst_i = 0; dst_i < DST_NV && getTCPLine (dst_client, line, sizeof(line), NULL); dst_i++) {
+
+            // determine age as hours ago
+            time_t val_time = crackISO8601 (line);
+            if (val_time == 0) {
+                Serial.printf ("DST: bogus line: %s\n", line);
+                break;
+            }
+            float age_hrs = (val_time - now)/3600.0F;
+            if (age_hrs > DST_MAXAGE) {
+                Serial.printf ("DST: too old: %s\n", line);
+                break;
+            }
+
+            dst_cache.age_hrs[dst_i] = age_hrs;
+            dst_cache.values[dst_i] = atof(line + 19);
+        }
+
+        // record sw
+        if (dst_i == DST_NV) {
+
+            // save current (not last!) value
+            space_wx[SPCWX_DST].value = dst_cache.values[DST_NV-1];
+            space_wx[SPCWX_DST].value_ok = true;
+            dst_cache.data_ok = true;
+            dst = dst_cache;
+
+        } else {
+
+            Serial.printf ("DST: data short: %d of %d\n", dst_i, DST_NV);
+        }
+
+    } else {
+
+        Serial.print ("DST: connection failed\n");
+    }
+
+out:
+
+    // set next update
+    dst_cache.next_update = ok ? nextRetrieval (PLOT_CH_DST, DST_INTERVAL) : nextWiFiRetry(PLOT_CH_DST);
+
+    // clean up
+    updateClocks(false);
+    dst_client.stop();
+    return (ok);
+}
+
+/* return whether fresh SPCWX_DST data are ready, even if bad.
+ */
+static bool checkForNewDST (void)
+{
+    if (myNow() < dst_cache.next_update)
+        return (false);
+
+    DSTData dst;
+    return (retrieveDST (dst));
+}
+
 /* retrieve XRay and SPCWX_XRAY if it's time, else use cache.
  * return whether transaction was ok (even if data was not)
  */
@@ -752,7 +862,6 @@ bool retrieveXRay (XRayData &xray)
     }
 
     // get fresh
-    uint8_t xray_i;                                     // next index to use
     WiFiClient xray_client;
     char line[100];
     uint16_t ll;
@@ -779,7 +888,7 @@ bool retrieveXRay (XRayData &xray)
         ok = true;
 
         // collect content lines and extract both wavelength intensities
-        xray_i = 0;
+        int xray_i = 0;
         float raw_lxray = 0;
         while (xray_i < XRAY_NV && getTCPLine (xray_client, line, sizeof(line), &ll)) {
 
@@ -1320,6 +1429,7 @@ bool checkForNewSpaceWx()
     // check each
     bool sf = checkForNewSolarFlux();
     bool kp = checkForNewKp();
+    bool ds = checkForNewDST();
     bool xr = checkForNewXRay();
     bool bz = checkForNewBzBt();
     bool dr = checkForNewDRAP();
@@ -1329,7 +1439,7 @@ bool checkForNewSpaceWx()
     bool au = checkForNewAurora();
 
     // check whether any changed
-    bool any_new = sf || kp || xr || bz || dr || sw || ss || na || au;
+    bool any_new = sf || ds || kp || xr || bz || dr || sw || ss || na || au;
 
     // if so redo ranking unless Auto
     if (any_new && spcwx_chmask == SPCWX_AUTO)

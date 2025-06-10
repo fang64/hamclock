@@ -77,10 +77,46 @@ int strtokens (char *str, char *tokens[], int max_tokens)
     return (n_tokens);
 }
 
-
-/* remove leading, multiple-embedded and trailing white space IN PLACE; return str.
+/* remove leading and trailing white space IN PLACE; return str.
  */
-char *strtrim (char *str)
+char *strTrimEnds (char *str)
+{
+    if (!str)
+        return (NULL);
+
+    // find first non-blank going left-to-right
+    char *fnb = str;
+    while (isspace(*fnb))
+        fnb++;
+
+    // find last non-blank going right-to-left. N.B. will end up < str if all blanks
+    char *lnb = &str[strlen(str)-1];
+    while (lnb >= str && isspace(*lnb))
+        --lnb;
+
+    // printf ("%d %d\n", (int)(fnb-str), (int)(lnb-str));
+
+    // check if str was nothing but blanks
+    if (lnb < fnb) {
+        *str = '\0';
+        return (str);
+    }
+
+    // compute n non-blank
+    size_t nnb = lnb-fnb+1;
+
+    // copy [fnb,lnb] back to str
+    memmove (str, fnb, nnb);
+
+    // add EOS
+    str[nnb] = '\0';
+
+    return (str);
+}
+
+/* remove all leading, trailing and embedded duplicate white space IN PLACE; return str.
+ */
+char *strTrimAll (char *str)
 {
     if (!str)
         return (NULL);
@@ -95,6 +131,7 @@ char *strtrim (char *str)
     *to = '\0';
     return (str);
 }
+
 
 /* return whether the given string contains at least one character as defined by the ctype.h test function.
  */
@@ -173,10 +210,13 @@ uint16_t getTextWidth (const char str[])
     return (w);
 }
 
-/* remove trailing newline IN PLACE
+/* remove trailing nl and/or cr IN PLACE
  */
 void chompString (char *str)
 {
+    char *cr = strchr (str, '\r');
+    if (cr)
+        *cr = '\0';
     char *nl = strchr (str, '\n');
     if (nl)
         *nl = '\0';

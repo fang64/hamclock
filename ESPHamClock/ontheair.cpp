@@ -37,11 +37,12 @@ static const ONTASortInfo onta_sorts[ONTAS_N] = {
 };
 
 // organization filter and each component
-static char onta_orgfilter[NV_ONTAORG_LEN];             // all orgs as one string
+static char onta_orgfilter[NV_ONTAORG_LEN];             // original orgs as one string
 static char onta_orgtokens[NV_ONTAORG_LEN];             // all orgs each with EOS for onta_orgs
 static char *onta_orgs[MAX_ONTAORGS];                   // ptr to each token within onta_orgtokens
 static int onta_norgs;                                  // n used in onta_orgs[]
-static int next_ontaorg;                                // used to rotate org on each update
+static int next_ontaorg;                                // used to rotate org unless onta_merge
+static bool onta_merge;                                 // whether + was in list to cancel rotation
 
 
 // ages
@@ -72,24 +73,55 @@ static uint32_t spotsHash (const DXSpot *spots, int n_spots)
     return (hash);
 }
 
-/* split onta_orgfilter into onta_orgs via onta_orgtokens
+/* split onta_orgfilter into onta_orgs via onta_orgtokens.
+ * also check for '+' so set onta_merge.
  */
 static void parseONTAOrgs(void)
 {
+    // copy to onta_orgtokens for splitting
     memcpy (onta_orgtokens, onta_orgfilter, NV_ONTAORG_LEN);
+
+    // remove but note all +
+    onta_merge = false;
+    for (char *plus = strchr (onta_orgtokens, '+'); plus != NULL; plus = strchr (onta_orgtokens, '+')) {
+        onta_merge = true;
+        *plus = ' ';
+    }
+
+    // split and reset rotation index
     onta_norgs = strtokens (onta_orgtokens, onta_orgs, MAX_ONTAORGS);
     if (next_ontaorg >= onta_norgs)
         next_ontaorg = 0;
-    Serial.printf ("ONTA: parsed orgs '%s' into %d tokens\n", onta_orgfilter, onta_norgs);
+
+    Serial.printf ("ONTA: parsed orgs '%s' into %d tokens with%s merging\n", onta_orgfilter, onta_norgs,                onta_merge ? "" : "out");
 }
 
 
-/* return whether the given spot is allowed as per onta_orgs[next_ontaorg]
+/* return whether the given spot's org is allowed
  */
-static bool isDXSONTAFilterOk (const DXSpot &s)
+static bool isSpotOrgOk (const DXSpot &s)
 {
     // remember: rx_grid is repurposed for program name
-    return (onta_norgs == 0 || strcasecmp (onta_orgs[next_ontaorg], s.rx_grid) == 0);
+
+    // all if no orgs
+    if (onta_norgs == 0)
+        return (true);
+
+    // just next_ontaorg unless merging
+    if (!onta_merge)
+        return (strcasecmp (onta_orgs[next_ontaorg], s.rx_grid) == 0);
+
+    // check for any org if merging
+    if (onta_merge) {
+        for (int i = 0; i < onta_norgs; i++) {
+            if (strcasecmp (onta_orgs[i], s.rx_grid) == 0) {
+                return (true);
+            }
+        }
+    }
+
+    // nope
+    return (false);
 }
 
 
@@ -186,7 +218,7 @@ static void formatONTASpot (const DXSpot &spot, const SBox &box, char *line, siz
 }
 
 /* redraw all visible ontawl_spots in the given pane box.
- * N.B. this just draws the ontawl_spots, use drawONTA to start from scratch.
+ * N.B. this just draws the ontawl_spots, use drawONTAPane to start from scratch.
  */
 static void drawONTAVisSpots (const SBox &box)
 {
@@ -259,7 +291,7 @@ static void drawONTAVisSpots (const SBox &box)
 /* draw spots in the given pane box from scratch.
  * use drawONTAVisSpots() if want to redraw just the spots.
  */
-static void drawONTA (const SBox &box)
+static void drawONTAPane (const SBox &box)
 {
     // prep
     prepPlotBox (box);
@@ -274,7 +306,12 @@ static void drawONTA (const SBox &box)
 
     // show current org or All
     char f[NV_ONTAORG_LEN];
-    quietStrncpy (f, onta_norgs > 0 ? onta_orgs[next_ontaorg] : "All", NV_ONTAORG_LEN);
+    if (onta_merge)
+        quietStrncpy (f, onta_orgfilter, NV_ONTAORG_LEN);               // show original including +
+    else if (onta_norgs > 0)
+        quietStrncpy (f, onta_orgs[next_ontaorg], NV_ONTAORG_LEN);      // show current
+    else
+        quietStrncpy (f, "All", NV_ONTAORG_LEN);                        // show "All"
     selectFontStyle (LIGHT_FONT, FAST_FONT);
     uint16_t f_l = maxStringW (f, box.w-2);
     tft.setTextColor(RA8875_WHITE);
@@ -345,15 +382,15 @@ static void rebuildONTAWatchList(void)
     // extract qualifying spots from onta_spots into ontawl_spots
     time_t oldest = myNow() - 60*onta_age;               // minutes to seconds
     onta_ss.n_data = 0;                                  // reset count, don't bother to resize ontawl_spots
-    int n_old = 0, n_nofilt = 0, n_nowl = 0;
+    int n_old = 0, n_no_org = 0, n_no_wl = 0;
     for (int i = 0; i < n_ontaspots; i++) {
         DXSpot &spot = onta_spots[i];
         if (spot.spotted < oldest)
             n_old++;
-        else if (!isDXSONTAFilterOk (spot))
-            n_nofilt++;
+        else if (!isSpotOrgOk (spot))
+            n_no_org++;
         else if (checkWatchListSpot (WLID_ONTA, spot) == WLS_NO)
-            n_nowl++;
+            n_no_wl++;
         else {
             // ok!
             ontawl_spots = (DXSpot *) realloc (ontawl_spots, (onta_ss.n_data+1) * sizeof(DXSpot));
@@ -363,8 +400,8 @@ static void rebuildONTAWatchList(void)
         }
     }
 
-    Serial.printf ("ONTA: %d total - %d old - %d filtered - %d noWL = %d showing\n",
-                    n_ontaspots, n_old, n_nofilt, n_nowl, onta_ss.n_data);
+    Serial.printf ("ONTA: %d total - %d too-old - %d not-org - %d not-WL = %d showing\n",
+                    n_ontaspots, n_old, n_no_org, n_no_wl, onta_ss.n_data);
 
     // sort as desired and scroll to newest with new n_data
     qsort (ontawl_spots, onta_ss.n_data, sizeof(DXSpot), onta_sorts[onta_sortby].qsf);
@@ -488,7 +525,7 @@ static void runONTASortMenu (const SBox &box)
         Serial.printf ("ONTA: set WL to %s %s\n", wl_mt.label, wl_mt.text);
 
         // save potentially new org filter
-        quietStrncpy (onta_orgfilter, strtrim (org_text), NV_ONTAORG_LEN);
+        quietStrncpy (onta_orgfilter, strTrimAll (org_text), NV_ONTAORG_LEN);
         parseONTAOrgs();
 
         // save
@@ -497,11 +534,6 @@ static void runONTASortMenu (const SBox &box)
         // full refresh
         onta_ss.scrollToNewest();
         scheduleNewPlot (PLOT_CH_ONTA);
-
-    } else {
-
-        // just redraw if cancel
-        drawONTA (box);
     }
 
     // always free the working text
@@ -557,7 +589,7 @@ static bool retrieveONTA (void)
             if (!onta_spots)
                 fatalError ("No room for %d ONTA spots", n_ontaspots+1);
             DXSpot &new_sp = onta_spots[n_ontaspots];
-            memset (&new_sp, 0, sizeof(new_sp));
+            new_sp = {};
 
             // parse
             char dxcall[20], dxgrid[20], mode[20], id[20], prog[20];    // N.B. match sscanf fields
@@ -607,7 +639,7 @@ static bool retrieveONTA (void)
             new_sp.rx_ll = de_ll;                      // us?
             new_sp.tx_ll.lat_d = lat_d;
             new_sp.tx_ll.lng_d = lng_d;
-            normalizeLL (new_sp.tx_ll);
+            new_sp.tx_ll.normalize();
             new_sp.kHz = kHz;
             new_sp.spotted = unx;
 
@@ -645,14 +677,15 @@ bool updateOnTheAir (const SBox &box, bool fresh)
     if (ok) {
         spots_hash = spotsHash (onta_spots, n_ontaspots);
         if (onta_ss.atNewest()) {
-            if (onta_norgs > 0) {
+            if (onta_norgs > 0 && !onta_merge) {
+                // rotate to next org
                 next_ontaorg = (next_ontaorg + 1) % onta_norgs; // rotate org
                 Serial.printf ("ONTA: now showing %s\n", onta_orgs[next_ontaorg]);
             }
             rebuildONTAWatchList();
             onta_ss.drawNewSpotsSymbol (false, false);                  // New symbol off
             ROTHOLD_CLR(PLOT_CH_ONTA);                                  // release rotation hold
-            drawONTA (box);
+            drawONTAPane (box);
         } else {
             onta_ss.drawNewSpotsSymbol (NEW_SPOTS(), false);            // on if different
             ROTHOLD_SET(PLOT_CH_ONTA);                                  // hold rotation
@@ -751,7 +784,7 @@ void drawOnTheAirSpotsOnMap (void)
 
 /* find closest ontawl_spot and location on tx end to given ll (we don't use rx_ll), if any.
  */
-bool getClosestOnTheAirSpot (const LatLong &ll, DXSpot *onta_closest, LatLong *ll_closest)
+bool getClosestOnTheAirSpot (LatLong &ll, DXSpot *onta_closest, LatLong *ll_closest)
 {
     return (ontawl_spots && findPaneForChoice (PLOT_CH_ONTA) != PANE_NONE && getSpotLabelType() != LBL_NONE
             && getClosestSpot (ontawl_spots, onta_ss.n_data, NULL, LOME_TXEND, ll, onta_closest, ll_closest));
@@ -798,5 +831,5 @@ bool getOnTheAirPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll)
  */
 bool isONTARotating(void)
 {
-    return (onta_norgs > 1 && onta_ss.atNewest());
+    return (onta_norgs > 1 && !onta_merge && onta_ss.atNewest());
 }

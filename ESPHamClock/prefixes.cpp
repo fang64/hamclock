@@ -675,7 +675,8 @@ static const SmallPrefix small_prefs[] = {
 
 
 /* find nearest small_prefs to the given LL, if within allowed max
- * N.B. tried cty but it has way too many weird ones, eg it finds AX? instead of VK?
+ * N.B. tried cty but it has way too many weird ones, eg it finds AX? instead of VK? and lots of
+ *   parochial US calls. Don't try it!
  */
 bool ll2Prefix (const LatLong &ll, char prefix[MAX_PREF_LEN])
 {
@@ -709,10 +710,17 @@ bool ll2Prefix (const LatLong &ll, char prefix[MAX_PREF_LEN])
 
 /* split a call into home and dx portions.
  * if nothing looks like a dx portion then copy call to both.
- * N.B. we assume call has already been cleaned with strtrim() and strtoupper()
+ * N.B. we assume call has already been cleaned with strTrimAll() and strtoupper()
  */
-void splitCallSign (const char *call, char home_call[NV_CALLSIGN_LEN], char dx_call[NV_CALLSIGN_LEN])
+void splitCallSign (const char *raw_call, char home_call[NV_CALLSIGN_LEN], char dx_call[NV_CALLSIGN_LEN])
 {
+    // work with copy so we can remove any trailing -# from RBN
+    char call[NV_CALLSIGN_LEN];
+    quietStrncpy (call, raw_call, sizeof(call));
+    char *dash_pound = strstr (call, "-#");
+    if (dash_pound)
+        *dash_pound = '\0';
+
     // split at slash, if any
     const char *slash = strchr (call, '/');
 
@@ -938,7 +946,7 @@ bool call2LL (const char *call, LatLong &ll)
     if (candidate) {
         ll.lat_d = candidate->lat_d;
         ll.lng_d = candidate->lng_d;
-        normalizeLL (ll);
+        ll.normalize();
         return (true);
     } else {
         // darn

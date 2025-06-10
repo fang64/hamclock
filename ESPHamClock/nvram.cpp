@@ -12,9 +12,6 @@
 
 #include "HamClock.h"
 
-// uncomment to set debug level before net comes up
-// #define EARLY_NV_DEBUG 1
-
 #define NV_BASE         55      // base address, move anywhere else to effectively start fresh
 #define NV_COOKIE       0x5A    // magic cookie to decide whether a value is valid
 
@@ -358,6 +355,10 @@ static const uint8_t nv_sizes[NV_N] = {
     1,                          // NV_UDPSPOTS
     1,                          // NV_AUTOUPGRADE
 
+    // 235
+    1,                          // NV_MAXTLEAGE
+    2,                          // NV_MINLBLDIST
+
 
 };
 
@@ -385,11 +386,6 @@ static void initEEPROM()
     if (before)
         return;
     before = true;
-
-    // possible early debug
-    #if defined(EARLY_NV_DEBUG)
-    (void) setDebugLevel ("NVRAM", EARLY_NV_DEBUG);
-    #endif
 
     // init EEPROM
     uint16_t ee_used, ee_size;

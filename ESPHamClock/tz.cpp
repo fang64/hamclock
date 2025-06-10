@@ -31,7 +31,7 @@ int getFastTZStep (const LatLong &ll)
             continue;
         for (int d_lng = -2; d_lng <= 2; d_lng += 1) {
             ll_step.lng_d = ll.lng_d + d_lng;
-            normalizeLL (ll_step);                      // accounts for lng wrap
+            ll_step.normalize();                        // accounts for lng wrap
             int tz_chg = abs(getFastTZ (ll_step)) % 3600;
             if (tz_chg > 0 && tz_chg < min_step)
                 min_step = tz_chg;

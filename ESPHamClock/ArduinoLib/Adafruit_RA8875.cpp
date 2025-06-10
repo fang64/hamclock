@@ -13,7 +13,7 @@
  * periodically copied to fb_stage on change. _USE_FB0 uses a third copy fb_cursor in which to draw cursor.
  * FB_X0 and FB_Y0 are the upper left coords on the hardware of drawing area FB_YRES x FB_XRES.
  *
- * Earth map pixels area mmap'd from local day and night files.
+ * Earth map pixels are mmap'd from local day and night files.
  * 
  * This class assumes the original ESP Arduino code was drawing onto a canvas 800w x 480h, set by APP_WIDTH
  * and APP_HEIGHT. If it weren't for fonts and the Earth map this could be scaled rather easily to any size.
@@ -730,6 +730,74 @@ uint16_t Adafruit_RA8875::readData(void)
 	    }
 	    return (p16 & 0xff);
 	}
+}
+
+/* pass back malloced array of fb_canvas contents from the given rectangle.
+ * coords are in 800x480 app coords, not physical fb coords.
+ * return whether request is within bounds and malloc succeeded.
+ * N.B. caller must eventually call setBackingStore which frees the malloced storage.
+ * N.B. type of pixel is not known by caller.
+ */
+bool Adafruit_RA8875::getBackingStore (uint8_t *&backing_store, int x0, int y0, int w, int h)
+{
+        x0 *= SCALESZ;
+        y0 *= SCALESZ;
+        w *= SCALESZ;
+        h *= SCALESZ;
+
+        if (x0 < 0 || y0 < 0 || x0+w > FB_XRES || y0+h > FB_YRES) {
+            ::printf ("getRawPix is out of bounds %d x %d: %d %d %d %d\n", FB_XRES, FB_YRES, x0, y0, w, h);
+            return (false);
+        }
+
+        const size_t row_bytes = w * sizeof(fbpix_t);
+        backing_store = (uint8_t *) malloc (row_bytes * h);
+        // TODO : check for failure
+
+        fbpix_t *fb_row = &fb_canvas[y0*FB_XRES + x0];
+        uint8_t *bs_walk = backing_store;
+        for (int y = y0; y < y0+h; y++) {
+            memcpy (bs_walk, fb_row, row_bytes);
+            bs_walk += row_bytes;
+            fb_row += FB_XRES;
+        }
+
+        return (true);
+}
+
+/* copy the given backing store pixels into fb_canvas at the given location.
+ * coords are in 800x480 app coords, not physical fb coords.
+ * return whether request is within bounds.
+ * N.B. we assume backing_store store was malloced by getBackingStore and no no longer needed.
+ * N.B. type of pixel is not known by caller.
+ */
+bool Adafruit_RA8875::setBackingStore (uint8_t *&backing_store, int x0, int y0, int w, int h)
+{
+        x0 *= SCALESZ;
+        y0 *= SCALESZ;
+        w *= SCALESZ;
+        h *= SCALESZ;
+
+        if (x0 < 0 || y0 < 0 || x0+w > FB_XRES || y0+h > FB_YRES) {
+            ::printf ("setRawPix is out of bounds %d x %d: %d %d %d %d\n", FB_XRES, FB_YRES, x0, y0, w, h);
+            return (false);
+        }
+
+        const size_t row_bytes = w * sizeof(fbpix_t);
+        // TODO : check for failure
+
+        fbpix_t *fb_row = &fb_canvas[y0*FB_XRES + x0];
+        uint8_t *bs_walk = backing_store;
+        for (int y = y0; y < y0+h; y++) {
+            memcpy (fb_row, bs_walk, row_bytes);
+            bs_walk += row_bytes;
+            fb_row += FB_XRES;
+        }
+
+        free (backing_store);
+        backing_store = NULL;
+
+        return (true);
 }
 
 /* return pixels as packed RGB bytes

@@ -469,7 +469,7 @@ bool getNMEALatLong (LatLong &ll)
     }
     pthread_mutex_unlock (&nmea_lock);
     if (ok)
-        normalizeLL (ll);
+        ll.normalize();
     return (ok);
 }
 
@@ -492,7 +492,7 @@ void updateNMEALoc()
             return;
 
         // dist from DE
-        float miles = ERAD_M*simpleSphereDist (de_ll, ll);
+        float miles = ERAD_M*de_ll.GSD(ll);
 
         // engage if large enough, consider 6 char grid is 5'x2.5' or about 6x3 mi at equator
         if (miles > FOLLOW_MIND)

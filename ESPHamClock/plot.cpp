@@ -8,8 +8,8 @@
 #define TICKLEN         2                       // length of plot tickmarks, pixels
 #define TGAP            10                      // top gap for title
 #define BGAP            15                      // bottom gap for x labels
-#define FONTW           6                       // font width with gap
-#define FONTH           8                       // font height
+#define FONTW           6                       // fast font width
+#define FONTH           8                       // fast font height
 
 
 /* plot the given data within the given box.
@@ -25,7 +25,7 @@ bool plotXY (const SBox &box, float x[], float y[], int nxy, const char *xlabel,
 uint16_t color, float y_min, float y_max, float label_value)
 {
     char buf[32];
-    snprintf (buf, sizeof(buf), "%.*f", label_value >= 100 ? 0 : 1, label_value);
+    snprintf (buf, sizeof(buf), "%.*f", fabsf(label_value) >= 100 ? 0 : 1, label_value);
     return (plotXYstr (box, x, y, nxy, xlabel, ylabel, color, y_min, y_max, buf));
 }
 
@@ -570,32 +570,65 @@ bool plotNOAASWx (const SBox &box)
         return (false);
     } else if (!noaa.data_ok) {
         plotMessage (box, RA8875_RED, "NOAA data invalid");
-        return (true);                                  // transaction itself was ok
+        return (true);                                                  // transaction itself was ok
     }
 
     // title
     tft.setTextColor(NOAASPW_COLOR);
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
-    uint16_t h = box.h/5-2;                             // text row height
-    const char *title = "NOAA SpaceWx";
+    const char title[] = "NOAA SpaceWx";
     uint16_t bw = getTextWidth (title);
-    tft.setCursor (box.x+(box.w-bw)/2, box.y+h);
+    tft.setCursor (box.x+(box.w-bw)/2, box.y+PANETITLE_H);
     tft.print (title);
 
+    // scale
+    selectFontStyle (LIGHT_FONT, FAST_FONT);
+    const char scale_msg[] = "Scale 0 - 5";
+    uint16_t sw = getTextWidth (scale_msg);
+    tft.setCursor (box.x+(box.w-sw)/2, box.y+SUBTITLE_Y0);
+    tft.print (scale_msg);
+
     // print each line
+    uint16_t table_y0 = box.y + PANETITLE_H + 20;
+    uint16_t table_h = (box.y + box.h - 5) - table_y0;
+    uint16_t label_x0 = box.x + 6;
+    uint16_t value_x0 = label_x0 + 10 * FONTW;
+    uint16_t value_w = (box.x + box.w - value_x0)/N_NOAASW_V;
     for (int i = 0; i < N_NOAASW_C; i++) {
 
-        uint16_t w = box.w/7-1;
-        h += box.h/4;
-        tft.setCursor (box.x+w+(i==2?-2:0), box.y+h);   // tweak G to better center
-        tft.setTextColor(GRAY);
-        tft.print (noaa.cat[i]);
+        // label
+        selectFontStyle (LIGHT_FONT, FAST_FONT);
+        uint16_t label_y = table_y0 + i*table_h/N_NOAASW_C;             // font baseline is at top
+        tft.setTextColor(NOAASPW_COLOR);
+        tft.setCursor (label_x0, label_y);
+        switch (noaa.cat[i]) {
+        case 'R':
+            tft.print ("Radio");
+            tft.setCursor (label_x0, label_y += FONTH+2);
+            tft.print ("blackout");
+            break;
+        case 'S':
+            tft.print ("Solar");
+            tft.setCursor (label_x0, label_y += FONTH+2);
+            tft.print ("storm");
+            break;
+        case 'G':
+            tft.print ("Magnetic");
+            tft.setCursor (label_x0, label_y += FONTH+2);
+            tft.print ("storm");
+            break;
+        default:
+            fatalError ("bogus noaa sw category: %c %d", noaa.cat[i], noaa.cat[i]);
+            break;                                                      // lint
+        }
 
-        w += box.w/10;
+        // value
+        selectFontStyle (LIGHT_FONT, SMALL_FONT);
+        uint16_t value_y = table_y0 + i*table_h/N_NOAASW_C + 19;        // font baseline is at bottom
         for (int j = 0; j < N_NOAASW_V; j++) {
+            uint16_t value_x = value_x0 + j*value_w;
             int val = noaa.val[i][j];
-            w += box.w/7;
-            tft.setCursor (box.x+w, box.y+h);
+            tft.setCursor (value_x, value_y);
             tft.setTextColor(val == 0 ? RA8875_GREEN : (val <= 3 ? RA8875_YELLOW : RA8875_RED));
             tft.print (val);
         }

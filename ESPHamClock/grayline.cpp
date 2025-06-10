@@ -273,25 +273,20 @@ void plotGrayline()
     // x and y are set from touch location
 
     // report info for tap times until time out or tap Resume button
-    SCoord s;
-    char c;
     UserInput ui = {
         map_b,
         UI_UFuncNone,
         UF_UNUSED,
         60000,
         UF_CLOCKSOK,
-        s,
-        c,
-        false,
-        false
+        {0, 0}, TT_NONE, '\0', false, false
     };
 
     while (waitForUser(ui)) {
 
         // done if return, esc or tap Resume button or tap outside map
-        if (c == CHAR_CR || c == CHAR_NL || c == CHAR_ESC || inBox (s, resume_b)
-                                || (c == CHAR_NONE && !inBox (s, map_b)))
+        if (ui.kb_char == CHAR_CR || ui.kb_char == CHAR_NL || ui.kb_char == CHAR_ESC
+                        || inBox (ui.tap, resume_b) || (ui.kb_char == CHAR_NONE && !inBox (ui.tap, map_b)))
             break;
 
         // first erase previous popup, if any
@@ -304,13 +299,13 @@ void plotGrayline()
         }
 
         // show new popup if tap is within the plot area
-        if (s.x > GL_X0 && s.x < GL_X1 && s.y > GL_Y0 && s.y < GL_Y1) {
+        if (ui.tap.x > GL_X0 && ui.tap.x < GL_X1 && ui.tap.y > GL_Y0 && ui.tap.y < GL_Y1) {
 
             resetWatchdog();
 
             // popup corner at s
-            popup.b.x = s.x;
-            popup.b.y = s.y;
+            popup.b.x = ui.tap.x;
+            popup.b.y = ui.tap.y;
 
             // but insure entirely over plot
             if (popup.b.x + popup.b.w > GL_X1)
@@ -323,7 +318,7 @@ void plotGrayline()
             popup.d1 = GL_X2D(popup.b.x + popup.b.w);
 
             // draw popup for time corresponding to s.x
-            drawGLPopup (yr0 + GL_X2D(s.x)*SECSPERDAY, popup.b);
+            drawGLPopup (yr0 + GL_X2D(ui.tap.x)*SECSPERDAY, popup.b);
 
             // note popup is now up
             popup.is_up = true;

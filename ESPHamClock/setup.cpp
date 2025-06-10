@@ -15,10 +15,13 @@
 
 // only FB0 needs wifi now, even _WEB_ONLY users should set up their networking first
 #if defined (_USE_FB0)
-    #define _WIFI_ALWAYS
-#else
+    #if !defined(_WIFI_NEVER)
+        #define _WIFI_ALWAYS
+    #endif
+#elif !defined(_WIFI_NEVER)
     #define _WIFI_NEVER
 #endif
+
 
 // this was originally used on platforms that gave an option whether to set wifi creds
 // #define _WIFI_ASK
@@ -66,7 +69,9 @@ static char adif_fn[NV_ADIFFN_LEN];
 static char onta_wlist[NV_ONTAWLIST_LEN];
 static char i2c_fn[NV_I2CFN_LEN];
 
-
+// default DX cluster login SSID number
+#define DXC_DEF_SSID 55
+#define DXC_MAX_SSID 99
 
 // layout constants
 #define NQR             4                       // number of virtual keyboard rows
@@ -81,7 +86,8 @@ static char i2c_fn[NV_I2CFN_LEN];
 #define F_DESCENT       5                       // font descent below baseline
 #define TF_INDENT       8                       // top row font indent within square
 #define BF_INDENT       34                      // bottom font indent within square
-#define KB_Y0           270                     // y coord of keyboard top
+#define KB_Y0           264                     // y coord of keyboard top
+#define TT_Y0           (480-9)                 // y coord of tooltip reminder
 #define PR_W            18                      // width of character
 #define PR_A            24                      // ascending height above font baseline
 #define PR_D            9                       // descending height below font baseline
@@ -276,6 +282,9 @@ static const char *lbl_styles[LBL_N] = {
 };
 #undef X
 
+// tooltip usage
+static const char tt_reminder[] = "Use control-click, Command-click or middle button to show a tooltip for most fields";
+
 // define a string prompt
 typedef struct {
     uint8_t page;                               // page number, 0 .. N_PAGES-1
@@ -286,7 +295,32 @@ typedef struct {
     uint8_t v_len;                              // total size of v_str memory including EOS
     uint8_t v_ci;                               // v_str index of cursor: insert here, delete char before
     uint8_t v_wi;                               // v_str index of first character at left end of window
+    const char *tt;                             // tooltip text, if any
 } StringPrompt;
+
+
+
+// max tle ages
+static const char *maxTLEAges[] = {
+    "3 days",
+    "7 days",
+    "14 days",
+    "21 days"
+};
+#define N_MAXTLE NARRAY(maxTLEAges)
+#define MAXTLE_DEF      1                       // index of default
+
+
+// min label distances
+static const char *minLblD[] = {
+    "None",
+    "1000",
+    "2000",
+    "4000"
+};
+#define N_MINLBL NARRAY(minLblD)
+#define MINLBL_DEF      0                       // index of default
+
 
 
 // N.B. must match string_pr[] order
@@ -358,23 +392,38 @@ static StringPrompt string_pr[N_SPR] = {
 
     // "page 1" -- index 0
 
-    {0, { 10, R2Y(0), 70, PR_H}, { 90, R2Y(0), 270, PR_H}, "Call:", cs_info.call, NV_CALLSIGN_LEN, 0,0}, 
-    {0, { 10, R2Y(1),180, PR_H}, {190, R2Y(1), 110, PR_H}, "Enter DE Lat:", NULL, 0, 0,0},       // shadowed
-    {0, {380, R2Y(1), 50, PR_H}, {430, R2Y(1), 130, PR_H}, "Lng:", NULL, 0, 0,0},                // shadowed
-    {0, {560, R2Y(1), 60, PR_H}, {620, R2Y(1), 130, PR_H}, "Grid:", NULL, 0, 0,0},               // shadowed
-    {0, {340, R2Y(2), 60, PR_H}, {400, R2Y(2), 300, PR_H}, "host:", gpsd_host, NV_GPSDHOST_LEN, 0,0},
-    {0, {480, R2Y(3), 50, PR_H}, {530, R2Y(3), 270, PR_H}, "file:", nmea_file, NV_NMEAFILE_LEN, 0,0},
-    {0, {180, R2Y(5), 60, PR_H}, {240, R2Y(5), 560, PR_H}, "host:", ntp_host, NV_NTPHOST_LEN, 0,0},
+    {0, { 10, R2Y(0), 70, PR_H}, { 90, R2Y(0), 270, PR_H}, "Call:", cs_info.call, NV_CALLSIGN_LEN, 0, 0,
+                "Enter an amateur radio call sign"}, 
+    {0, { 10, R2Y(1),180, PR_H}, {190, R2Y(1), 110, PR_H}, "Enter DE Lat:", NULL, 0, 0, 0,
+                "Enter latitude in decimal degrees (negative south) or DD::MM:SS (follow with S for south); "
+                "or let it be set automatically from grid"},
+                                                                                                 // shadowed
+    {0, {380, R2Y(1), 50, PR_H}, {430, R2Y(1), 130, PR_H}, "Lng:", NULL, 0, 0, 0,
+                "Enter longitude in decimal degrees (negative west) or DD::MM:SS (follow with W for west); "
+                "or let it be set automatically from grid"},
+                                                                                                 // shadowed
+    {0, {560, R2Y(1), 60, PR_H}, {620, R2Y(1), 130, PR_H}, "Grid:", NULL, 0, 0, 0,
+                "Enter 4 or 6 character grid square; or let it be set automatically from lat/long"},                                                                                                           // shadowed
+    {0, {340, R2Y(2), 60, PR_H}, {400, R2Y(2), 300, PR_H}, "host:", gpsd_host, NV_GPSDHOST_LEN, 0, 0,
+                "Enter IP address or DNS host name of gpsd daemon"},
+    {0, {480, R2Y(3), 50, PR_H}, {530, R2Y(3), 270, PR_H}, "file:", nmea_file, NV_NMEAFILE_LEN, 0, 0,
+                "Enter /dev name of serial connection to a GPS device reporting NMEA sentences"},
+    {0, {180, R2Y(5), 60, PR_H}, {240, R2Y(5), 560, PR_H}, "host:", ntp_host, NV_NTPHOST_LEN, 0, 0,
+                "Enter IP address or DNS host name of NTP server"},
 
     {0, { 90, R2Y(6), 60, PR_H}, {160, R2Y(6), 500, PR_H}, "SSID:", wifi_ssid, NV_WIFI_SSID_LEN, 0,0},
     {0, {670, R2Y(6),110, PR_H}, { 10, R2Y(7), 789, PR_H}, "Password:", wifi_pw, NV_WIFI_PW_LEN, 0,0},
 
     // "page 2" -- index 1
 
-    {1, {140, R2Y(1),  0, PR_H}, {140, R2Y(1), 650, PR_H}, NULL, dx_wlist, NV_DXWLIST_LEN, 0,0},
-    {1, { 15, R2Y(2), 70, PR_H}, { 85, R2Y(2),  85, PR_H}, "port:", NULL, 0, 0,0},               // shadowed
-    {1, { 15, R2Y(3), 70, PR_H}, { 85, R2Y(3), 260, PR_H}, "host:", dx_host, NV_DXHOST_LEN, 0,0},
-    {1, { 15, R2Y(4), 70, PR_H}, { 85, R2Y(4), 260, PR_H}, "login:", dx_login, NV_DXLOGIN_LEN, 0,0},
+    {1, {140, R2Y(1),  0, PR_H}, {140, R2Y(1), 650, PR_H}, NULL, dx_wlist, NV_DXWLIST_LEN, 0, 0,
+                "Enter cluster watch list description; may only be empty if Off"},
+    {1, { 15, R2Y(2), 70, PR_H}, { 85, R2Y(2),  85, PR_H}, "port:", NULL, 0, 0, 0,
+                "Enter cluster connection port number"},                                          // shadowed
+    {1, { 15, R2Y(3), 70, PR_H}, { 85, R2Y(3), 260, PR_H}, "host:", dx_host, NV_DXHOST_LEN, 0, 0,
+                "Enter cluster IP address or DNS host name, or subscription IP if UDP uses multicast"},
+    {1, { 15, R2Y(4), 70, PR_H}, { 85, R2Y(4), 260, PR_H}, "login:", dx_login, NV_DXLOGIN_LEN, 0, 0,
+                "Enter cluster login with SSID between 1-99"},
 
     // three overlapping sets, visibility depends on DXCLCMDPGA/B_BPR
 
@@ -396,32 +445,55 @@ static StringPrompt string_pr[N_SPR] = {
 
     // "page 3" -- index 2
 
-    {2, {160, R2Y(0), 60, PR_H}, {220, R2Y(0),  90, PR_H}, "port:", NULL, 0, 0,0},               // shadowed
-    {2, {310, R2Y(0), 60, PR_H}, {360, R2Y(0), 300, PR_H}, "host:", rot_host, NV_ROTHOST_LEN, 0,0},
-    {2, {160, R2Y(1), 60, PR_H}, {220, R2Y(1),  90, PR_H}, "port:", NULL, 0, 0,0},               // shadowed
-    {2, {310, R2Y(1), 60, PR_H}, {360, R2Y(1), 300, PR_H}, "host:", rig_host, NV_RIGHOST_LEN, 0,0},
-    {2, {160, R2Y(2), 60, PR_H}, {220, R2Y(2),  90, PR_H}, "port:", NULL, 0, 0,0},               // shadowed
-    {2, {310, R2Y(2), 60, PR_H}, {360, R2Y(2), 300, PR_H}, "host:", flrig_host, NV_FLRIGHOST_LEN, 0,0},
+    {2, {160, R2Y(0), 60, PR_H}, {220, R2Y(0),  90, PR_H}, "port:", NULL, 0, 0, 0,
+                "Enter the network port number for connecting to rotctld"},                       // shadowed
+    {2, {310, R2Y(0), 60, PR_H}, {360, R2Y(0), 300, PR_H}, "host:", rot_host, NV_ROTHOST_LEN, 0, 0,
+                "Enter the IP address or DNS host name for connecting to rotctld"},
+    {2, {160, R2Y(1), 60, PR_H}, {220, R2Y(1),  90, PR_H}, "port:", NULL, 0, 0, 0,
+                "Enter the network port number for connecting to rigctld"},                       // shadowed
+    {2, {310, R2Y(1), 60, PR_H}, {360, R2Y(1), 300, PR_H}, "host:", rig_host, NV_RIGHOST_LEN, 0, 0,
+                "Enter the IP address or DNS host name for connecting to rigctld"},
+    {2, {160, R2Y(2), 60, PR_H}, {220, R2Y(2),  90, PR_H}, "port:", NULL, 0, 0, 0,
+                "Enter the network port number for connecting to flrig"},                         // shadowed
+    {2, {310, R2Y(2), 60, PR_H}, {360, R2Y(2), 300, PR_H}, "host:", flrig_host, NV_FLRIGHOST_LEN, 0, 0,
+                "Enter the IP address or DNS host name for connecting to flrig"},
 
-    {2, {100, R2Y(4), 60, PR_H}, {160, R2Y(4), 580, PR_H}, "file:", adif_fn, NV_ADIFFN_LEN, 0,0},
+    {2, {100, R2Y(4), 60, PR_H}, {160, R2Y(4), 580, PR_H}, "file:", adif_fn, NV_ADIFFN_LEN, 0, 0,
+                "Enter the path name to the ADIF file; "
+                "you may use environment variables or ~ to refer to your home directory"},
 
-    {2, {215, R2Y(5),  0, PR_H}, {215, R2Y(5), 580, PR_H}, NULL, adif_wlist, NV_ADIFWLIST_LEN, 0,0},
-    {2, {215, R2Y(6),  0, PR_H}, {215, R2Y(6), 580, PR_H}, NULL, onta_wlist, NV_ONTAWLIST_LEN, 0,0},
+    {2, {215, R2Y(5),  0, PR_H}, {215, R2Y(5), 580, PR_H}, NULL, adif_wlist, NV_ADIFWLIST_LEN, 0, 0,
+                "Enter ADIF file watch list description; may only be empty if Off"},
+    {2, {215, R2Y(6),  0, PR_H}, {215, R2Y(6), 580, PR_H}, NULL, onta_wlist, NV_ONTAWLIST_LEN, 0, 0,
+                "Enter OnTheAir watch list description; may only be empty if Off"},
 
 
     // "page 4" -- index 3
 
-    {3, {10,  R2Y(0), 240, PR_H}, {250, R2Y(0), 100, PR_H}, "Map center longitude:", NULL, 0, 0,0}, // shadowed
+    {3, {10,  R2Y(0), 240, PR_H}, {250, R2Y(0), 100, PR_H}, "Map center longitude:", NULL, 0, 0, 0,
+                "Enter the desired center longitude for the Mercator map projection in decimal degrees; "
+                "use - or suffix W for west"},
 
-    {3, {350, R2Y(2),  70, PR_H}, {440, R2Y(2), 360,PR_H},  "name:", i2c_fn, NV_I2CFN_LEN, 0,0},
+    {3, {350, R2Y(2),  70, PR_H}, {440, R2Y(2), 360,PR_H},  "name:", i2c_fn, NV_I2CFN_LEN, 0, 0,
+                "Enter the full /dev name for the I2C connection"},
 
-    {3, {100, R2Y(3), 240, PR_H}, {350, R2Y(3),  80, PR_H}, "BME280@76    dTemp:", NULL, 0, 0,0}, // shadowed
-    {3, {440, R2Y(3), 80,  PR_H}, {530, R2Y(3),  80, PR_H}, "dPres:", NULL, 0, 0,0},              // shadowed
-    {3, {100, R2Y(4), 240, PR_H}, {350, R2Y(4),  80, PR_H}, "BME280@77    dTemp:", NULL, 0, 0,0}, // shadowed
-    {3, {440, R2Y(4), 80,  PR_H}, {530, R2Y(4),  80, PR_H}, "dPres:", NULL, 0, 0,0},              // shadowed
+    {3, {100, R2Y(3), 240, PR_H}, {350, R2Y(3),  80, PR_H}, "BME280@76    dTemp:", NULL, 0, 0, 0,
+                "Enter a temperature correction to be added to the BME280 at I2C address 76; "
+                "use the units selected on page 5"},                                              // shadowed
+    {3, {440, R2Y(3), 80,  PR_H}, {530, R2Y(3),  80, PR_H}, "dPres:", NULL, 0, 0, 0,              // shadowed
+                "Enter a pressure correction to be added to the BME280 at I2C address 76; "
+                "use the units selected on page 5"},                                              // shadowed
+    {3, {100, R2Y(4), 240, PR_H}, {350, R2Y(4),  80, PR_H}, "BME280@77    dTemp:", NULL, 0, 0, 0, // shadowed
+                "Enter a temperature correction to be added to the BME280 at I2C address 77; "
+                "use the units selected on page 5"},                                              // shadowed
+    {3, {440, R2Y(4), 80,  PR_H}, {530, R2Y(4),  80, PR_H}, "dPres:", NULL, 0, 0, 0,              // shadowed
+                "Enter a pressure correction to be added to the BME280 at I2C address 77; "
+                "use the units selected on page 5"},                                              // shadowed
 
-    {3, {10,  R2Y(6), 200, PR_H}, {250, R2Y(6),  80, PR_H}, "Brightness Min%:", NULL, 0, 0,0},    // shadowed
-    {3, {350, R2Y(6),  90, PR_H}, {450, R2Y(6),  80, PR_H}, "Max%:", NULL, 0, 0,0},               // shadowed
+    {3, {10,  R2Y(6), 200, PR_H}, {250, R2Y(6),  80, PR_H}, "Brightness Min%:", NULL, 0, 0, 0,
+                "Enter the percentage of hardware brightness to be used for Dim"},                // shadowed
+    {3, {350, R2Y(6),  90, PR_H}, {450, R2Y(6),  80, PR_H}, "Max%:", NULL, 0, 0, 0,
+                "Enter the percentage of hardware brightness to be used for Bright"},             // shadowed
 
 
 
@@ -429,9 +501,12 @@ static StringPrompt string_pr[N_SPR] = {
 
     // "page 6" -- index 5
 
-    {5, {CSEL_VX, CSEL_VYR, 0, PR_H}, {CSEL_VX, CSEL_VYR, 80, PR_H}, NULL, NULL, 0, 0,0},         // shadowed
-    {5, {CSEL_VX, CSEL_VYG, 0, PR_H}, {CSEL_VX, CSEL_VYG, 80, PR_H}, NULL, NULL, 0, 0,0},         // shadowed
-    {5, {CSEL_VX, CSEL_VYB, 0, PR_H}, {CSEL_VX, CSEL_VYB, 80, PR_H}, NULL, NULL, 0, 0,0},         // shadowed
+    {5, {CSEL_VX, CSEL_VYR, 0, PR_H}, {CSEL_VX, CSEL_VYR, 80, PR_H}, NULL, NULL, 0, 0, 0,
+                "Enter magnitude of red on a scale of 0-255"},                                    // shadowed
+    {5, {CSEL_VX, CSEL_VYG, 0, PR_H}, {CSEL_VX, CSEL_VYG, 80, PR_H}, NULL, NULL, 0, 0, 0,
+                "Enter magnitude of green on a scale of 0-255"},                                  // shadowed
+    {5, {CSEL_VX, CSEL_VYB, 0, PR_H}, {CSEL_VX, CSEL_VYB, 80, PR_H}, NULL, NULL, 0, 0, 0,
+                "Enter magnitude of blue on a scale of 0-255"},                                   // shadowed
 
     // "page 7" -- index 6
 
@@ -490,38 +565,52 @@ typedef enum {
     // page "4"
     GPIOOK_BPR,
     I2CON_BPR,
-    KX3ON_BPR,
-    KX3BAUD_BPR,
+    KX3A_BPR,
+    KX3B_BPR,
 
     // page "5"
     DATEFMT_MDY_BPR,
     DATEFMT_DMYYMD_BPR,
     LOGUSAGE_BPR,
+
     WEEKDAY1MON_BPR,
     DEMO_BPR,
+
     UNITSA_BPR,
     UNITSB_BPR,
     BEARING_BPR,
+
     SHOWPIP_BPR,
     NEWDXDEWX_BPR,
+
     SPOTLBLA_BPR,
     SPOTLBLB_BPR,
+    LBLDISTA_BPR,
+    LBLDISTB_BPR,
+
+    SCROLLDIR_BPR,
     GRAYA_BPR,
     GRAYB_BPR,
-    SCROLLDIR_BPR,
-    MAP_ROTPA_BPR,
-    MAP_ROTPB_BPR,
+
     PANE_ROTPA_BPR,
     PANE_ROTPB_BPR,
+    MAP_ROTPA_BPR,
+    MAP_ROTPB_BPR,
+
+    UDPSPOTS_BPR,
     QRZBIOA_BPR,
     QRZBIOB_BPR,
-    UDPSPOTS_BPR,
-    UDPSETSDX_BPR,
+
     AUTOMAP_BPR,
+    UDPSETSDX_BPR,
+
+    WEB_FULLSCRN_BPR,
     AUTOUPA_BPR,
     AUTOUPB_BPR,
-    WEB_FULLSCRN_BPR,
+
     X11_FULLSCRN_BPR,
+    MAXTLEA_BPR,
+    MAXTLEB_BPR,
 
     // page "6" -- color editor
 
@@ -558,7 +647,10 @@ typedef struct {
     const char *f_str;                          // "false" string, or NULL
     const char *t_str;                          // "true" string, or NULL
     BPIds ent_mate;                             // entanglement partner, else NOMATE
+    const char *tt;                             // tooltip text, if any
 } BoolPrompt;
+
+static char cc_tip[] = "Enter a native cluster command, turn On to send after each login or Off to just save for later";
 
 /* bool prompts. N.B. must match BPIds order
  * N.B. some fields use two "entangled" bools to create 3 states
@@ -567,22 +659,31 @@ static BoolPrompt bool_pr[N_BPR] = {
 
     // "page 1" -- index 0
 
-    {0, { 10, R2Y(2), 180, PR_H}, {180, R2Y(2), 40,  PR_H}, false, "or use gpsd?", "No", "Yes", NOMATE},
-    {0, {220, R2Y(2),  80, PR_H}, {300, R2Y(2), 40,  PR_H}, false, "follow?", "No", "Yes", NOMATE},
+    {0, { 10, R2Y(2), 180, PR_H}, {180, R2Y(2), 40,  PR_H}, false, "or use gpsd?", "No", "Yes", NOMATE,
+                "Whether to use a gpsd daemon for time"},
+    {0, {220, R2Y(2),  80, PR_H}, {300, R2Y(2), 40,  PR_H}, false, "follow?", "No", "Yes", NOMATE,
+                "Whether to use the same gpsd daemon for location too"},
 
-    {0, { 10, R2Y(3), 180, PR_H}, {180, R2Y(3), 40,  PR_H}, false, "or use NMEA?", "No", "Yes", NOMATE},
-    {0, {220, R2Y(3),  80, PR_H}, {300, R2Y(3), 40,  PR_H}, false, "follow?", "No", "Yes", NOMATE},
 
-    {0, {340, R2Y(3),  70, PR_H},  {410, R2Y(3), 70, PR_H}, false, "baud:", "4800", NULL, NMEABAUDB_BPR},
+    {0, { 10, R2Y(3), 180, PR_H}, {180, R2Y(3), 40,  PR_H}, false, "or use NMEA?", "No", "Yes", NOMATE,
+                "Whether to use a serial NMEA device for time"},
+    {0, {220, R2Y(3),  80, PR_H}, {300, R2Y(3), 40,  PR_H}, false, "follow?", "No", "Yes", NOMATE,
+                "Whether to use a serial NMEA device for location too"},
+
+
+    {0, {340, R2Y(3),  70, PR_H},  {410, R2Y(3), 70, PR_H}, false, "baud:", "4800", NULL, NMEABAUDB_BPR,
+                "Select baud rate of NMEA serial device"},
     {0, {340, R2Y(3),  70, PR_H},  {410, R2Y(3), 70, PR_H}, false, NULL, "9600", "38400", NMEABAUDA_BPR},
                                              // 3x entangled: FX -> TF -> TT ...
 
 
-    {0, { 10, R2Y(4), 180, PR_H}, {180, R2Y(4), 40,  PR_H}, false, "or IP Geolocate?", "No", "Yes", NOMATE},
+    {0, { 10, R2Y(4), 180, PR_H}, {180, R2Y(4), 40,  PR_H}, false, "or IP Geolocate?", "No", "Yes", NOMATE,
+                "Whether to get approximate location based on the public IP address records"},
 
 
     {0, { 10, R2Y(5), 180, PR_H}, {180, R2Y(5), 110, PR_H}, false, "NTP?",
-                                                            ntp_sn[NTPSC_NO], ntp_sn[NTPSC_DEF],  NTPB_BPR},
+                                                            ntp_sn[NTPSC_NO], ntp_sn[NTPSC_DEF], NTPB_BPR,
+                "Whether to use the built-in list of NTP servers, a specified NTP server or computer time"},
     {0, { 10, R2Y(5), 180, PR_H}, {180, R2Y(5), 110, PR_H}, false, NULL,
                                                             ntp_sn[NTPSC_OS], ntp_sn[NTPSC_HOST], NTPA_BPR},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
@@ -593,12 +694,16 @@ static BoolPrompt bool_pr[N_BPR] = {
 
     // "page 2" -- index 1
 
-    {1, {10,  R2Y(0),  90, PR_H}, {100, R2Y(0), 50,  PR_H}, false, "Cluster?", "No", "Yes", NOMATE},
-    {1, {200, R2Y(0),  90, PR_H}, {290, R2Y(0), 50,  PR_H}, false, "UDP?", "No", "Yes", NOMATE},
+
+    {1, {10,  R2Y(0),  90, PR_H}, {100, R2Y(0), 50,  PR_H}, false, "Cluster?", "No", "Yes", NOMATE,
+                "Connect to DX Cluster or a local program sending UDP packets"},
+    {1, {200, R2Y(0),  90, PR_H}, {290, R2Y(0), 50,  PR_H}, false, "UDP?", "No", "Yes", NOMATE,
+                "Connect to a local program sending UDP packets"},
 
 
     {1, {15, R2Y(1),  55, PR_H},  {85, R2Y(1), 55, PR_H}, false, "watch:",
-                                                        wla_name[WLA_OFF], wla_name[WLA_NOT], DXWLISTB_BPR},
+                                                        wla_name[WLA_OFF], wla_name[WLA_NOT], DXWLISTB_BPR,
+                "Define the style and filter for a Cluster watch list"},
     {1, {15, R2Y(1),  55, PR_H},  {85, R2Y(1), 55, PR_H}, false, NULL,
                                                         wla_name[WLA_FLAG], wla_name[WLA_ONLY], DXWLISTA_BPR},
                                              // 4x entangled: FF -> TF -> FT -> TT -> ...
@@ -606,47 +711,58 @@ static BoolPrompt bool_pr[N_BPR] = {
 
     // three overlapping sets, visibility depends on DXCLCMDPGA/B_BPR
 
-    {1, {350, R2Y(2),   35, PR_H}, {385, R2Y(2), 20, PR_H},  false, "Pg", "1", NULL, DXCLCMDPGB_BPR},
+
+    {1, {350, R2Y(2),   35, PR_H}, {385, R2Y(2), 20, PR_H},  false, "Pg", "1", NULL, DXCLCMDPGB_BPR,
+                "Advance to next page of native cluster commands"},
     {1, {350, R2Y(2),   35, PR_H}, {385, R2Y(2), 20, PR_H},  false, "Pg", "2", "3", DXCLCMDPGA_BPR},
                                              // 3x entangled: FX -> TF -> TT ...
 
-    {1, {350, R2Y(3),   0, PR_H},  {350, R2Y(3), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
-    {1, {350, R2Y(4),   0, PR_H},  {350, R2Y(4), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
-    {1, {350, R2Y(5),   0, PR_H},  {350, R2Y(5), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
-    {1, {350, R2Y(6),   0, PR_H},  {350, R2Y(6), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
 
-    {1, {350, R2Y(3),   0, PR_H},  {350, R2Y(3), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
-    {1, {350, R2Y(4),   0, PR_H},  {350, R2Y(4), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
-    {1, {350, R2Y(5),   0, PR_H},  {350, R2Y(5), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
-    {1, {350, R2Y(6),   0, PR_H},  {350, R2Y(6), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
+    {1, {350, R2Y(3),   0, PR_H},  {350, R2Y(3), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE, cc_tip},
+    {1, {350, R2Y(4),   0, PR_H},  {350, R2Y(4), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE, cc_tip},
+    {1, {350, R2Y(5),   0, PR_H},  {350, R2Y(5), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE, cc_tip},
+    {1, {350, R2Y(6),   0, PR_H},  {350, R2Y(6), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE, cc_tip},
 
-    {1, {350, R2Y(3),   0, PR_H},  {350, R2Y(3), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
-    {1, {350, R2Y(4),   0, PR_H},  {350, R2Y(4), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
-    {1, {350, R2Y(5),   0, PR_H},  {350, R2Y(5), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
-    {1, {350, R2Y(6),   0, PR_H},  {350, R2Y(6), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE},
+    {1, {350, R2Y(3),   0, PR_H},  {350, R2Y(3), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE, cc_tip},
+    {1, {350, R2Y(4),   0, PR_H},  {350, R2Y(4), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE, cc_tip},
+    {1, {350, R2Y(5),   0, PR_H},  {350, R2Y(5), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE, cc_tip},
+    {1, {350, R2Y(6),   0, PR_H},  {350, R2Y(6), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE, cc_tip},
+
+    {1, {350, R2Y(3),   0, PR_H},  {350, R2Y(3), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE, cc_tip},
+    {1, {350, R2Y(4),   0, PR_H},  {350, R2Y(4), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE, cc_tip},
+    {1, {350, R2Y(5),   0, PR_H},  {350, R2Y(5), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE, cc_tip},
+    {1, {350, R2Y(6),   0, PR_H},  {350, R2Y(6), 40, PR_H},  false, NULL, "Off:", "On:", NOMATE, cc_tip},
 
 
     // "page 3" -- index 2
 
-    {2, {10,  R2Y(0),  90, PR_H},  {100, R2Y(0),  60, PR_H}, false, "rotctld?", "No", "Yes", NOMATE},
-    {2, {10,  R2Y(1),  90, PR_H},  {100, R2Y(1),  60, PR_H}, false, "rigctld?", "No", "Yes", NOMATE},
-    {2, {10,  R2Y(2),  90, PR_H},  {100, R2Y(2),  60, PR_H}, false, "flrig?",   "No", "Yes", NOMATE},
 
-    {2, {10,  R2Y(3),  90, PR_H},  {100, R2Y(3), 150, PR_H}, false, "Radio:", "Monitor PTT","Control",NOMATE},
+    {2, {10,  R2Y(0),  90, PR_H},  {100, R2Y(0),  60, PR_H}, false, "rotctld?", "No", "Yes", NOMATE,
+                "Whether to control a rotator using rotctld"},
+    {2, {10,  R2Y(1),  90, PR_H},  {100, R2Y(1),  60, PR_H}, false, "rigctld?", "No", "Yes", NOMATE,
+                "Whether to control a radio using rigctld"},
+    {2, {10,  R2Y(2),  90, PR_H},  {100, R2Y(2),  60, PR_H}, false, "flrig?",   "No", "Yes", NOMATE,
+                "Whether to control a radio using flrig"},
+
+    {2, {10,  R2Y(3),  90, PR_H},  {100, R2Y(3), 150, PR_H}, false, "Radio:", "Monitor PTT","Control",NOMATE,
+                "Whether to allow HamClock to control a radio or just passively monitor PTT"},
 
 
-    {2, {10,  R2Y(4),  90, PR_H},  {100, R2Y(4), 300, PR_H}, false, "ADIF?", "No", NULL, NOMATE},
+    {2, {10,  R2Y(4),  90, PR_H},  {100, R2Y(4), 300, PR_H}, false, "ADIF?", "No", NULL, NOMATE,
+                "Whether to open and monitor an ADIF log file"},
 
 
 
     {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  55, PR_H}, false, "ADIF watch:",
-                                                    wla_name[WLA_OFF], wla_name[WLA_NOT], ADIFWLISTB_BPR},
+                                                    wla_name[WLA_OFF], wla_name[WLA_NOT], ADIFWLISTB_BPR,
+                "Define the style and filter for an ADIF file watch list"},
     {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  55, PR_H}, false, NULL,
                                                     wla_name[WLA_FLAG], wla_name[WLA_ONLY], ADIFWLISTA_BPR},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
 
     {2, {10,  R2Y(6), 150, PR_H},  {160, R2Y(6),  55, PR_H}, false, "ONTA watch:",
-                                                    wla_name[WLA_OFF], wla_name[WLA_NOT], ONTAWLISTB_BPR},
+                                                    wla_name[WLA_OFF], wla_name[WLA_NOT], ONTAWLISTB_BPR,
+                "Define the style and filter for OnTheAir watch list"},
     {2, {10,  R2Y(6), 150, PR_H},  {160, R2Y(6),  55, PR_H}, false, NULL,
                                                     wla_name[WLA_FLAG], wla_name[WLA_ONLY], ONTAWLISTA_BPR},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
@@ -654,12 +770,15 @@ static BoolPrompt bool_pr[N_BPR] = {
 
     // "page 4" -- index 3
 
-    {3, {10,  R2Y(2),  80, PR_H},  {100, R2Y(2), 110, PR_H}, false, "GPIO?", "Off", "Active", NOMATE},
-    {3, {250, R2Y(2),  80, PR_H},  {350, R2Y(2), 70,  PR_H}, false, "I2C file?", "No", NULL, NOMATE},
+    {3, {10,  R2Y(2),  80, PR_H},  {100, R2Y(2), 110, PR_H}, false, "GPIO?", "Off", "Active", NOMATE,
+                "Whether to control the RPi GPIO pins or ignore them"},
+    {3, {250, R2Y(2),  80, PR_H},  {350, R2Y(2), 70,  PR_H}, false, "I2C file?", "No", NULL, NOMATE,
+                "Whether to control I2C hardware devices"},
 
 
-    {3, {100, R2Y(5), 120, PR_H},  {250, R2Y(5),  120, PR_H}, false, "KX3?", "No", NULL, KX3BAUD_BPR},
-    {3, {250, R2Y(5),   0, PR_H},  {250, R2Y(5),  120, PR_H}, false, NULL, "4800 bps", "38400 bps",KX3ON_BPR},
+    {3, {100, R2Y(5), 120, PR_H},  {250, R2Y(5),  120, PR_H}, false, "KX3?", "No", NULL, KX3B_BPR,
+                "Whether or at which baud rate to control a KX3 transceiver via the RPi GPIO pin"},
+    {3, {250, R2Y(5),   0, PR_H},  {250, R2Y(5),  120, PR_H}, false, NULL, "4800 bps", "38400 bps", KX3A_BPR},
                                              // 3x entangled: FX -> TF -> TT ...
 
 
@@ -668,102 +787,140 @@ static BoolPrompt bool_pr[N_BPR] = {
     // "page 5" -- index 4
 
     {4, {10,  R2Y(1), 190, PR_H},  {200, R2Y(1), 170, PR_H}, false, "Date order?",
-                                        "Mon Day Year", NULL, DATEFMT_DMYYMD_BPR},
+                    "Mon Day Year", NULL, DATEFMT_DMYYMD_BPR,
+                    "Set desired date format"},
     {4, {10,  R2Y(1), 190, PR_H},  {200, R2Y(1), 170, PR_H}, false, NULL,
                                         "Day Mon Year", "Year Mon Day", DATEFMT_MDY_BPR},
                                              // 3x entangled: FX -> TF -> TT ...
 
 
-    {4, {400, R2Y(1), 190, PR_H},  {590, R2Y(1), 170, PR_H}, false, "Log usage?", "Opt-Out", "Opt-In",NOMATE},
+    {4, {400, R2Y(1), 190, PR_H},  {590, R2Y(1), 170, PR_H}, false, "Log usage?", "Opt-Out", "Opt-In",NOMATE,
+                    "Whether to report settings anonymously to support development"},
 
 
-    {4, {10,  R2Y(2), 190, PR_H},  {200, R2Y(2), 170, PR_H}, false, "Week starts?", "Sunday","Monday",NOMATE},
+    {4, {10,  R2Y(2), 190, PR_H},  {200, R2Y(2), 170, PR_H}, false, "Week starts?", "Sunday","Monday",NOMATE,
+                    "Select calendar first day of week"},
 
-    {4, {400, R2Y(2), 190, PR_H},  {590, R2Y(2), 170, PR_H}, false, "Demo mode?", "No", "Yes", NOMATE},
+    {4, {400, R2Y(2), 190, PR_H},  {590, R2Y(2), 170, PR_H}, false, "Demo mode?", "No", "Yes", NOMATE,
+                    "Select whether to make random changes automatically"},
 
 
 
     {4, {10,  R2Y(3), 190, PR_H},  {200, R2Y(3), 170, PR_H}, false, "Units?",
-                                        units_names[UNITS_IMP], NULL, UNITSB_BPR},
+                    units_names[UNITS_IMP], NULL, UNITSB_BPR,
+                    "Select units for temperature, distance and pressure"},
     {4, {10,  R2Y(3), 190, PR_H},  {200, R2Y(3), 170, PR_H}, false, NULL,
                                         units_names[UNITS_MET], units_names[UNITS_BRIT], UNITSA_BPR},
                                              // 3x entangled: FX -> TF -> TT ...
 
 
 
-    {4, {400, R2Y(3), 190, PR_H},  {590, R2Y(3), 170, PR_H}, false, "Bearings?","True N","Magnetic N",NOMATE},
+    {4, {400, R2Y(3), 190, PR_H},  {590, R2Y(3), 170, PR_H}, false, "Bearings?","True N","Magnetic N",NOMATE,
+                    "Choose geographic or magnetic azimuth bearings"},
 
 
 
-    {4, {10,  R2Y(4), 190, PR_H},  {200, R2Y(4), 170, PR_H}, false, "Show public IP?", "No", "Yes", NOMATE},
+    {4, {10,  R2Y(4), 190, PR_H},  {200, R2Y(4), 170, PR_H}, false, "Show public IP?", "No", "Yes", NOMATE,
+                    "Whether to display HamClock's public IP address beneath the call sign"},
 
-    {4, {400, R2Y(4), 190, PR_H},  {590, R2Y(4), 170, PR_H}, false, "New DE/DX Wx?",  "No", "Yes", NOMATE},
+    {4, {400, R2Y(4), 190, PR_H},  {590, R2Y(4), 170, PR_H}, false, "New DE/DX Wx?",  "No", "Yes", NOMATE,
+                    "Whether to briefly display local weather when setting new DX location"},
 
 
 
     {4, {10,  R2Y(5), 190, PR_H},  {200, R2Y(5), 170, PR_H}, false, "Spot labels?",
-                                        lbl_styles[LBL_NONE], lbl_styles[LBL_DOT], SPOTLBLB_BPR},
+                    lbl_styles[LBL_NONE], lbl_styles[LBL_DOT], SPOTLBLB_BPR,
+                    "How or whether to label spot locations on map"},
     {4, {10,  R2Y(5), 190, PR_H},  {200, R2Y(5), 170, PR_H}, false, NULL,
-                                        lbl_styles[LBL_PREFIX], lbl_styles[LBL_CALL], SPOTLBLA_BPR},
+                    lbl_styles[LBL_PREFIX], lbl_styles[LBL_CALL], SPOTLBLA_BPR},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
 
 
-    {4, {400, R2Y(5), 190, PR_H},  {590, R2Y(5), 170, PR_H}, false, "Gray display?", "No", NULL, GRAYB_BPR},
-    {4, {400, R2Y(5), 190, PR_H},  {590, R2Y(5), 170, PR_H}, false, NULL, "All", "Map", GRAYA_BPR},
+    {4, {400, R2Y(5), 190, PR_H},  {590, R2Y(5), 170, PR_H}, false, "Min label dist?",
+                    minLblD[0], minLblD[1], LBLDISTB_BPR,
+                    "Minimum distance from DE to label spots; mi or km as per Units"},
+    {4, {400, R2Y(5), 190, PR_H},  {590, R2Y(5), 170, PR_H}, false, NULL,
+                    minLblD[2], minLblD[3], LBLDISTA_BPR},
+                                                // 4x entangled: FF -> TF -> FT -> TT -> ...
+
+
+    {4, {10,  R2Y(6), 190, PR_H},  {200, R2Y(6), 170, PR_H}, false, "Scroll direction?",
+                    "Bottom-Up", "Top-Down", NOMATE,
+                    "Whether to scroll overflowing lists top-to-bottom or bottom-to-top"},
+
+
+    {4, {400, R2Y(6), 190, PR_H},  {590, R2Y(6), 170, PR_H}, false, "Gray display?", "No", NULL, GRAYB_BPR,
+                    "Whether to render the map or entire screen in shades of gray"},
+    {4, {400, R2Y(6), 190, PR_H},  {590, R2Y(6), 170, PR_H}, false, NULL, "All", "Map", GRAYA_BPR},
                                                 // 3x entangled: FX -> TF -> TT ...
                                                 // N.B. names must match getGrayDisplay();
 
 
-
-    {4, {10,  R2Y(6), 190, PR_H},  {200, R2Y(6), 170, PR_H}, false, "Scroll direction?",
-                                                                        "Bottom-Up", "Top-Down", NOMATE},
-
-
-    {4, {400, R2Y(6), 190, PR_H},  {590, R2Y(6), 170, PR_H}, false, "Map rotation?",
-                                                maprotp_strs[0], maprotp_strs[1], MAP_ROTPB_BPR},
-    {4, {400, R2Y(6), 190, PR_H},  {590, R2Y(6), 170, PR_H}, false, NULL,
-                                                maprotp_strs[2], maprotp_strs[3], MAP_ROTPA_BPR},
-                                                // 4x entangled: FF -> TF -> FT -> TT -> ...
-
-
     {4, {10,  R2Y(7), 190, PR_H},  {200, R2Y(7), 170, PR_H}, false, "Pane rotation?",
-                                                panerotp_strs[0], panerotp_strs[1], PANE_ROTPB_BPR},
+                    panerotp_strs[0], panerotp_strs[1], PANE_ROTPB_BPR,
+                    "Select how often to change data pane if more than one is selected"},
     {4, {10,  R2Y(7), 190, PR_H},  {200, R2Y(7), 170, PR_H}, false, NULL,
-                                                panerotp_strs[2], panerotp_strs[3], PANE_ROTPA_BPR},
+                    panerotp_strs[2], panerotp_strs[3], PANE_ROTPA_BPR},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
 
 
-    {4, {400, R2Y(7), 190, PR_H},  {590, R2Y(7), 170, PR_H}, false, "Look up bio?",
-                                qrz_urltable[QRZ_NONE].label, qrz_urltable[QRZ_QRZ].label, QRZBIOB_BPR},
+    {4, {400, R2Y(7), 190, PR_H},  {590, R2Y(7), 170, PR_H}, false, "Map rotation?",
+                    maprotp_strs[0], maprotp_strs[1], MAP_ROTPB_BPR,
+                    "Select how often to change map style if more than one is selected"},
     {4, {400, R2Y(7), 190, PR_H},  {590, R2Y(7), 170, PR_H}, false, NULL,
+                    maprotp_strs[2], maprotp_strs[3], MAP_ROTPA_BPR},
+                                                // 4x entangled: FF -> TF -> FT -> TT -> ...
+
+
+
+    {4, { 10, R2Y(8), 190, PR_H},  {200, R2Y(8), 170, PR_H}, false, "Show UDP spots?", "By me", "All",NOMATE,
+                    "Whether to show all spots from local UDP programs or just those from DE"},
+
+
+
+    {4, {400, R2Y(8), 190, PR_H},  {590, R2Y(8), 170, PR_H}, false, "Look up bio?",
+                    qrz_urltable[QRZ_NONE].label, qrz_urltable[QRZ_QRZ].label, QRZBIOB_BPR,
+                    "Whether and from which resource to offer looking up cluster spot biography"},
+    {4, {400, R2Y(8), 190, PR_H},  {590, R2Y(8), 170, PR_H}, false, NULL,
                                 qrz_urltable[QRZ_HAMCALL].label, qrz_urltable[QRZ_CQQRZ].label, QRZBIOA_BPR},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
 
 
-    {4, { 10, R2Y(8), 190, PR_H},  {200, R2Y(8), 170, PR_H}, false, "Show UDP spots?", "By me", "All",NOMATE},
 
-    {4, {400, R2Y(8), 190, PR_H},  {590, R2Y(8), 170, PR_H}, false, "UDP sets DX?", "No", "Yes", NOMATE},
-
-
-
-    {4, { 10, R2Y(9), 190, PR_H},  {200, R2Y(9), 170, PR_H}, false, "Auto SpcWx map?", "No", "Yes", NOMATE},
+    {4, { 10, R2Y(9), 190, PR_H},  {200, R2Y(9), 170, PR_H}, false, "Auto SpcWx map?", "No", "Yes", NOMATE,
+                    "Whether to automatically select Aurora or DRAP map styles when solar activity is high"},
 
 
+    {4, {400, R2Y(9), 190, PR_H},  {590, R2Y(9), 170, PR_H}, false, "UDP sets DX?", "No", "Yes", NOMATE,
+                    "Whether UDP spots from local programs also set DX"},
 
 
-    {4, {400, R2Y(9), 190, PR_H},  {590, R2Y(9), 170, PR_H}, false, "Auto upgrade?",
-                                    autoup_tbl[AUP_OFF].label, autoup_tbl[AUP_P1].label, AUTOUPB_BPR},
-    {4, {400, R2Y(9), 190, PR_H},  {590, R2Y(9), 170, PR_H}, false, NULL,
-                                    autoup_tbl[AUP_P2].label, autoup_tbl[AUP_P3].label, AUTOUPA_BPR},
+
+    {4, { 10, R2Y(10), 190, PR_H}, {200, R2Y(10), 170, PR_H}, false, "Full scrn web?", "No", "Yes", NOMATE,
+                    "Whether the web interface will allow using the full screen"},
+
+
+    {4, {400, R2Y(10), 190, PR_H},  {590, R2Y(10), 170, PR_H}, false, "Auto upgrade?",
+                    autoup_tbl[AUP_OFF].label, autoup_tbl[AUP_P1].label, AUTOUPB_BPR,
+                    "Whether or during which hour HamClock will automatically update to latest version"},
+    {4, {400, R2Y(10), 190, PR_H},  {590, R2Y(10), 170, PR_H}, false, NULL,
+                    autoup_tbl[AUP_P2].label, autoup_tbl[AUP_P3].label, AUTOUPA_BPR},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
 
 
-
-
-    {4, { 10, R2Y(10), 190, PR_H}, {200, R2Y(10), 170, PR_H}, false, "Full scrn web?", "No", "Yes", NOMATE},
-
-    {4, {400, R2Y(10), 190, PR_H}, {590, R2Y(10), 170, PR_H}, false, "Full scrn direct?", "No", "Yes",NOMATE},
+    {4, { 10, R2Y(11), 190, PR_H}, {200, R2Y(11), 170, PR_H}, false, "Full scrn direct?", "No", "Yes",NOMATE,
+                    "Whether the direct screen display will be set to full screen"},
                                                 // N.B. state box must be wide enough for "Won't fit"
+
+
+    {4, {400, R2Y(11), 190, PR_H},  {590, R2Y(11), 170, PR_H}, false, "Max TLE age:",
+                    maxTLEAges[0], maxTLEAges[1], MAXTLEB_BPR,
+                    "Max allowed satellite TLE age; beware longer will result in larger errors"},
+    {4, {400, R2Y(11), 190, PR_H},  {590, R2Y(11), 170, PR_H}, false, NULL,
+                    maxTLEAges[2], maxTLEAges[3], MAXTLEA_BPR},
+                                                // 4x entangled: FF -> TF -> FT -> TT -> ...
+
+
 
 
 
@@ -1384,20 +1541,37 @@ static void noBlanks (char *s)
     *s_to = '\0';
 }
 
-/* draw the Spider commands table
+/* draw the extra commands table info and table
  */
-static void drawSpiderCommandsHeader()
+static void drawExtraCluster()
 {
-    // border
+    // command table border
     tft.drawLine (SPIDER_BX, SPIDER_BY, SPIDER_BRX, SPIDER_BY, GRAY);
     tft.drawLine (SPIDER_BX, SPIDER_BBY, SPIDER_BRX, SPIDER_BBY, GRAY);
     tft.drawLine (SPIDER_BX, SPIDER_BY, SPIDER_BX, SPIDER_BBY, GRAY);
     tft.drawLine (SPIDER_BRX, SPIDER_BY, SPIDER_BRX, SPIDER_BBY, GRAY);
 
-    // labels
+    // command table labels
     tft.setTextColor (PR_C);
     tft.setCursor (SPIDER_TX, SPIDER_TY);
     tft.print ("Cluster Commands:");
+
+    // info about SSID
+    FontWeight fw;
+    FontSize fs;
+    getFontStyle (&fw, &fs);
+    selectFontStyle (LIGHT_FONT, FAST_FONT);
+    tft.setTextColor (TX_C);
+    uint16_t y = R2Y(5);
+    tft.setCursor (15, y);
+    tft.print ("login must include SSID in range 1-99 after call.");
+    tft.setCursor (15, y+=13);
+    tft.print ("SSID must be unique for each cluster connection.");
+    if (cs_info.call[0]) {
+        tft.setCursor (15, y+=13);
+        tft.printf ("Example: %s-%d", cs_info.call, DXC_DEF_SSID);
+    }
+    selectFontStyle (fw, fs);
 }
 
 static void drawPageButton()
@@ -1463,7 +1637,7 @@ static bool boolIsRelevant (BoolPrompt *bp)
             return (false);
     }
 
-    if (bp == &bool_pr[KX3ON_BPR]) {
+    if (bp == &bool_pr[KX3A_BPR]) {
         #if !defined(_SUPPORT_KX3)
             return (false);
         #else
@@ -1471,11 +1645,11 @@ static bool boolIsRelevant (BoolPrompt *bp)
         #endif
     }
 
-    if (bp == &bool_pr[KX3BAUD_BPR]) {
+    if (bp == &bool_pr[KX3B_BPR]) {
         #if !defined(_SUPPORT_KX3)
             return (false);
         #else
-            if (!bool_pr[KX3ON_BPR].state || !bool_pr[GPIOOK_BPR].state)
+            if (!bool_pr[KX3A_BPR].state || !bool_pr[GPIOOK_BPR].state)
                 return (false);
         #endif
     }
@@ -1712,7 +1886,7 @@ static void nextTabFocus (bool backwards)
         {       &string_pr[BME76DP_SPR], NULL},
         {       &string_pr[BME77DT_SPR], NULL},
         {       &string_pr[BME77DP_SPR], NULL},
-        { NULL, &bool_pr[KX3ON_BPR] },
+        { NULL, &bool_pr[KX3A_BPR] },
         {       &string_pr[BRMIN_SPR], NULL},
         {       &string_pr[BRMAX_SPR], NULL},
 
@@ -1727,17 +1901,19 @@ static void nextTabFocus (bool backwards)
         { NULL, &bool_pr[SHOWPIP_BPR] },
         { NULL, &bool_pr[NEWDXDEWX_BPR] },
         { NULL, &bool_pr[SPOTLBLA_BPR] },
-        { NULL, &bool_pr[GRAYA_BPR] },
+        { NULL, &bool_pr[LBLDISTA_BPR] },
         { NULL, &bool_pr[SCROLLDIR_BPR] },
-        { NULL, &bool_pr[MAP_ROTPA_BPR] },
+        { NULL, &bool_pr[GRAYA_BPR] },
         { NULL, &bool_pr[PANE_ROTPA_BPR] },
-        { NULL, &bool_pr[QRZBIOA_BPR] },
+        { NULL, &bool_pr[MAP_ROTPA_BPR] },
         { NULL, &bool_pr[UDPSPOTS_BPR] },
-        { NULL, &bool_pr[UDPSETSDX_BPR] },
+        { NULL, &bool_pr[QRZBIOA_BPR] },
         { NULL, &bool_pr[AUTOMAP_BPR] },
-        { NULL, &bool_pr[AUTOUPA_BPR] },
+        { NULL, &bool_pr[UDPSETSDX_BPR] },
         { NULL, &bool_pr[WEB_FULLSCRN_BPR] },
+        { NULL, &bool_pr[AUTOUPA_BPR] },
         { NULL, &bool_pr[X11_FULLSCRN_BPR] },
+        { NULL, &bool_pr[MAXTLEA_BPR] },
 
         // page 6
 
@@ -2107,11 +2283,11 @@ static void checkLLGEdit(const StringPrompt *sp)
 
         // convert to grid if possible
         LatLong ll;
-        strtrim (string_pr[LAT_SPR].v_str);
-        strtrim (string_pr[LNG_SPR].v_str);
+        strTrimAll (string_pr[LAT_SPR].v_str);
+        strTrimAll (string_pr[LNG_SPR].v_str);
         if (latSpecIsValid (string_pr[LAT_SPR].v_str, ll.lat_d)
                         && lngSpecIsValid (string_pr[LNG_SPR].v_str, ll.lng_d)) {
-            normalizeLL (ll);
+            ll.normalize();
             ll2maidenhead (string_pr[GRID_SPR].v_str, ll);
             eraseSPValue (&string_pr[GRID_SPR]);
             drawSPValue (&string_pr[GRID_SPR]);
@@ -2125,7 +2301,7 @@ static void checkLLGEdit(const StringPrompt *sp)
 
         // convert to ll if possible
         LatLong ll;
-        strtrim (sp->v_str);
+        strTrimAll (sp->v_str);
         if (maidenhead2ll (ll, sp->v_str)) {
             formatLat (ll.lat_d, string_pr[LAT_SPR].v_str, string_pr[LAT_SPR].v_len);
             eraseSPValue (&string_pr[LAT_SPR]);
@@ -2140,6 +2316,21 @@ static void checkLLGEdit(const StringPrompt *sp)
 
         ll_edited = true;
     }
+}
+
+/* draw the tooltip reminder across the very bottom
+ */
+void drawToolTipReminder(void)
+{
+    FontWeight fw;
+    FontSize fs;
+    getFontStyle (&fw, &fs);
+    selectFontStyle (LIGHT_FONT, FAST_FONT);
+    uint16_t tt_w = getTextWidth (tt_reminder);
+    tft.setTextColor(PR_C);
+    tft.setCursor ((tft.width() - tt_w)/2, TT_Y0);
+    tft.print (tt_reminder);
+    selectFontStyle (fw, fs);
 }
 
 /* draw the virtual keyboard
@@ -2347,7 +2538,7 @@ static void engageBoolTap (BoolPrompt *bp)
 
 
 
-/* find whether s is in any string_pr.
+/* find whether s is in any relevant string_pr.
  * if so return true and set *spp, else return false.
  */
 static bool tappedStringPrompt (SCoord &s, StringPrompt **spp)
@@ -2364,7 +2555,7 @@ static bool tappedStringPrompt (SCoord &s, StringPrompt **spp)
     return (false);
 }
 
-/* find whether s is in any relevant bool object.
+/* find whether s is in any relevant bool_pr.
  * require s within prompt or state box.
  * if so return true and set *bpp, else return false.
  */
@@ -2441,7 +2632,7 @@ static void drawCurrentPageFields()
 
     // draw spider header if appropriate
     if (cur_page == SPIDER_PAGE && bool_pr[CLUSTER_BPR].state && !bool_pr[CLISUDP_BPR].state)
-        drawSpiderCommandsHeader();
+        drawExtraCluster();
 
     #if defined(_WIFI_ALWAYS)
         // show prompt but otherwise is not relevant
@@ -2456,8 +2647,9 @@ static void drawCurrentPageFields()
 
 
 /* update the color component based on s known to be within csel_ctl_b.
+ * return if real else just showing tooltip.
  */
-static void editCSelBoxColor (const SCoord &s, uint8_t &r, uint8_t &g, uint8_t &b)
+static bool editCSelBoxColor (const SCoord &s, TouchType tt, uint8_t &r, uint8_t &g, uint8_t &b)
 {
     // offset withing csel_ctl_b
     uint16_t dx = s.x - CSEL_SCX;
@@ -2471,23 +2663,51 @@ static void editCSelBoxColor (const SCoord &s, uint8_t &r, uint8_t &g, uint8_t &
 
         // update one component to new color depending on y, leave the others unchanged
         if (dy < CSEL_SCYG/2 + CSEL_SCH) {
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click along this color scale to set value of red");
+                return (false);
+            }
             r = new_v;                          // tapped first row
         } else if (dy < CSEL_SCYG/2 + CSEL_SCH + CSEL_SCYG + CSEL_SCH) {
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click along this color scale to set value of green");
+                return (false);
+            }
             g = new_v;                          // tapped second row
         } else {
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click along this color scale to set value of blue");
+                return (false);
+            }
             b = new_v;                          // tapped third row
         }
 
     } else if (dx > CSEL_SCW + CSEL_VDX) {
 
         // near a numeric value: just set focus to allow normal editing
-        if (dy < CSEL_SCH + CSEL_SCYG/2)
+        if (dy < CSEL_SCH + CSEL_SCYG/2) {
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to edit red component value from 1-255");
+                return (false);
+            }
             cur_focus[cur_page].sp = &string_pr[CSELRED_SPR];
-        else if (dy < 2*CSEL_SCH + 3*CSEL_SCYG/2)
+        } else if (dy < 2*CSEL_SCH + 3*CSEL_SCYG/2) {
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to edit green component value from 1-255");
+                return (false);
+            }
             cur_focus[cur_page].sp = &string_pr[CSELGRN_SPR];
-        else
+        } else {
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to edit blue component value from 1-255");
+                return (false);
+            }
             cur_focus[cur_page].sp = &string_pr[CSELBLU_SPR];
+        }
     }
+
+    // real
+    return (true);
 }
 
 /* internal version.
@@ -2663,7 +2883,7 @@ static void drawCSelInitGUI()
     // N.B. must restore default font after using smaller font
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
     tft.setTextColor (TX_C);
-    tft.setCursor (350, 30); tft.print ("Color Editor");
+    tft.setCursor (350, 27); tft.print ("Color Editor");
 
     // draw gradient behind swatches -- N.B. match drawCSelDemoSwatch()
     for (int dx = 0; dx < CSEL_DW; dx++) {
@@ -2854,11 +3074,11 @@ static void handleCSelKB (void)
 }
 
 
-/* handle a possible kb or touch event while on the color selection page.
+/* handle a possible touch event while on the color selection page.
  * return whether ours.
  * N.B. we assume ctsl_done_b has already been handled
  */
-static bool handleCSelTouch (SCoord &s)
+static bool handleCSelTouch (TouchType tt, SCoord &s)
 {
     bool ours = false;
 
@@ -2867,7 +3087,7 @@ static bool handleCSelTouch (SCoord &s)
         for (int i = 0; i < N_CSPR; i++) {
             ColSelPrompt &p = csel_pr[i];
             if (p.e_state) {
-                editCSelBoxColor(s, p.r, p.g, p.b);
+                editCSelBoxColor(s, tt, p.r, p.g, p.b);
                 drawCSelPromptColor(p, true);
                 drawCSelDemoSwatch (p);
                 break;
@@ -2881,10 +3101,14 @@ static bool handleCSelTouch (SCoord &s)
         for (int i = 0; i < N_CSPR; i++) {
             ColSelPrompt &p = csel_pr[i];
             if (CSEL_DASHOK(p) && inBox (s, p.a_box)) {
-                // toggle and redraw
-                p.a_state = !p.a_state;
-                drawCSelDemoSwatch (p);
-                drawCSelDashTickBox(p);
+                if (tt == TT_TAP_BX)
+                    tooltip (s, "Whether this line is drawn solid or dashed");
+                else {
+                    // toggle and redraw
+                    p.a_state = !p.a_state;
+                    drawCSelDemoSwatch (p);
+                    drawCSelDashTickBox(p);
+                }
                 ours = true;
                 break;
             }
@@ -2896,17 +3120,21 @@ static bool handleCSelTouch (SCoord &s)
         for (int i = 0; i < N_CSPR; i++) {
             ColSelPrompt &p = csel_pr[i];
             if (inBox (s, p.e_box) && !p.e_state) {
-                // clicked an off box, make it the only one on (ignore clicking an on box)
-                for (int j = 0; j < N_CSPR; j++) {
-                    ColSelPrompt &pj = csel_pr[j];
-                    if (pj.e_state) {
-                        pj.e_state = false;
-                        drawCSelEditingTickBox (pj);
+                if (tt == TT_TAP_BX)
+                    tooltip (s, "Select to edit the color of this line");
+                else {
+                    // clicked an off box, make it the only one on (ignore clicking an on box)
+                    for (int j = 0; j < N_CSPR; j++) {
+                        ColSelPrompt &pj = csel_pr[j];
+                        if (pj.e_state) {
+                            pj.e_state = false;
+                            drawCSelEditingTickBox (pj);
+                        }
                     }
+                    p.e_state = true;
+                    drawCSelEditingTickBox (p);
+                    drawCSelPromptColor (p, true);
                 }
-                p.e_state = true;
-                drawCSelEditingTickBox (p);
-                drawCSelPromptColor (p, true);
                 ours = true;
                 break;
             }
@@ -2918,8 +3146,12 @@ static bool handleCSelTouch (SCoord &s)
         for (int i = 0; i < N_CSPR; i++) {
             ColSelPrompt &p = csel_pr[i];
             if (CSEL_ONOFFOK(p) && inBox (s, p.o_box)) {
-                p.o_state = !p.o_state;
-                drawCSelOnOffTickBox (p);
+                if (tt == TT_TAP_BX)
+                    tooltip (s, "Whether this line is drawn at all");
+                else {
+                    p.o_state = !p.o_state;
+                    drawCSelOnOffTickBox (p);
+                }
                 ours = true;
                 break;
             }
@@ -2931,9 +3163,13 @@ static bool handleCSelTouch (SCoord &s)
         for (int i = 0; i < N_CSPR; i++) {
             ColSelPrompt &p = csel_pr[i];
             if (inBox (s, p.t_box)) {
-                p.t_state = !p.t_state;
-                drawCSelThicknessTickBox (p);
-                drawCSelDemoSwatch (p);
+                if (tt == TT_TAP_BX)
+                    tooltip (s, "Whether this line is drawn thick or thin");
+                else {
+                    p.t_state = !p.t_state;
+                    drawCSelThicknessTickBox (p);
+                    drawCSelDemoSwatch (p);
+                }
                 ours = true;
                 break;
             }
@@ -2944,17 +3180,35 @@ static bool handleCSelTouch (SCoord &s)
     if (!ours) {
         ours = true;
         if (inBox (s, ctsl_save1_b)) {
-            saveColorTable (1, NV_CSELDASHED_A, NV_CSELTHIN_A, NV_CSELONOFF_A, " A ", ctsl_save1_b);
+            if (tt == TT_TAP_BX)
+                tooltip (s, "Save the current colors to memory table A");
+            else
+                saveColorTable (1, NV_CSELDASHED_A, NV_CSELTHIN_A, NV_CSELONOFF_A, " A ", ctsl_save1_b);
         } else if (inBox (s, ctsl_save2_b)) {
-            saveColorTable (2, NV_CSELDASHED_B, NV_CSELTHIN_B, NV_CSELONOFF_B, " B ", ctsl_save2_b);
+            if (tt == TT_TAP_BX)
+                tooltip (s, "Save the current colors to memory table B");
+            else
+                saveColorTable (2, NV_CSELDASHED_B, NV_CSELTHIN_B, NV_CSELONOFF_B, " B ", ctsl_save2_b);
         } else if (inBox (s, ctsl_load1_b)) {
-            loadColorTable (1, NV_CSELDASHED_A, NV_CSELTHIN_A, NV_CSELONOFF_A, " A ", ctsl_load1_b);
+            if (tt == TT_TAP_BX)
+                tooltip (s, "Restore colors from memory table A");
+            else
+                loadColorTable (1, NV_CSELDASHED_A, NV_CSELTHIN_A, NV_CSELONOFF_A, " A ", ctsl_load1_b);
         } else if (inBox (s, ctsl_load2_b)) {
-            loadColorTable (2, NV_CSELDASHED_B, NV_CSELTHIN_B, NV_CSELONOFF_B, " B ", ctsl_load2_b);
+            if (tt == TT_TAP_BX)
+                tooltip (s, "Restore colors from memory table B");
+            else
+                loadColorTable (2, NV_CSELDASHED_B, NV_CSELTHIN_B, NV_CSELONOFF_B, " B ", ctsl_load2_b);
         } else if (inBox (s, ctsl_loadp_b))
-            loadPSKColorTable();
+            if (tt == TT_TAP_BX)
+                tooltip (s, "Set colors similar to used at pskreporter.info");
+            else
+                loadPSKColorTable();
         else if (inBox (s, ctsl_loadd_b))
-            loadDefaultColorTable();
+            if (tt == TT_TAP_BX)
+                tooltip (s, "Set colors from a built-in default");
+            else
+                loadDefaultColorTable();
         else
             ours = false;
     }
@@ -3061,12 +3315,13 @@ static void drawOnOffControls()
 /* handle possible touch on the onoff controls page.
  * return whether really ours
  */
-static bool checkOnOffTouch (SCoord &s)
+static bool checkOnOffTouch (TouchType tt, SCoord &s)
 {
 
     if (!HAVE_ONOFF())
         return (false);
 
+    // done if not in table at all
     int dow = ((int)s.x - (OO_X0+OO_CI))/OO_CW;
     int row = ((int)s.y - (OO_Y0-OO_RH))/OO_RH;
     if (dow < 0 || dow >= DAYSPERWEEK || row < 0 || row > 6)
@@ -3091,9 +3346,17 @@ static bool checkOnOffTouch (SCoord &s)
         int newdow;
         if (hour_col) {
             // copy left
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to copy today's settings to previous day");
+                return (true);
+            }
             newdow = (dow - 1 + DAYSPERWEEK) % DAYSPERWEEK;
         } else if (mins_col) {
             // copy right
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to copy today's settings to next day");
+                return (true);
+            }
             newdow = (dow + 1) % DAYSPERWEEK;
         } else
             return (false);
@@ -3102,35 +3365,67 @@ static bool checkOnOffTouch (SCoord &s)
         drawOnOffTimeCell (newdow, OO_ONY, ontimes[newdow]);
         drawOnOffTimeCell (newdow, OO_OFFY, offtimes[newdow]);
     } else if (oninc_row) {
-        if (hour_col)
+        if (hour_col) {
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to increase On time by one hour");
+                return (true);
+            }
             ontimes[dow] = (ontimes[dow] + 60) % MINSPERDAY;
-        else if (mins_col)
+        } else if (mins_col) {
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to increase On time by five minutes");
+                return (true);
+            }
             ontimes[dow] = (ontimes[dow] + 5)  % MINSPERDAY;
-        else
+        } else
             return (false);
         drawOnOffTimeCell (dow, OO_ONY, ontimes[dow]);
     } else if (ondec_row) {
-        if (hour_col)
+        if (hour_col) {
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to decrease On time by one hour");
+                return (true);
+            }
             ontimes[dow] = (ontimes[dow] + MINSPERDAY-60) % MINSPERDAY;
-        else if (mins_col)
+        } else if (mins_col) {
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to decrease On time by five minutes");
+                return (true);
+            }
             ontimes[dow] = (ontimes[dow] + MINSPERDAY-5)  % MINSPERDAY;
-        else
+        } else
             return (false);
         drawOnOffTimeCell (dow, OO_ONY, ontimes[dow]);
     } else if (offinc_row) {
-        if (hour_col)
+        if (hour_col) {
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to increase Off time by one hour");
+                return (true);
+            }
             offtimes[dow] = (offtimes[dow] + 60) % MINSPERDAY;
-        else if (mins_col)
+        } else if (mins_col) {
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to increase Off time by five minutes");
+                return (true);
+            }
             offtimes[dow] = (offtimes[dow] + 5)  % MINSPERDAY;
-        else
+        } else
             return (false);
         drawOnOffTimeCell (dow, OO_OFFY, offtimes[dow]);
     } else if (offdec_row) {
-        if (hour_col)
+        if (hour_col) {
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to decrease Off time by one hour");
+                return (true);
+            }
             offtimes[dow] = (offtimes[dow] + MINSPERDAY-60) % MINSPERDAY;
-        else if (mins_col)
+        } else if (mins_col) {
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to decrease Off time by five minutes");
+                return (true);
+            }
             offtimes[dow] = (offtimes[dow] + MINSPERDAY-5)  % MINSPERDAY;
-        else
+        } else
             return (false);
         drawOnOffTimeCell (dow, OO_OFFY, offtimes[dow]);
     }
@@ -3160,6 +3455,7 @@ static void changePage (int new_page)
         drawPageButton();
         drawCurrentPageFields();
         drawDoneButton(false);
+        drawToolTipReminder();
 
     } else if (new_page == ONOFF_PAGE) {
         // new page is just the on/off table
@@ -3167,6 +3463,7 @@ static void changePage (int new_page)
         drawPageButton();
         drawOnOffControls();
         drawDoneButton(false);
+        drawToolTipReminder();
 
     } else if (new_page == COLOR_PAGE) {
         // new page is color, always a fresh start
@@ -3189,6 +3486,7 @@ static void changePage (int new_page)
             drawCurrentPageFields();
             drawKeyboard();
             drawDoneButton(false);
+            drawToolTipReminder();
         }
     }
 }
@@ -3199,7 +3497,7 @@ static void changePage (int new_page)
 static bool portOK (char *port_str, int min_port, uint16_t *portp)
 {
     char *first_bad;
-    strtrim (port_str);
+    strTrimAll (port_str);
     int portn = strtol (port_str, &first_bad, 10);
     if (first_bad == port_str || *first_bad != '\0' || portn < min_port || portn > 65535)
         return (false);
@@ -3270,9 +3568,21 @@ static bool I2CFnOk(void)
  */
 static bool clusterLoginOk()
 {
-    // must be blank or contain DE call
+    // must contain DE call and SSID
     noBlanks(dx_login);
-    return (dx_login[0] == '\0' || strcistr (dx_login, cs_info.call) != NULL);
+    char call[100];
+    int ssid = 0;
+    return (sscanf (dx_login, "%99[^-]-%d", call, &ssid) == 2
+                && ssid > 0 && ssid <= DXC_MAX_SSID
+                && strcasecmp (call, cs_info.call) == 0);
+}
+
+/* set a default cluster login if possible
+ */
+static void setClusterLogin()
+{
+    if (cs_info.call[0] != '\0')
+        snprintf (dx_login, sizeof(dx_login), "%.*s-%d", (int)sizeof(dx_login)-4, cs_info.call, DXC_DEF_SSID);
 }
 
 /* return whether the candidate string looks anything like a valid call sign
@@ -3319,7 +3629,7 @@ static bool validateStringPrompts (bool show_errors)
     SPIds err_sid = N_SPR;
 
     // check call
-    strtrim(cs_info.call);
+    strTrimAll(cs_info.call);
     if (!callsignOk (cs_info.call))
         badsids[n_badsids++] = CALL_SPR;
 
@@ -3344,12 +3654,13 @@ static bool validateStringPrompts (bool show_errors)
             badsids[n_badsids++] = DXHOST_SPR;
         if (!portOK (string_pr[DXPORT_SPR].v_str, 23, &dx_port))          // 23 is telnet
             badsids[n_badsids++] = DXPORT_SPR;
-        if (!bool_pr[CLISUDP_BPR].state && !clusterLoginOk())             // login is not used with wsjt
-            badsids[n_badsids++] = DXLOGIN_SPR;
+        if (!bool_pr[CLISUDP_BPR].state && !clusterLoginOk()) {           // login is not used with wsjt
+            badsids[n_badsids++] = err_sid = DXLOGIN_SPR;
+        }
 
         // clean up any extra white space in the commands then check for blank entries that are on
         for (int i = 0; i < N_DXCLCMDS; i++) {
-            strtrim(dxcl_cmds[i]);
+            strTrimAll(dxcl_cmds[i]);
             if (strlen(dxcl_cmds[i]) == 0 && bool_pr[DXCLCMD0_BPR+i].state)
                 badsids[n_badsids++] = (SPIds)(DXCLCMD0_SPR+i);
         }
@@ -3365,7 +3676,7 @@ static bool validateStringPrompts (bool show_errors)
 
     // ONTA watch list must compile successfully if being used
     if (getWatchListState (WLID_ONTA, NULL) != WLA_OFF) {
-        strtrim (onta_wlist);
+        strTrimAll (onta_wlist);
         if (!compileWatchList (WLID_ONTA, onta_wlist, err_buf)) {
             err_msg = err_buf.get();
             badsids[n_badsids++] = err_sid = ONTAWL_SPR;
@@ -3374,7 +3685,7 @@ static bool validateStringPrompts (bool show_errors)
 
     // ADIF watch list must compile successfully
     if (getWatchListState (WLID_ADIF, NULL) != WLA_OFF) {
-        strtrim (adif_wlist);
+        strTrimAll (adif_wlist);
         if (!compileWatchList (WLID_ADIF, adif_wlist, err_buf)) {
             err_msg = err_buf.get();
             badsids[n_badsids++] = err_sid = ADIFWL_SPR;
@@ -3489,7 +3800,7 @@ static bool validateStringPrompts (bool show_errors)
 
     // check I2C file name
     if (bool_pr[I2CON_BPR].state) {
-        strtrim (i2c_fn);
+        strTrimAll (i2c_fn);
         if (!I2CFnOk())
             badsids[n_badsids++] = I2CFN_SPR;
     }
@@ -3862,7 +4173,7 @@ static void initSetup()
         NVWriteString(NV_DXHOST, dx_host);
     }
     if (!NVReadString(NV_DXLOGIN, dx_login) || !clusterLoginOk()) {
-        strcpy (dx_login, cs_info.call);      // default to call
+        setClusterLogin();
         NVWriteString(NV_DXLOGIN, dx_login);
     }
     if (!NVReadUInt16(NV_DXPORT, &dx_port)) {
@@ -3979,7 +4290,7 @@ static void initSetup()
         // http://www.kansastravel.org/geographicalcenter.htm
         de_ll.lng_d = -99;
         de_ll.lat_d = 40;
-        normalizeLL(de_ll);
+        de_ll.normalize();
         NVWriteFloat (NV_DE_LAT, de_ll.lat_d);
         NVWriteFloat (NV_DE_LNG, de_ll.lng_d);
         ll2maidenhead (de_maid, de_ll);
@@ -3998,8 +4309,8 @@ static void initSetup()
         kx3 = 0;                                // default off
         NVWriteUInt32 (NV_KX3BAUD, kx3);
     }
-    bool_pr[KX3ON_BPR].state = (kx3 != 0);
-    bool_pr[KX3BAUD_BPR].state = (kx3 == 38400);
+    bool_pr[KX3A_BPR].state = (kx3 != 0);
+    bool_pr[KX3B_BPR].state = (kx3 == 38400);
 
 
     // init GPIOOK -- might effect KX3ON
@@ -4010,9 +4321,9 @@ static void initSetup()
         NVWriteUInt8 (NV_GPIOOK, gpiook);
     }
     bool_pr[GPIOOK_BPR].state = (gpiook != 0);
-    if (!gpiook && bool_pr[KX3ON_BPR].state) {
+    if (!gpiook && bool_pr[KX3A_BPR].state) {
         // no KX3 if no GPIO
-        bool_pr[KX3ON_BPR].state = false;
+        bool_pr[KX3A_BPR].state = false;
         NVWriteUInt32 (NV_KX3BAUD, 0);
     }
 
@@ -4320,6 +4631,43 @@ static void initSetup()
         NVWriteInt8 (NV_AUTOUPGRADE, aup_hr);
         setEntangledValue (AUTOUPA_BPR, AUTOUPB_BPR, autoup_tbl[AUP_OFF].label);
     }
+
+
+
+    uint8_t max_tle = 0;
+    int max_tle_i = -1;                                 // index of matching maxTLEAges, if any
+    (void) NVReadUInt8 (NV_MAXTLEAGE, &max_tle);        // will fix if bogus
+    for (int i = 0; i < N_MAXTLE; i++) {
+        if (max_tle == atoi(maxTLEAges[i])) {
+            max_tle_i = i;
+            break;
+        }
+    }
+    if (max_tle_i < 0) {
+        max_tle_i = MAXTLE_DEF;
+        uint8_t fix_max_tle = atoi(maxTLEAges[MAXTLE_DEF]);
+        NVWriteUInt8 (NV_MAXTLEAGE, fix_max_tle);
+        Serial.printf ("Setup: fixing NV_MAXTLEAGE from %d to %d\n", max_tle, fix_max_tle);
+    }
+    setEntangledValue (MAXTLEA_BPR, MAXTLEB_BPR, maxTLEAges[max_tle_i]);
+
+
+    uint16_t min_lbl = 0;
+    int min_lbl_i = -1;                                 // index of matching maxTLEAges, if any
+    (void) NVReadUInt16 (NV_MINLBLDIST, &min_lbl);      // will fix if bogus
+    for (int i = 0; i < N_MINLBL; i++) {
+        if (min_lbl == atoi(minLblD[i])) {
+            min_lbl_i = i;
+            break;
+        }
+    }
+    if (min_lbl_i < 0) {
+        min_lbl_i = MINLBL_DEF;
+        uint16_t fix_min_lbl = atoi(minLblD[MINLBL_DEF]);
+        NVWriteUInt16 (NV_MINLBLDIST, fix_min_lbl);
+        Serial.printf ("Setup: fixing NV_MINLBLDIST from %d to %d\n", min_lbl, fix_min_lbl);
+    }
+    setEntangledValue (LBLDISTA_BPR, LBLDISTB_BPR, minLblD[min_lbl_i]);
 }
 
 
@@ -4355,17 +4703,21 @@ static bool askRun()
         // check for touch, type ESC or abort box
         SCoord s;
         TouchType tt = readCalTouchWS (s);
-        char c = tft.getChar (NULL, NULL);
-        if (tt != TT_NONE || c != CHAR_NONE) {
-            drainTouch();
-            if (c == CHAR_ESC || (tt != TT_NONE && inBox (s, skip_b))) {
-                drawStringInBox ("Skip", skip_b, true, TX_C);
-                return (false);
+        if (tt == TT_TAP_BX)
+            tooltip (s, "click to skip Setup");
+        else {
+            char c = tft.getChar (NULL, NULL);
+            if (tt != TT_NONE || c != CHAR_NONE) {
+                drainTouch();
+                if (c == CHAR_ESC || (tt != TT_NONE && inBox (s, skip_b))) {
+                    drawStringInBox ("Skip", skip_b, true, TX_C);
+                    return (false);
+                }
+                    
+                break;
             }
-                
-            break;
+            wdDelay(100);
         }
-        wdDelay(100);
     }
 
     return (to > 0);
@@ -4492,18 +4844,13 @@ static void runSetup()
     screen.w = tft.width();
     screen.h = tft.height();
 
-    SCoord s;
-    char c;
     UserInput ui = {
         screen,         // bounding box
         UI_UFuncNone,   // no aux function
         UF_UNUSED,      // don't care
         UI_NOTIMEOUT,   // wait forever
         UF_NOCLOCKS,    // no clocks
-        s,              // AKA ui.tap
-        c,              // AKA ui.kbchar
-        false,          // whether ctrl with kbchar
-        false           // whether shift with kbchar
+        {0, 0}, TT_NONE, '\0', false, false
     };
 
     do {
@@ -4511,7 +4858,6 @@ static void runSetup()
         BoolPrompt *bp = NULL;
 
         // wait forever for next tap or character input
-        ui.kb_ctrl = ui.kb_shift = false;             // reset modifier keys before each call
         (void) waitForUser(ui);
         if (ui.kb_char == CHAR_NONE) {
             if (!s2char (ui.tap, ui.kb_char))
@@ -4519,22 +4865,22 @@ static void runSetup()
         }
 
         // check NL
-        if (c == CHAR_NL)
+        if (ui.kb_char == CHAR_NL)
             continue;
 
         // process special cases first
 
-        if (inBox (s, page_b)) {
+        if (inBox (ui.tap, page_b)) {
 
             // change page back or forward depending on whether tapped in left or right half
-            if (s.x > page_b.x + page_b.w/2)
+            if (ui.tap.x > page_b.x + page_b.w/2)
                 changePage ((cur_page+1)%N_PAGES);
             else
                 changePage ((N_PAGES+cur_page-1)%N_PAGES);
             continue;
         }
 
-        if (c == CHAR_ESC) {              // esc
+        if (ui.kb_char == CHAR_ESC) {              // esc
 
             // show next page
             changePage ((cur_page+1)%N_PAGES);
@@ -4544,26 +4890,26 @@ static void runSetup()
         if (cur_page == COLOR_PAGE) {
 
             // check color page if tapped -- strings are checked as part of editing
-            if (c == CHAR_NONE && handleCSelTouch(s))
+            if (ui.kb_char == CHAR_NONE && handleCSelTouch (ui.tt, ui.tap))
                 continue;
         }
 
         if (cur_page == ONOFF_PAGE) {
 
-            if (checkOnOffTouch(s))
+            if (checkOnOffTouch(ui.tt, ui.tap))
                 continue;
         }
 
         // proceed with normal fields processing
 
-        if (c == CHAR_TAB || c == CHAR_UP || c == CHAR_DOWN) {
+        if (ui.kb_char == CHAR_TAB || ui.kb_char == CHAR_UP || ui.kb_char == CHAR_DOWN) {
 
             // move focus to next or prior tab position depending on shift modified
             eraseCursor();
-            nextTabFocus((c == CHAR_TAB && ui.kb_shift) || c == CHAR_UP);
+            nextTabFocus((ui.kb_char == CHAR_TAB && ui.kb_shift) || ui.kb_char == CHAR_UP);
             drawCursor();
 
-        } else if (cur_focus[cur_page].sp && c == CHAR_LEFT) {
+        } else if (cur_focus[cur_page].sp && ui.kb_char == CHAR_LEFT) {
 
             // move cursor one left as possible
             StringPrompt *sp = cur_focus[cur_page].sp;
@@ -4574,7 +4920,7 @@ static void runSetup()
                 drawCursor ();
             }
 
-        } else if (cur_focus[cur_page].sp && c == CHAR_RIGHT) {
+        } else if (cur_focus[cur_page].sp && ui.kb_char == CHAR_RIGHT) {
 
             // move cursor one right as possible
 
@@ -4584,7 +4930,7 @@ static void runSetup()
             drawSPValue (sp);
             drawCursor ();
 
-        } else if (cur_focus[cur_page].sp && (c == CHAR_DEL || c == CHAR_BS)) {
+        } else if (cur_focus[cur_page].sp && (ui.kb_char == CHAR_DEL || ui.kb_char == CHAR_BS)) {
 
             // tapped Delete while focus is string
 
@@ -4610,7 +4956,7 @@ static void runSetup()
                 flagErrField (sp, true, "empty");
 
 
-        } else if (cur_focus[cur_page].sp && isprint(c)) {
+        } else if (cur_focus[cur_page].sp && isprint(ui.kb_char)) {
 
             // received a new char for inserting into string with focus
 
@@ -4618,9 +4964,9 @@ static void runSetup()
 
             // enforce call sign upper case
             if (sp == &string_pr[CALL_SPR])
-                c = toupper(c);
+                ui.kb_char = toupper(ui.kb_char);
 
-            // insert c at v_ci if room, else ignore
+            // insert ui.kb_char at v_ci if room, else ignore
             size_t vl = strlen (sp->v_str);
             if (vl < sp->v_len-1U) {
 
@@ -4628,7 +4974,7 @@ static void runSetup()
 
                 // make room by shifting right and redraw
                 memmove (&sp->v_str[sp->v_ci+1], &sp->v_str[sp->v_ci], vl - sp->v_ci + 1);      // w/EOS
-                sp->v_str[sp->v_ci++] = c;
+                sp->v_str[sp->v_ci++] = ui.kb_char;
                 drawSPValue (sp);
                 drawCursor ();
 
@@ -4641,15 +4987,21 @@ static void runSetup()
             } else
                 flagErrField (sp, true, "full");
 
-        } else if (tappedBool (s, &bp) || (c == CHAR_SPACE && cur_focus[cur_page].bp)) {
+        } else if (tappedBool (ui.tap, &bp) || (ui.kb_char == CHAR_SPACE && cur_focus[cur_page].bp)) {
 
             // typing space applies to focus bool
-            if (c == CHAR_SPACE)
+            if (ui.kb_char == CHAR_SPACE)
                 bp = cur_focus[cur_page].bp;
 
             // ignore tapping on bools not being shown
             if (!bp || !boolIsRelevant(bp))
                 continue;
+
+            // check for tooltip
+            if (bp->tt && ui.tt == TT_TAP_BX) {
+                tooltip (ui.tap, bp->tt);
+                continue;
+            }
 
             // toggle and redraw with new cursor position
             engageBoolTap (bp);
@@ -4815,12 +5167,12 @@ static void runSetup()
 
             else if (bp == &bool_pr[GPIOOK_BPR]) {
                 if (bp->state) {
-                    drawBPPrompt (&bool_pr[KX3ON_BPR]);
-                    drawEntangledBools(&bool_pr[KX3ON_BPR], &bool_pr[KX3BAUD_BPR]);
+                    drawBPPrompt (&bool_pr[KX3A_BPR]);
+                    drawEntangledBools(&bool_pr[KX3A_BPR], &bool_pr[KX3B_BPR]);
                 } else {
-                    bool_pr[KX3ON_BPR].state = false;
-                    eraseBPPromptState (&bool_pr[KX3ON_BPR]);
-                    eraseBPPromptState (&bool_pr[KX3BAUD_BPR]);
+                    bool_pr[KX3A_BPR].state = false;
+                    eraseBPPromptState (&bool_pr[KX3A_BPR]);
+                    eraseBPPromptState (&bool_pr[KX3B_BPR]);
                 }
                 drawBMEPrompts (bool_pr[GPIOOK_BPR].state || bool_pr[I2CON_BPR].state);
             }
@@ -4861,19 +5213,25 @@ static void runSetup()
           #endif // _WIFI_ASK
 
           #if defined(_SUPPORT_KX3)
-            else if (bp == &bool_pr[KX3ON_BPR]) {
+            else if (bp == &bool_pr[KX3A_BPR]) {
                 // show/hide baud rate but honor GPIOOK
                 if (bool_pr[GPIOOK_BPR].state) {
-                    drawEntangledBools(&bool_pr[KX3ON_BPR], &bool_pr[KX3BAUD_BPR]);
-                } else if (bool_pr[KX3ON_BPR].state) {
+                    drawEntangledBools(&bool_pr[KX3A_BPR], &bool_pr[KX3B_BPR]);
+                } else if (bool_pr[KX3A_BPR].state) {
                     // maintain off if no GPIO
-                    bool_pr[KX3ON_BPR].state = false;
-                    drawBPPromptState (&bool_pr[KX3ON_BPR]);
+                    bool_pr[KX3A_BPR].state = false;
+                    drawBPPromptState (&bool_pr[KX3A_BPR]);
                 }
             }
           #endif // _SUPPORT_KX3
 
-        } else if (tappedStringPrompt (s, &sp) && stringIsRelevant (sp)) {
+        } else if (tappedStringPrompt (ui.tap, &sp) && stringIsRelevant (sp)) {
+
+            // check for tooltip
+            if (sp->tt && ui.tt == TT_TAP_BX) {
+                tooltip (ui.tap, sp->tt);
+                continue;
+            }
 
             // move focus here unless already there
             if (cur_focus[cur_page].sp != sp) {
@@ -4883,7 +5241,7 @@ static void runSetup()
             }
         }
 
-    } while (!(c == CHAR_CR || c == CHAR_NL) || !validateStringPrompts(true));
+    } while (!(ui.kb_char == CHAR_CR || ui.kb_char == CHAR_NL) || !validateStringPrompts(true));
 
     drawDoneButton(true);
 
@@ -4921,7 +5279,7 @@ static void saveParams2NV()
     NVWriteUInt8 (NV_UNITS, getEntangledIndex (UNITSA_BPR, UNITSB_BPR));
     NVWriteUInt8 (NV_WEEKMON, bool_pr[WEEKDAY1MON_BPR].state);
     NVWriteUInt8 (NV_BEAR_MAG, bool_pr[BEARING_BPR].state);
-    NVWriteUInt32 (NV_KX3BAUD, bool_pr[KX3ON_BPR].state ? (bool_pr[KX3BAUD_BPR].state ? 38400 : 4800) : 0);
+    NVWriteUInt32 (NV_KX3BAUD, bool_pr[KX3A_BPR].state ? (bool_pr[KX3B_BPR].state ? 38400 : 4800) : 0);
     NVWriteFloat (NV_TEMPCORR76, temp_corr[BME_76]);
     NVWriteFloat (NV_PRESCORR76, pres_corr[BME_76]);
     NVWriteFloat (NV_TEMPCORR77, temp_corr[BME_77]);
@@ -4966,8 +5324,13 @@ static void saveParams2NV()
             dx_cmdmask |= (1<<i);
     NVWriteUInt16 (NV_DXCMDMASK, dx_cmdmask);
 
+    // insure legal dx_login
+    if (!clusterLoginOk())
+        setClusterLogin();
+
     NVWriteUInt16 (NV_DXPORT, dx_port);
     NVWriteString (NV_DXLOGIN, dx_login);
+
     NVWriteUInt8 (NV_LOGUSAGE, bool_pr[LOGUSAGE_BPR].state);
     NVWriteUInt8 (NV_LBLSTYLE,
               bool_pr[SPOTLBLA_BPR].state ? (bool_pr[SPOTLBLB_BPR].state ? LBL_CALL : LBL_DOT)
@@ -5002,6 +5365,9 @@ static void saveParams2NV()
     NVWriteUInt8 (NV_GRAYDPY, (uint8_t)getGrayDisplay());
     NVWriteUInt8 (NV_QRZID, getQRZId());
     NVWriteUInt8 (NV_UDPSPOTS, bool_pr[UDPSPOTS_BPR].state);
+    NVWriteUInt8 (NV_UDPSETSDX, bool_pr[UDPSETSDX_BPR].state);
+    NVWriteUInt8 (NV_MAXTLEAGE, maxTLEAgeDays());
+    NVWriteUInt16 (NV_MINLBLDIST, atoi(getEntangledValue (LBLDISTA_BPR, LBLDISTB_BPR)));
 
     // save and engage user's X11 settings
     uint16_t x11flags = 0;
@@ -5026,7 +5392,7 @@ static void saveParams2NV()
 
     // save DE tz and grid only if ll was edited and op is not using some other method to set location
     if (!bool_pr[GEOIP_BPR].state && !bool_pr[GPSDON_BPR].state && !bool_pr[NMEAON_BPR].state && ll_edited) {
-        normalizeLL (de_ll);
+        de_ll.normalize();
         NVWriteFloat(NV_DE_LAT, de_ll.lat_d);
         NVWriteFloat(NV_DE_LNG, de_ll.lng_d);
         NVWriteString(NV_DE_GRID, scrubGrid(string_pr[GRID_SPR].v_str));
@@ -5068,7 +5434,7 @@ void drawStringInBox (const char str[], const SBox &b, bool inverted, uint16_t c
  */
 void clockSetup()
 {
-    // set font used throughout, could use BOLD if not for long wifi password
+    // set initial font, could use BOLD if not for long wifi password
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
 
     // load values from nvram, else set defaults
@@ -5201,7 +5567,8 @@ bool setCallsign (const char *cs)
         return (false);
 
     strncpy (cs_info.call, cs, sizeof(cs_info.call)-1);
-    strncpy (dx_login, cs, sizeof(dx_login)-1);
+    setClusterLogin();
+
     NVWriteString (NV_CALLSIGN, cs_info.call);
     NVWriteString (NV_DXLOGIN, dx_login);
     return (true);
@@ -5441,8 +5808,8 @@ float getBMEPresCorr(int i)
  */
 uint32_t getKX3Baud()
 {
-    return (bool_pr[KX3ON_BPR].state && bool_pr[GPIOOK_BPR].state
-                ? (bool_pr[KX3BAUD_BPR].state ? 38400 : 4800) : 0);
+    return (bool_pr[KX3A_BPR].state && bool_pr[GPIOOK_BPR].state
+                ? (bool_pr[KX3B_BPR].state ? 38400 : 4800) : 0);
 }
 
 /* return desired maximum brightness, percentage
@@ -5916,3 +6283,20 @@ bool autoUpgrade (int &local_hour)
     fatalError ("unknown auto up: %s", label);
     return (false);  // lint
 }
+
+/* return longest allow TLE age in days
+ */
+int maxTLEAgeDays(void)
+{
+    return (atoi (getEntangledValue (MAXTLEA_BPR, MAXTLEB_BPR)));
+}
+
+/* return minimum distance to label spots in great circle radians
+ */
+float minLabelDist(void)
+{
+    int mld_linear = atoi (getEntangledValue (LBLDISTA_BPR, LBLDISTB_BPR));
+    float mld_angle = mld_linear / (showDistKm() ? (ERAD_M*KM_PER_MI): ERAD_M);
+    return (mld_angle);
+}
+

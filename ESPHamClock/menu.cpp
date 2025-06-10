@@ -562,7 +562,7 @@ static int tapNavigation (MenuInfo &menu, SBox *pick_boxes, int m_index, const S
  * N.B. menu.menu_b.x/y are required but we may adjust to prevent edge spill.
  * N.B. incoming menu.menu_b.w is only grown to fit; thus calling with 0 will shrink wrap.
  * N.B. incoming menu.menu_b.h is ignored, we always shrink wrap h.
- * N.B. menu box is erased before returning.
+ * N.B. menu box is restored before returning.
  * N.B. all MENU_TEXT, if any, must be last
  */
 bool runMenu (MenuInfo &menu)
@@ -627,7 +627,6 @@ bool runMenu (MenuInfo &menu)
 
     // now we know the size of menu_b
 
-
     // reposition box if needed to avoid spillage
     if (menu.menu_b.x + menu.menu_b.w >= tft.width())
         menu.menu_b.x = tft.width() - menu.menu_b.w - 1;
@@ -646,6 +645,13 @@ bool runMenu (MenuInfo &menu)
         cancel_b.x = menu.menu_b.x + menu.menu_b.w - cancel_b.w - MENU_BB;
         cancel_b.y = menu.menu_b.y + menu.menu_b.h - MENU_TBM - cancel_b.h;
     }
+
+    // menu_b is now properly positioned
+
+    // capture what we are about to clobber
+    uint8_t *backing_store;
+    if (!tft.getBackingStore (backing_store, menu.menu_b.x, menu.menu_b.y, menu.menu_b.w, menu.menu_b.h))
+        fatalError ("failed to capture pixels beneath %d x %d menu", menu.menu_b.w, menu.menu_b.h);
 
     // can now prepare new menu box
     fillSBox (menu.menu_b, MENU_BGC);
@@ -711,18 +717,13 @@ bool runMenu (MenuInfo &menu)
     // N.B. code below will CRASH if focus < 0.
     bool is_active_menu = (focus_idx >= 0);
 
-    SCoord tap;
-    char kb_char;
     UserInput ui = {
         menu.menu_b,
         UI_UFuncNone,
         UF_UNUSED,
         MENU_TIMEOUT,
         menu.update_clocks,
-        tap,
-        kb_char,
-        false,
-        false
+        {0, 0}, TT_NONE, '\0', false, false
     };
 
     // run
@@ -730,7 +731,7 @@ bool runMenu (MenuInfo &menu)
     while (waitForUser (ui)) {
 
         // OK if check for Enter or tap in ok
-        if (kb_char == CHAR_CR || kb_char == CHAR_NL || inBox (tap, menu.ok_b)) {
+        if (ui.kb_char == CHAR_CR || ui.kb_char == CHAR_NL || inBox (ui.tap, menu.ok_b)) {
 
             // done unless a text field reports an error
             ok = true;
@@ -755,30 +756,31 @@ bool runMenu (MenuInfo &menu)
         }
 
         // finished w/o ok if type ESC or tap cancel box or tap anywhere outside the menu box
-        if (kb_char == CHAR_ESC                                                         // type ESC
-                        || (menu.cancel == M_CANCELOK && inBox (tap, cancel_b))         // tap cancel
-                        || (kb_char == CHAR_NONE && !inBox (tap, menu.menu_b))          // tap outside
+        if (ui.kb_char == CHAR_ESC                                                      // type ESC
+                        || (menu.cancel == M_CANCELOK && inBox (ui.tap, cancel_b))      // tap cancel
+                        || (ui.kb_char == CHAR_NONE && !inBox (ui.tap, menu.menu_b))    // tap outside
                     ) {
             break;
         }
 
         // check for kb or tap control
         if (is_active_menu) {
-            if (kb_char) {
+            if (ui.kb_char) {
                 if (menu.items[focus_idx].type == MENU_TEXT)
-                    focus_idx = textFieldEdit (menu, pick_boxes, focus_idx, kb_char);
+                    focus_idx = textFieldEdit (menu, pick_boxes, focus_idx, ui.kb_char);
                 else
-                    focus_idx = kbNavigation (menu, pick_boxes, focus_idx, kb_char);
+                    focus_idx = kbNavigation (menu, pick_boxes, focus_idx, ui.kb_char);
             } else
-                focus_idx = tapNavigation (menu, pick_boxes, focus_idx, tap);
+                focus_idx = tapNavigation (menu, pick_boxes, focus_idx, ui.tap);
         }
     }
 
     // done
     drainTouch();
 
-    // erase in prep for caller to restore covered content
-    fillSBox (menu.menu_b, RA8875_BLACK);
+    // restore contents
+    if (!tft.setBackingStore (backing_store, menu.menu_b.x, menu.menu_b.y, menu.menu_b.w, menu.menu_b.h))
+        fatalError ("mem pixel restore failed %d x %d", menu.menu_b.w, menu.menu_b.h);
 
     // record settings
     Serial.printf ("Menu result after %s:\n", ok ? "Ok" : "Cancel");
@@ -795,13 +797,20 @@ bool runMenu (MenuInfo &menu)
  */
 void menuMsg (const SBox &box, uint16_t color, const char *msg)
 {
+    uint8_t *backing_store;
+    if (!tft.getBackingStore (backing_store, box.x, box.y, box.w, box.h))
+        fatalError ("menuMsg '%s' bad pixels capture beneath %d+%d-%dx%d menu", msg, box.x,box.y,box.w,box.h);
+
     selectFontStyle (LIGHT_FONT, FAST_FONT);
     tft.setCursor (box.x + (box.w - getTextWidth(msg))/2, box.y + box.h/3);
     tft.setTextColor (color);
+    fillSBox (box, RA8875_BLACK);
     drawSBox (box, RA8875_WHITE);
     tft.print (msg);
     wdDelay(2000);
-    fillSBox (box, RA8875_BLACK);
+
+    if (!tft.setBackingStore (backing_store, box.x, box.y, box.w, box.h))
+        fatalError ("menuMsg '%s' bad pixels restore beneath %d+%d-%dx%d menu", msg, box.x,box.y,box.w,box.h);
 }
 
 
@@ -839,7 +848,7 @@ void menuRedrawOk (SBox &ok_b, MenuOkState oks)
 }
 
 /* wait until:
- *   a tap occurs:                                   set tap location and return true.
+ *   a tap occurs:                                   set tap location and type and return true.
  *   a char is typed:                                set kb_char/ctrl/shift and return true.
  *   (*fp)() (IFF fp != NULL) returns true:          set fp_true to true and return false.
  *   to_ms is > 0 and nothing happens for that long: return false.
@@ -851,13 +860,15 @@ bool waitForUser (UserInput &ui)
     // initial timeout
     uint32_t t0 = millis();
 
-    // reset both actions until they happen here
+    // reset all actions until they happen here
+    ui.kb_ctrl = ui.kb_shift = false;
     ui.kb_char = CHAR_NONE;
     ui.tap = {0, 0};
+    ui.tt = TT_NONE;
 
     for(;;) {
 
-        if (readCalTouchWS(ui.tap) != TT_NONE)
+        if ((ui.tt = readCalTouchWS(ui.tap)) != TT_NONE)
             return(true);
 
         ui.kb_char = tft.getChar (&ui.kb_ctrl, &ui.kb_shift);

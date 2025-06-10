@@ -4,19 +4,25 @@
 #include "HamClock.h"
 
 
-// public state
-bool dxpeds_watch_cluster;                      // whether to watch cluster for spots
-
-
 #define DXPEDS_COLOR    RGB565(255,200,130)     // heading text color
 #define NOW_COLOR       RGB565(40,140,40)       // background when dxpedition is happening now
 #define SPOT_COLOR      RA8875_RED              // color indicating expedition has been spotted
+#define HIDE_COLOR      RGB565(150,100,20)       // color indicating expedition is marked as hidden
 #define CREDITS_Y0      SUBTITLE_Y0             // dy of credits row
 #define DXPEDS_DY       12                      // dy of each successive row -- a bit tighter than LISTING_DY
 #define START_DY        LISTING_Y0              // dy of first dxpedition row
 #define TITLE_DY        PANETITLE_H             // dy to baseline of title text
 #define MARKER_R0       4                       // map marker inner radius
 #define MARKER_R1       5                       // map marker outer radius
+
+// dxcluster ok box
+#define DXCOKBOX_DX     6                       // cluster status box left offset
+#define DXCOKBOX_DY     6                       // " top offset
+#define DXCOKBOX_W      20                      // " width
+#define DXCOKBOX_H      11                      // " height
+#define DXCCHECK_DT     15000                   // period to check dxcluster if failing, millis
+static SBox clok_b;
+
 
 // URL and its local cache file name
 static const char dxpeds_page[] = "/dxpeds/dxpeditions.txt";
@@ -44,6 +50,8 @@ typedef struct {
 static DXPedEntry *dxpeds;                      // malloced list of DXPedEntry, count in dxp_ss.n_data
 static bool show_date;                          // whether to show 2nd line with date
 static bool show_current;                       // whether to show only the active expeditions
+static bool show_hidden;                        // whether to show peds marked as hidden
+static bool watch_cluster;                      // whether to watch cluster for spots
 static ScrollState dxp_ss;                      // scrolling context, max_vis/2 if showing date
 static DXPCredit *credits;                      // malloced list of each credit
 static int n_credits;                           // n credits
@@ -55,7 +63,8 @@ static int n_adif_worked;                       // n adif_worked[]
 enum {
     NVBIT_SHOWDATE = (1<<0),                    // show_date
     NVBIT_CURRENT  = (1<<1),                    // show_current
-    NVBIT_WATCHDXC = (1<<2),                    // dxpeds_watch_cluster
+    NVBIT_WATCHDXC = (1<<2),                    // watch_cluster
+    NVBIT_SHOWHIDE = (1<<3),                    // show_hidden
 };
 
 
@@ -65,9 +74,10 @@ static void saveDXPedNV (void)
 {
     uint8_t dxpeds_mask = 0;
 
-    dxpeds_mask |= show_date             ? NVBIT_SHOWDATE : 0;
-    dxpeds_mask |= dxpeds_watch_cluster  ? NVBIT_WATCHDXC : 0;
-    dxpeds_mask |= show_current          ? NVBIT_CURRENT  : 0;
+    dxpeds_mask |= show_date      ? NVBIT_SHOWDATE : 0;
+    dxpeds_mask |= show_current   ? NVBIT_CURRENT  : 0;
+    dxpeds_mask |= watch_cluster  ? NVBIT_WATCHDXC : 0;
+    dxpeds_mask |= show_hidden    ? NVBIT_SHOWHIDE : 0;
 
     NVWriteUInt8 (NV_DXPEDS, dxpeds_mask);
 }
@@ -83,9 +93,10 @@ static void loadDXPedNV (void)
         NVWriteUInt8 (NV_DXPEDS, dxpeds_mask);
     }
 
-    show_date             = (dxpeds_mask & NVBIT_SHOWDATE) != 0;
-    dxpeds_watch_cluster  = (dxpeds_mask & NVBIT_WATCHDXC) != 0;
-    show_current          = (dxpeds_mask & NVBIT_CURRENT)  != 0;
+    show_date     = (dxpeds_mask & NVBIT_SHOWDATE) != 0;
+    show_current  = (dxpeds_mask & NVBIT_CURRENT)  != 0;
+    watch_cluster = (dxpeds_mask & NVBIT_WATCHDXC) != 0;
+    show_hidden   = (dxpeds_mask & NVBIT_SHOWHIDE) != 0;
 }
 
 /* draw marker at ll
@@ -93,7 +104,15 @@ static void loadDXPedNV (void)
 static void drawDXPedsMarker (const LatLong &ll, uint16_t color)
 {
     SCoord s;
-    ll2sRaw (ll, s, MARKER_R1);
+
+    // first check over map
+    ll2s (ll, s, MARKER_R1);
+    if (!overMap(s))
+        return;
+
+    // now full res if different
+    if (tft.SCALESZ > 1)
+        ll2sRaw (ll, s, MARKER_R1);
 
     const int r0_raw = MARKER_R0*tft.SCALESZ;
     const int r1_raw = MARKER_R1*tft.SCALESZ;
@@ -103,7 +122,7 @@ static void drawDXPedsMarker (const LatLong &ll, uint16_t color)
 
 
 
-/* return color to render the given expedition, depending on DX Cluster and/or active.
+/* return color to render the given expedition, depending on several factors.
  */
 static uint16_t renderDXPedColor (const DXPedEntry &de)
 {
@@ -111,6 +130,8 @@ static uint16_t renderDXPedColor (const DXPedEntry &de)
 
     if (findDXCCall(de.call) != NULL)
         color = SPOT_COLOR;
+    else if (isDXPedsHidden(&de))
+        color = HIDE_COLOR;
     else {
         time_t now = myNow();
         bool active_now = now > de.start_t && now < de.end_t;
@@ -121,6 +142,23 @@ static uint16_t renderDXPedColor (const DXPedEntry &de)
     return (color);
 }
 
+/* draw the cluster ok status box as appropriate
+ */
+static void drawDXCStatusBox (void)
+{
+    uint16_t color = RA8875_BLACK;
+    bool want_cl = watch_cluster && useDXCluster();
+    bool cl_ok = isDXClusterConnected();
+    if (want_cl)
+        color = cl_ok ? RA8875_GREEN : RA8875_RED;
+
+    drawSBox (clok_b, color);
+
+    selectFontStyle (LIGHT_FONT, FAST_FONT);
+    tft.setCursor (clok_b.x+1, clok_b.y+2);
+    tft.setTextColor (color);
+    tft.print ("DXC");
+}
 
 /* draw dxpeds[] in the given pane box
  */
@@ -132,6 +170,13 @@ static void drawDXPedsPane (const SBox &box)
 
     // erase
     prepPlotBox (box);
+
+    // cluster status
+    clok_b.x = box.x + DXCOKBOX_DX;
+    clok_b.y = box.y + DXCOKBOX_DY;
+    clok_b.w = DXCOKBOX_W;
+    clok_b.h = DXCOKBOX_H;
+    drawDXCStatusBox();
 
     // title
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
@@ -289,6 +334,7 @@ static bool runDXPedPaneMenu (const SCoord &s, const SBox &box)
     enum {
         DEM_SHOW_DATES,                                 // whether to show dates
         DEM_SHOW_CURRENT,                               // whether to show only current exp
+        DEM_SHOW_HIDDEN,                                // whether to show dxpeds markde as hidden
         DEM_USE_DXC,                                    // whether to check DX cluster for new spot
         DEM_N
     };
@@ -313,8 +359,9 @@ static bool runDXPedPaneMenu (const SCoord &s, const SBox &box)
 
     // init fixed menu items
     mitems[DEM_SHOW_DATES]   = {MENU_TOGGLE, show_date,             1, indent, "Show dates", 0};
-    mitems[DEM_SHOW_CURRENT] = {MENU_TOGGLE, show_current,          3, indent, "Show only current", 0};
-    mitems[DEM_USE_DXC]      = {dxc_mft,     dxpeds_watch_cluster,  6, indent, "Color red if spotted", 0};
+    mitems[DEM_SHOW_CURRENT] = {MENU_TOGGLE, show_current,          2, indent, "Show only current", 0};
+    mitems[DEM_SHOW_HIDDEN]  = {MENU_TOGGLE, show_hidden,           3, indent, "Show hidden in brown", 0};
+    mitems[DEM_USE_DXC]      = {dxc_mft,     watch_cluster,         4, indent, "Show spotted in red", 0};
 
     // add variable number of credits
     for (int i = 0; i < n_credits; i++) {
@@ -335,27 +382,34 @@ static bool runDXPedPaneMenu (const SCoord &s, const SBox &box)
         if (show_date != mitems[DEM_SHOW_DATES].set) {
             show_date = mitems[DEM_SHOW_DATES].set;
             Serial.printf ("DXP: show_date changed to %d\n", show_date);
-            full_redo = true;                   // requires ScrollState reset
+            full_redo = true;
         }
 
         // update show_current?
         if (show_current != mitems[DEM_SHOW_CURRENT].set) {
             show_current = mitems[DEM_SHOW_CURRENT].set;
             Serial.printf ("DXP: show_current changed to %d\n", show_current);
-            full_redo = true;                   // requires ScrollState reset
+            full_redo = true;
         }
 
-        // udate dxpeds_watch_cluster?
-        if (dxpeds_watch_cluster) {
+        // update show_hidden?
+        if (show_hidden != mitems[DEM_SHOW_HIDDEN].set) {
+            show_hidden = mitems[DEM_SHOW_HIDDEN].set;
+            Serial.printf ("DXP: show_hidden changed to %d\n", show_hidden);
+            full_redo = true;
+        }
+
+        // udate watch_cluster?
+        if (watch_cluster) {
             if (!mitems[DEM_USE_DXC].set) {
                 // we no longer want to watch dx cluster, rely on checkDXCluster() to close
-                dxpeds_watch_cluster = false;
+                watch_cluster = false;
                 full_redo = true;
             }
         } else {
             if (mitems[DEM_USE_DXC].set) {
                 // we are first to want dx cluster, rely on updateDXPeds() to open
-                dxpeds_watch_cluster = true;
+                watch_cluster = true;
                 full_redo = true;
             }
         }
@@ -388,9 +442,10 @@ static bool runOneDXPedMenu (const SCoord &s, const SBox &box, DXPedEntry *dep)
     // handy mitems[] offset names
     enum {
         DEX_NAME,                                       // expedition name
-        DEX_SET_ALARM,                                  // whether to set alarm
-        DEX_SET_DX,                                     // whether to set DX to this location
-        DEX_SHOW_EXP_PAGE,                              // whether to show this exp web page
+        DEX_HIDE,                                       // whether to hide this exped
+        DEX_ALARM,                                      // whether to set alarm
+        DEX_DX,                                         // whether to set DX to this location
+        DEX_PAGE,                                       // whether to show this exp web page
         DEX_N
     };
 
@@ -406,46 +461,58 @@ static bool runOneDXPedMenu (const SCoord &s, const SBox &box, DXPedEntry *dep)
     bool alarm_is_set = a_s == ALMS_ARMED && a_t == dep->start_t && starts_in_future;
     MenuFieldType alarm_mft = starts_in_future ? MENU_TOGGLE : MENU_IGNORE;
 
+    // decide hidden
+    bool hidden = isDXPedsHidden (dep);
+
     // build title roughly centered
     char title[50];
     snprintf (title, sizeof(title), "%10s", dep->call);
 
     // build menu
     const int indent = 2;
-    MenuItem mitems[DEX_N] = {
-        {MENU_LABEL,   false,             0, indent, title, 0},
-        {alarm_mft,    alarm_is_set,      1, indent, "Set alarm", 0},
-        {MENU_TOGGLE,  false,             3, indent, "Set DX", 0},
-        {MENU_TOGGLE,  false,             4, indent, "Show web page", 0},
-    };
-    const int n_mi = NARRAY(mitems);
+    MenuItem mitems[DEX_N];
+    mitems[DEX_NAME]  = {MENU_LABEL,   false,             0, indent, title, 0};
+    mitems[DEX_HIDE]  = {MENU_TOGGLE,  hidden,            1, indent, "Hide", 0};
+    mitems[DEX_ALARM] = {alarm_mft,    alarm_is_set,      2, indent, "Set alarm", 0};
+    mitems[DEX_DX]    = {MENU_TOGGLE,  false,             3, indent, "Set DX", 0};
+    mitems[DEX_PAGE]  = {MENU_TOGGLE,  false,             4, indent, "Show web page", 0};
 
     // boxes -- avoid spilling out the bottom
     const uint16_t menu_x = box.x + 20;
-    const uint16_t menu_h = 70;
+    const uint16_t menu_h = 80;
     const uint16_t menu_max_y = box.y + box.h - menu_h - 5;
     const uint16_t menu_y = s.y < menu_max_y ? s.y : menu_max_y;
     SBox menu_b = {menu_x, menu_y, 0, 0};
     SBox ok_b;
 
     // run
-    MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 1, n_mi, mitems};
+    MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 1, DEX_N, mitems};
     if (runMenu (menu)) {
 
         // alarm state change?
-        if (mitems[DEX_SET_ALARM].set != alarm_is_set)
-            setOneTimeAlarmState (mitems[DEX_SET_ALARM].set ? ALMS_ARMED : ALMS_OFF, true,
+        if (mitems[DEX_ALARM].set != alarm_is_set)
+            setOneTimeAlarmState (mitems[DEX_ALARM].set ? ALMS_ARMED : ALMS_OFF, true,
                                             dep->start_t, dep->loc);
 
         // set dx?
-        if (mitems[DEX_SET_DX].set) {
+        if (mitems[DEX_DX].set) {
             Serial.printf ("DXP: newDX %s @ %g %g\n", dep->call, dep->ll.lat_d, dep->ll.lng_d);
             newDX (dep->ll, NULL, dep->call);
         }
 
         // open dxpedition web page?
-        if (mitems[DEX_SHOW_EXP_PAGE].set)
+        if (mitems[DEX_PAGE].set)
             openURL (dep->url);
+
+        // change hidden?
+        if (hidden != mitems[DEX_HIDE].set) {
+            if (mitems[DEX_HIDE].set)
+                addDXPedsHidden (dep);
+            else
+                rmDXPedsHidden (dep);
+            Serial.printf ("DXP: %s hide changed to %d\n", dep->call, mitems[DEX_HIDE].set);
+            full_redo = true;
+        }
     }
 
     // return whether redo is required
@@ -572,9 +639,6 @@ static bool retrieveDXPeds (const SBox &box)
         if (show_date)
             dxp_ss.max_vis /= 2;
 
-        // line buffer
-        char line[256];
-
         // first line is number of credits, followed by one line for name and for url
         if (!retrieveDXPCredits (fp))
             goto out;           // already logged why
@@ -585,6 +649,9 @@ static bool retrieveDXPeds (const SBox &box)
         // set font for formatDXPed()
         selectFontStyle (LIGHT_FONT, FAST_FONT);
 
+        // line buffer
+        char line[256];
+
         // read each line, add to dxpeds if ok
         while (fgets (line, sizeof(line), fp)) {
 
@@ -594,7 +661,15 @@ static bool retrieveDXPeds (const SBox &box)
             if (debugLevel (DEBUG_DXPEDS, 2))
                 Serial.printf ("DXP: datum %d: %s\n", dxp_ss.n_data, line);
 
-            // find each CSV field
+            // skip if want to hide
+            if (!show_hidden && isDXPedsHidden (line)) {
+                if (debugLevel (DEBUG_DXPEDS, 2))
+                    Serial.printf ("DXP: hiding %s\n", line);
+                continue;
+            }
+
+
+            // find each CSV field -- formatted as per fetchDXPeds.pl
             char *start_f = line;
             char *end_f = strchr (start_f, ',');
             char *loc_f = end_f ? (*end_f++ = '\0', strchr (end_f, ',')) : NULL;
@@ -628,7 +703,7 @@ static bool retrieveDXPeds (const SBox &box)
 
             // skip if not active and don't want
             if (show_current && (now < start_t || now > end_t)) {
-                if (debugLevel (DEBUG_DXPEDS, 1))
+                if (debugLevel (DEBUG_DXPEDS, 2))
                     Serial.printf ("DXP: skipping not active: %s\n", call_f);
                 continue;
             }
@@ -661,9 +736,9 @@ static bool retrieveDXPeds (const SBox &box)
             if (!dxpeds)
                 fatalError ("No memory for %d dxpeds", dxp_ss.n_data+1);
             DXPedEntry &de = dxpeds[dxp_ss.n_data++];
-            memset (&de, 0, sizeof(DXPedEntry));
 
             // set fields
+            de = {};
             de.call = strdup (call_f);
             de.url = strdup (url_f);
             de.loc = strdup (loc_f);
@@ -737,17 +812,17 @@ bool updateDXPeds (const SBox &box, bool fresh)
 
     if (ok) {
 
-        // insure dx cluster running if checking spots -- N.B. rely on checkDXCluster() to close
-        if (dxpeds_watch_cluster && !isDXClusterConnected()) {
-            // connect first time but thence not crazy fast in case it's failing
+        // insure dx cluster is running if checking spots -- N.B. rely on checkDXCluster() to close
+        if (dxpedsWatchingCluster() && !isDXClusterConnected()) {
             static uint32_t connect_ms;
-            if (connect_ms == 0 || timesUp (&connect_ms, 10000)) {
-                if (!connectDXCluster())                // shows it's own mapMsgs
-                    dxpeds_watch_cluster = false;       // disable until menu
+            if (connect_ms == 0 || timesUp (&connect_ms, DXCCHECK_DT)) {
+                if (!connectDXCluster()) {              // shows it's own mapMsgs
+                    fresh = true;                       // in case a red spot should be removed
+                }
             }
         }
 
-        if (checkActiveDXPeds() || fresh)       // always check regardless of fresh
+        if (checkActiveDXPeds() || fresh)
             drawDXPedsPane (box);
 
     } else {
@@ -812,8 +887,6 @@ bool checkDXPedsTouch (const SCoord &s, const SBox &box)
 
         if (runDXPedPaneMenu (s, box))
             scheduleNewPlot (PLOT_CH_DXPEDS);
-        else
-            drawDXPedsPane (box);
 
         return (true);
 
@@ -828,14 +901,12 @@ bool checkDXPedsTouch (const SCoord &s, const SBox &box)
         if (dxp_ss.findDataIndex (item, index))
             dep = &dxpeds[index];
 
-        if (dep) {
-            if (runOneDXPedMenu (s, box, dep))
-                scheduleNewPlot (PLOT_CH_DXPEDS);
-            else
-                drawDXPedsPane (box);
+        // redo if needed
+        if (dep && runOneDXPedMenu (s, box, dep))
+            scheduleNewPlot (PLOT_CH_DXPEDS);
 
-            return (true);
-        }
+        // ours in any case
+        return (true);
     }
 
     // none of the above so not ours
@@ -862,7 +933,7 @@ int getDXPeds (char **&titles, char **&dates)
 
 /* return expedition info if s is over one of our pane entries
  */
-bool getPaneDXPed (const SCoord &s, const DXPedEntry *&dxp)
+bool getPaneDXPed (const SCoord &s, DXPedEntry *&dxp)
 {
     // done if s not showing our pane or not in our box
     PlotPane pp = findPaneChoiceNow (PLOT_CH_DXPEDS);
@@ -898,12 +969,12 @@ bool getPaneDXPed (const SCoord &s, const DXPedEntry *&dxp)
 
 /* return pointer to dxpeds closest to ll, within reason
  */
-bool getClosestDXPed (const LatLong &ll, const DXPedEntry *&dxp)
+bool getClosestDXPed (LatLong &ll, DXPedEntry *&dxp)
 {
     int min_i = -1;
     float min_d = 1e10;
     for (int i = 0; i < dxp_ss.n_data; i++) {
-        float d = simpleSphereDist (ll, dxpeds[i].ll);
+        float d = ll.GSD(dxpeds[i].ll);
         if (d < min_d) {
             min_d = d;
             min_i = i;
@@ -1014,4 +1085,11 @@ bool findDXPedsCall (const DXSpot *sp)
         if (strcasecmp (sp->tx_call, dxpeds[i].call) == 0)
             return (true);
     return (false);
+}
+
+/* return whether we are watching the cluster for spots
+ */
+bool dxpedsWatchingCluster()
+{
+    return (watch_cluster && useDXCluster() && findPaneForChoice (PLOT_CH_DXPEDS) != PANE_NONE);
 }

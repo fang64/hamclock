@@ -4,12 +4,6 @@
 
 #include "HamClock.h"
 
-// each subband
-typedef struct {
-    int band_meters;                            // integer band
-    const char *mode;                           // subband name, or BAND for full band
-    float min_kHz, max_kHz;
-} BandEdge;
 
 // misc info per band
 typedef struct {
@@ -18,6 +12,20 @@ typedef struct {
     int bandes_idx;                             // band_es[] index of first entry for this band
     ColorSelection cid;                         // color id
 } BandInfo;
+
+#define X(a,b,c,d,e) {b,c,d,e},                 // expands SUPPORTED_BANDS to each BandInfo
+static const BandInfo band_info[] = {
+    SUPPORTED_BANDS
+};
+#undef X
+
+
+// each subband
+typedef struct {
+    int band_meters;                            // integer band
+    const char *mode;                           // subband name, or BAND for full band
+    float min_kHz, max_kHz;
+} BandEdge;
 
 static const BandEdge band_es[] = {
     {   2, "BAND",    144000, 148000},
@@ -120,28 +128,10 @@ static const BandEdge band_es[] = {
 
 #define N_BE NARRAY(band_es)
 
-// directly index with HamBandSetting
-static const BandInfo band_info[] = {
-    {160, "160",  90, BAND160_CSPR},
-    { 80,  "80",  82, BAND80_CSPR},
-    { 60,  "60",  77, BAND60_CSPR},
-    { 40,  "40",  70, BAND40_CSPR},
-    { 30,  "30",  62, BAND30_CSPR},
-    { 20,  "20",  51, BAND20_CSPR},
-    { 17,  "17",  43, BAND17_CSPR},
-    { 15,  "15",  34, BAND15_CSPR},
-    { 12,  "12",  25, BAND12_CSPR},
-    { 10,  "10",  12, BAND10_CSPR},
-    {  6,   "6",   4, BAND6_CSPR},
-    {  2,   "2",   0, BAND2_CSPR},
-};
-
-#define N_BI NARRAY(band_info)
-
 
 static bool isValidHBS (HamBandSetting h)
 {
-    return ((int)h >= 0 && (int)h < N_BI);
+    return ((int)h >= 0 && (int)h < HAMBAND_N);
 }
 
 /* return whether the given mode is in _any_ band
@@ -189,7 +179,7 @@ int findBandEdges (HamBandSetting h, const char *mode, float min_kHz[], float ma
  */
 HamBandSetting findHamBand (int meters)
 {
-    for (int i = 0; i < N_BI; i++)
+    for (int i = 0; i < HAMBAND_N; i++)
         if (band_info[i].band_meters == meters)
             return ((HamBandSetting)i);
     return (HAMBAND_NONE);
@@ -232,3 +222,37 @@ const char *findBandName (HamBandSetting h)
     return (band_info[h].name);
 }
 
+/* given a freq in kHz return pointer to static string of the best estimate of the mode.
+ * or return "" if "BAND" or none.
+ */
+const char *findHamMode (float kHz)
+{
+    const BandEdge *best_be = NULL;
+    float min_range = 1e10F;
+
+    for (int i = 0; i < N_BE; i++) {
+        const BandEdge *bep = &band_es[i];
+        float range = bep->max_kHz - bep->min_kHz;
+        if (bep->min_kHz <= kHz && kHz <= bep->max_kHz && range < min_range) {
+            best_be = bep;
+            min_range = range;
+        }
+    }
+
+    if (best_be && strcmp (best_be->mode, "BAND"))
+        return (best_be->mode);
+    else
+        return ("");
+}
+
+/* return whether the given frequency is within the given mode range.
+ */
+bool testBandMode (float kHz, const char *mode)
+{
+    for (int i = 0; i < N_BE; i++) {
+        const BandEdge &be = band_es[i];
+        if (be.min_kHz <= kHz && kHz <= be.max_kHz && strcasecmp (be.mode, mode) == 0)
+            return (true);
+    }
+    return (false);
+}

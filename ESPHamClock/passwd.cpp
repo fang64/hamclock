@@ -195,10 +195,9 @@ bool askPasswd (const char *category, bool restore)
 
         // configure waitForUser()
         bool enter = false;
-        SCoord s;
-        char kbc;
         SBox all = {0, 0, tft.width(), tft.height()};   // full screen
-        UserInput ui = { all, UI_UFuncNone, UF_UNUSED, TO, UF_NOCLOCKS, s, kbc, false, false };
+        UserInput ui = { all, UI_UFuncNone, UF_UNUSED, TO, UF_NOCLOCKS,
+                            {0, 0}, TT_NONE, '\0', false, false};
 
         // run until enter or cancel
         do {
@@ -214,9 +213,9 @@ bool askPasswd (const char *category, bool restore)
                 continue;
             }
 
-            if (kbc) {
+            if (ui.kb_char != CHAR_NONE) {
 
-                switch (kbc) {
+                switch (ui.kb_char) {
 
                 case CHAR_NL:           // fallthru
                 case CHAR_CR:
@@ -256,13 +255,13 @@ bool askPasswd (const char *category, bool restore)
                     break;
 
                 default:
-                    if (isprint (kbc) && pw_len < NP)
-                        insertChar (pw_buf, pw_len, cur_pos, hide, kbc);
+                    if (isprint (ui.kb_char) && pw_len < NP)
+                        insertChar (pw_buf, pw_len, cur_pos, hide, ui.kb_char);
                     break;
                 }
             }
 
-            if (kbc == CHAR_TAB || inBox (s, hs_b)) {
+            if (ui.kb_char == CHAR_TAB || inBox (ui.tap, hs_b)) {
 
                 // toggle and redraw
                 hide = !hide;
@@ -273,8 +272,6 @@ bool askPasswd (const char *category, bool restore)
                     drawChar (i, hide ? HS_V : pw_buf[i]);
                 }
             }
-
-            // printf ("PW:%2d/%2d/%2d:%*.*s\n", cur_pos, pw_len, NP, pw_len, pw_len, pw_buf);
 
         } while (!cancelled && !enter);
 

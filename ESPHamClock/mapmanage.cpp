@@ -474,7 +474,8 @@ bool installWebMapImages (WiFiClient &client, long content_length, ImageRefit fi
             gettimeofday (&tv0, NULL);
 
         // read contents
-        char *image = (char *) malloc (content_length);                         // N.B. free!
+        StackMalloc image_mem(content_length);
+        char *image = (char *) image_mem.getMem();
         if (!image)
             fatalError ("No memory for User image %ld", content_length);
         long n_read;
@@ -482,7 +483,6 @@ bool installWebMapImages (WiFiClient &client, long content_length, ImageRefit fi
             n_read = client.readArray ((uint8_t*)&image[i], content_length - i);
             if (n_read == 0) {
                 ynot.printf ("image is short: %ld < %ld", i, content_length);
-                free (image);
                 return (false);
             }
         }
@@ -492,6 +492,9 @@ bool installWebMapImages (WiFiClient &client, long content_length, ImageRefit fi
             gettimeofday (&tv1, NULL);
             Serial.printf ("BMP: download %ld bytes in %ld us\n", content_length, (long)TVDELUS(tv0,tv1));
         }
+
+        // fresh
+        rmWebMapImages();
 
         // save at each possible zoom level
         for (int z = MIN_ZOOM; z <= MAX_ZOOM; z++) {
@@ -503,25 +506,19 @@ bool installWebMapImages (WiFiClient &client, long content_length, ImageRefit fi
             z_b.h = HC_MAP_H * z;
             uint16_t *z_565;
             mkMapFilenames (CM_USER, dfile, nfile, z, sizeof(dfile));
-            if (!readBMPImage (gr, z_b, z_565, fit, ynot)) {                    // N.B. free!
-                free (image);
+            if (!readBMPImage (gr, z_b, z_565, fit, ynot)) {                    // N.B. free z_565!
                 return(false);
             }
             if (!writeBMP565File (dfile, z_565, z_b.w, z_b.h, ynot)) {
                 free (z_565);
-                free (image);
                 return(false);
             }
             if (!writeBMP565File (nfile, z_565, z_b.w, z_b.h, ynot)) {
                 free (z_565);
-                free (image);
                 return(false);
             }
             free (z_565);
         }
-
-        // clean up
-        free (image);
 
         // ok!
         return (true);

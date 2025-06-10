@@ -68,7 +68,7 @@ static void readCities()
             LatLong &new_ll = lls[n_cities];
             new_ll.lat_d = lat;
             new_ll.lng_d = lng;
-            normalizeLL (new_ll);
+            new_ll.normalize();
 
             // capture longest name
             int name_l = strlen (name);

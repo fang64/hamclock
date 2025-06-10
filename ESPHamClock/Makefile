@@ -1,15 +1,31 @@
 # Makefile for HamClock on linux or macos
-# type make help for possible targets
+# type "make help" for possible targets
 
-# HamClock can be built for 16 or 32 bit frame buffers. Default is 32, add following define for 16:
-# -D_16BIT_FB
+# HamClock can be built for 16 or 32 bit frame buffers. The default is 32 but either size may be
+# specified explicitly by setting FB_DEPTH either here or on the command line to 16 or 32.
+# FB_DEPTH=16
+
+# HamClock setup can ask for WiFi creds but by default only does so for fb0 systems. Even this may be
+# disabled by setting WIFI_NEVER either here or on the command line to 1.
+# WIFI_NEVER=1
 
 # always runs these non-file targets
 .PHONY: clean clobber help hclibs
 
 # build flags common to all options and architectures
-CXXFLAGS = -IArduinoLib -IwsServer/include -Izlib-hc -I. -g -O2 -Wall -pthread -std=c++17
+CXXFLAGS = -IArduinoLib -IwsServer/include -Izlib-hc -I. -g -O2 -Wall -pthread -std=c++17 -march=native
 # CXXFLAGS += -Wextra -pedantic -Werror -Wno-attributes -Wno-unknown-pragmas
+
+# add explicit framebuffer depth as _FB_DEPTH if defined
+ifdef FB_DEPTH
+    CXXFLAGS += -D_FB_DEPTH=$(FB_DEPTH)
+endif
+
+# handle WiFi configuration
+ifeq ($(WIFI_NEVER),1)
+    CXXFLAGS += -D_WIFI_NEVER
+endif
+
 LDXXFLAGS = -LArduinoLib -LwsServer -Lzlib-hc -g -pthread
 LIBS = -lpthread -larduino -lzlib-hc -lws
 CXX = g++
@@ -72,6 +88,7 @@ OBJS = \
 	drawextra.o \
 	dxcluster.o \
 	dxpeds.o \
+	dxpeds_hide.o \
 	earthmap.o \
 	earthsat.o \
 	emetool.o \
@@ -81,6 +98,7 @@ OBJS = \
 	gpsd.o \
 	grayline.o \
 	kd3tree.o \
+	infobox.o \
 	liveweb.o \
 	liveweb-html.o \
 	magdecl.o \
@@ -107,7 +125,8 @@ OBJS = \
 	runner.o \
 	santa.o \
 	sattool.o \
-	scroll.o \
+	scrollbar.o \
+	scrollstate.o \
 	sdo.o \
 	selectFont.o \
 	setup.o \
@@ -117,6 +136,7 @@ OBJS = \
 	spots.o \
 	stopwatch.o \
 	string.o \
+	tooltip.o \
 	touch.o \
 	tz.o \
 	version.o \
@@ -134,15 +154,19 @@ help:
 	@printf "    hamclock-2400x1440        X11 GUI desktop version, larger yet\n"
 	@printf "    hamclock-3200x1920        X11 GUI desktop version, huge\n"
 	@printf "\n";
-	@printf "    hamclock-web-800x480      web server only (no display)\n"
-	@printf "    hamclock-web-1600x960     web server only (no display), larger\n"
-	@printf "    hamclock-web-2400x1440    web server only (no display), larger yet\n"
-	@printf "    hamclock-web-3200x1920    web server only (no display), huge\n"
+	@printf "    hamclock-web-800x480      web server only (no local display)\n"
+	@printf "    hamclock-web-1600x960     web server only (no local display), larger\n"
+	@printf "    hamclock-web-2400x1440    web server only (no local display), larger yet\n"
+	@printf "    hamclock-web-3200x1920    web server only (no local display), huge\n"
 	@printf "\n";
 	@printf "    hamclock-fb0-800x480      RPi stand-alone /dev/fb0, AKA hamclock-fb0-small\n"
 	@printf "    hamclock-fb0-1600x960     RPi stand-alone /dev/fb0, larger, AKA hamclock-fb0\n"
 	@printf "    hamclock-fb0-2400x1440    RPi stand-alone /dev/fb0, larger yet\n"
 	@printf "    hamclock-fb0-3200x1920    RPi stand-alone /dev/fb0, huge\n"
+	@printf "\n";
+	@printf "Optional command line variables which may be set before the desired target:\n"
+	@printf "    FB_DEPTH=16 or 32         - Specify a given frame buffer pixel size (default is 32 on all but fb0)\n"
+	@printf "    WIFI_NEVER=1              - Disable WiFi fields in setup (already the default on all but fb0)\n"
 
 
 # supporting libs
@@ -216,8 +240,6 @@ hamclock-web-3200x1920: $(OBJS) hclibs
 
 
 # RPi fb0 versions
-
-# N.B. do it but also remain backward compatable
 
 hamclock-fb0-small: hamclock-fb0-800x480
 	cp $? $@

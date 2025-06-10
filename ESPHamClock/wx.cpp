@@ -544,10 +544,10 @@ void doNCDXFWXTouch (BRB_MODE m)
 
         // save
         NVWriteUInt16 (m == BRB_SHOW_DEWX ? NV_DEWXCHOICE : NV_DXWXCHOICE, mask);
-    }
 
-    // redraw box if for no other reason than to erase menu
-    drawNCDXFWx(m);
+        // redraw box
+        drawNCDXFWx(m);
+    }
 }
 
 /* display current DE weather in the given box and in NCDXF_b if up.

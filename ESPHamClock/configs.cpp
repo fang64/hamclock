@@ -42,12 +42,11 @@ static const char cfg_suffix[] = ".eeprom";
 #define RESET_TX    SAVE_TX                     // Reset TB x
 #define RESET_LX    SAVE_LX                     // " label x
 #define RESET_Y     (SAVE_Y+ROW_DY)             // " text baseline Y
-#define ARROW_W     10                          // arrow width (best if even)
-#define ARROW_H     25                          // " height
-#define ARROW_X     15                          // " left edge x
-#define SUP_Y       TBL_Y                       // top y of up arrow
 #define MAX_VIS     ((COK_Y-TBL_Y)/ROW_DY)      // max N display rows
-#define SDOWN_Y     (TBL_Y+(MAX_VIS-1)*ROW_DY+TB_SZ-ARROW_H)    // top y of down arrow
+#define SCR_W       16                          // scrollbar width
+#define SCR_X       8                           // " left edge x
+#define SCR_Y       TBL_Y                       // " top y
+#define SCR_H       ((MAX_VIS-1)*ROW_DY+TB_SZ)  // " height
 
 #define ERR_DWELL   2000                        // dwell time for err msg, millis
 
@@ -96,7 +95,7 @@ typedef struct {
     TBControl tbl_tb[MAX_VIS][N_CIDX];          // toggle button table, drawn with [0] on top
     CfgName tbl_name[MAX_VIS];                  // editable name for each table row
 
-    SBox scrollU_b, scrollD_b;                  // scroll up/down arrow buttons
+    ScrollBar sb;                               // scrollable if too many to show all
 } CfgTable;
 
 
@@ -107,60 +106,6 @@ typedef struct {
 // handy whether cfg[ci] or tbl_row is visible
 #define CVIS(ct,ci) ((ci) >= (ct).top_cfg && (ci) < (ct).n_cfg && C2T((ct),(ci)) < MAX_VIS)
 #define TVIS(ct,tr) (CVIS((ct),T2C((ct),(tr))))
-
-
-
-
-/* draw the scroll controls, if applicable
- */
-static void drawCfgScroller (const CfgTable &ctbl)
-{
-    if (ctbl.n_cfg <= MAX_VIS)
-        return;
-
-    // handy
-    const SBox &ub = ctbl.scrollU_b;
-    const SBox &db = ctbl.scrollD_b;
-
-    // scroll-up arrow points up
-    tft.fillTriangle (ub.x+ub.w/2, ub.y,  ub.x, ub.y+ub.h,  ub.x+ub.w, ub.y+ub.h, SCROLL_CLR);
-
-    // scroll-down arrow points down
-    tft.fillTriangle (db.x, db.y,  db.x+db.w, db.y,  db.x+db.w/2, db.y+db.h, SCROLL_CLR);
-
-    // trough sits between arrows with a small gap
-    const int trough_h = db.y - (ub.y + ub.h) - 1;
-    tft.fillRect (ub.x, ub.y+ub.h, ub.w, trough_h, RA8875_BLACK);
-
-    // thumb fits in trough, height depends on n_cfg vs MAX_VIS
-    const int thumb_h = trough_h*MAX_VIS/ctbl.n_cfg - 1;
-    const int thumb_y = ub.y+ub.h + trough_h*ctbl.top_cfg/ctbl.n_cfg + 1;
-    tft.fillRect (ub.x, thumb_y, ub.w, thumb_h, SCROLL_CLR);
-
-    // edges
-    tft.drawLine (ub.x, ub.y+ub.h, db.x, db.y, SCROLL_CLR);
-    tft.drawLine (ub.x+ub.w, ub.y+ub.h, db.x+db.w, db.y, SCROLL_CLR);
-}
-
-/* scroll up, if applicable
- */
-static void scrollCfgUp (CfgTable &ctbl)
-{
-    if (ctbl.top_cfg > 0) {
-        ctbl.top_cfg -= 1;
-        drawCfgScroller (ctbl);
-    }
-}
-
-/* scroll down, if applicable
- */
-static void scrollCfgDown (CfgTable &ctbl)
-{
-    if (ctbl.top_cfg < ctbl.n_cfg - MAX_VIS) {
-        ctbl.top_cfg += 1;
-        drawCfgScroller (ctbl);
-    }
-}
 
 
 
@@ -545,7 +490,7 @@ static void freeCfgTable (CfgTable &ctbl)
 static bool isCfgNameOk (CfgName &cn)
 {
     // clean ends
-    strtrim (cn.name);
+    strTrimAll (cn.name);
 
     // can't be empty
     if (strlen (cn.name) == 0) {
@@ -708,9 +653,9 @@ static bool runConfigMenu (char **names, int n_cfgs, bool &restore_def)
     tft.setCursor (RESET_LX, RESET_Y);
     tft.print ("Reset to default configuration (restarts)");
 
-    // position scroll controls
-    ctbl.scrollU_b = {ARROW_X, SUP_Y, ARROW_W, ARROW_H};
-    ctbl.scrollD_b = {ARROW_X, SDOWN_Y, ARROW_W, ARROW_H};
+    // prep scroller
+    SBox scroll_b = {SCR_X, SCR_Y, SCR_W, SCR_H};
+    ctbl.sb.init (MAX_VIS, ctbl.n_cfg, scroll_b);
 
     // draw title
     static const char title[] = "Manage Configurations";
@@ -746,24 +691,16 @@ static bool runConfigMenu (char **names, int n_cfgs, bool &restore_def)
     // draw full table
     drawCfgTable (ctbl);
 
-    // draw scroll control
-    drawCfgScroller (ctbl);
-
     // prep run
     SBox screen_b = {0, 0, tft.width(), tft.height()};
     drawSBox (screen_b, GRAY);
-    SCoord s;
-    char kbc;
     UserInput ui = {
         screen_b,
         UI_UFuncNone, 
         UF_UNUSED,
         UI_NOTIMEOUT,
         UF_NOCLOCKS,
-        s,
-        kbc,
-        false,
-        false
+        {0, 0}, TT_NONE, '\0', false, false
     }; 
 
     // note where editing, tbl_row or -1 for Save else -2
@@ -777,14 +714,14 @@ static bool runConfigMenu (char **names, int n_cfgs, bool &restore_def)
     while (waitForUser(ui)) {
 
         // done when ESC or Cancel
-        if (kbc == CHAR_ESC || inBox (s, cancel_b)) {
+        if (ui.kb_char == CHAR_ESC || inBox (ui.tap, cancel_b)) {
             drawStringInBox ("Cancel", cancel_b, true, RA8875_WHITE);
             wdDelay(500);
             break;
         }
 
         // engage when CR or Ok but beware blank save
-        if (kbc == CHAR_NL || kbc == CHAR_CR || inBox (s, ok_b)) {
+        if (ui.kb_char == CHAR_NL || ui.kb_char == CHAR_CR || inBox (ui.tap, ok_b)) {
             if (!ctbl.save_tb.on || isCfgNameOk (ctbl.save_name)) {
                 drawStringInBox ("Ok", ok_b, true, RA8875_WHITE);
                 wdDelay(500);
@@ -793,13 +730,17 @@ static bool runConfigMenu (char **names, int n_cfgs, bool &restore_def)
             }
         }
 
-        // steer tap input to matching box, if any
-        if (inBox (s, ctbl.save_name.box)) {
+        // steer to appropriate control, if any
+        if (ctbl.sb.checkTouch (ui.kb_char, ui.tap)) {
+            ctbl.top_cfg = ctbl.sb.getTop();
+            drawCfgTable (ctbl);
+
+        } else if (inBox (ui.tap, ctbl.save_name.box)) {
             drawCfgNameCursor (ctbl.save_name);
             setAllCfgTableOff (ctbl);
             editing = EDITING_SAVE;
 
-        } else if (inBox (s, ctbl.save_tb.box)) {
+        } else if (inBox (ui.tap, ctbl.save_tb.box)) {
             ctbl.save_tb.on = !ctbl.save_tb.on;
             drawTBControl (ctbl.save_tb);
             editing = ctbl.save_tb.on ? EDITING_SAVE : EDITING_NONE;
@@ -809,19 +750,11 @@ static bool runConfigMenu (char **names, int n_cfgs, bool &restore_def)
             } else
                 eraseCfgNameCursor (ctbl.save_name);
 
-        } else if (inBox (s, ctbl.reset_tb.box)) {
+        } else if (inBox (ui.tap, ctbl.reset_tb.box)) {
             restore_def = ctbl.reset_tb.on = !ctbl.reset_tb.on;
             drawTBControl (ctbl.reset_tb);
             if (ctbl.reset_tb.on)
                 setAllCfgTableOff (ctbl);
-
-        } else if (inBox (s, ctbl.scrollU_b)) {
-            scrollCfgUp (ctbl);
-            drawCfgTable (ctbl);
-
-        } else if (inBox (s, ctbl.scrollD_b)) {
-            scrollCfgDown (ctbl);
-            drawCfgTable (ctbl);
 
         } else {
             // find table entry, if any
@@ -831,7 +764,7 @@ static bool runConfigMenu (char **names, int n_cfgs, bool &restore_def)
                 // check TB matrix
                 for (int cidx = 0; !found && cidx < N_CIDX; cidx++) {
                     TBControl &tb = ctbl.tbl_tb[tbl_row][cidx];
-                    if (inBox (s, tb.box)) {
+                    if (inBox (ui.tap, tb.box)) {
 
                         // toggle
                         tb.on = !tb.on;
@@ -847,7 +780,7 @@ static bool runConfigMenu (char **names, int n_cfgs, bool &restore_def)
                 }
 
                 // check clicking in name text field
-                if (!found && inBox (s, ctbl.tbl_name[tbl_row].box)) {
+                if (!found && inBox (ui.tap, ctbl.tbl_name[tbl_row].box)) {
                     // friendly turn on matching TB
                     ctbl.tbl_tb[tbl_row][REN_CIDX].on = true;
                     updateCfgChoices (ctbl, tbl_row, REN_CIDX);
@@ -860,11 +793,11 @@ static bool runConfigMenu (char **names, int n_cfgs, bool &restore_def)
 
         // handle editing
         if (editing == EDITING_SAVE)
-            editCfgName (s, kbc, ctbl.save_name);
+            editCfgName (ui.tap, ui.kb_char, ctbl.save_name);
         else if (editing != EDITING_NONE && TVIS(ctbl,editing)) {
             // handle edit and store change back into master table
             CfgName &cn = ctbl.tbl_name[editing];
-            editCfgName (s, kbc, cn);
+            editCfgName (ui.tap, ui.kb_char, cn);
             quietStrncpy (ctbl.cfg[T2C(ctbl,editing)].edit_name, cn.name, MAX_NAMLEN);
         }
     }

@@ -481,7 +481,8 @@ static bool retrieveContests (const SBox &box)
             // skip if contest is already over
             time_t end_t = atol(ut2);
             if (now > end_t) {
-                Serial.printf ("CTS %s is already passed %ld\n", title, (long)end_t);
+                Serial.printf ("CTS %s is already passed %s %d %02d:%02d Z\n", title,
+                                    monthShortStr(month(end_t)), day(end_t), hour(end_t), minute(end_t));
                 continue;
             }
 
@@ -613,8 +614,6 @@ bool checkContestsTouch (const SCoord &s, const SBox &box)
         // run the menu, then minimal update
         if (runContestMenu (s, box))
             scheduleNewPlot (PLOT_CH_CONTESTS);
-        else
-            drawContestsPane (box);
 
         // ours regardless of menu outcome
         return (true);

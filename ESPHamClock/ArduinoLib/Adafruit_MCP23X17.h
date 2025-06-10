@@ -34,7 +34,12 @@ class Adafruit_MCP23X17 {
         uint8_t digitalRead (uint8_t mcp_pin);
         void digitalWrite (uint8_t mcp_pin, uint8_t value);
 
+        // HamClock extensions
+        int maxPollRate (void);
+
     private:
+
+        int max_hz;
 
     #if defined (_NATIVE_GPIOD_LINUX)
 

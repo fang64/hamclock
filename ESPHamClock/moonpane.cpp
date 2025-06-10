@@ -110,14 +110,14 @@ bool checkMoonTouch (const SCoord &s, const SBox &box)
             // need immediate refresh because EME tool blocks
             updateMoonPane (box);
             drawEMETool();
-            initEarthMap();
         }
         if (mitems[1].set)
             openURL ("https://apod.nasa.gov/apod/ap240602.html");
+
+        // refresh
+        scheduleNewPlot (PLOT_CH_MOON);
     }
 
-    // refresh pane regardless
-    scheduleNewPlot (PLOT_CH_MOON);
 
     return (true);
 }

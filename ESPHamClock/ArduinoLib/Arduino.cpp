@@ -33,6 +33,8 @@ const char *diag_files[N_DIAG_FILES] = {
 
 
 // how we were made
+char build_variables[64];
+
 #if defined(_USE_FB0)
   #if defined(_CLOCK_1600x960)
       char our_make[] = "hamclock-fb0-1600x960";
@@ -71,6 +73,20 @@ const char *diag_files[N_DIAG_FILES] = {
 // public for user agent
 const char *pw_file;
 
+/* initialize build variables */
+static void initBuildVariables(void)
+{
+    build_variables[0] = '\0';  // start empty
+    #if defined(_FB_DEPTH)
+        snprintf (build_variables, sizeof(build_variables), "FB_DEPTH=%d ", _FB_DEPTH);
+    #endif
+    #if defined(_WIFI_NEVER)
+        strcat(build_variables, "WIFI_NEVER=1 ");
+    #endif
+    strTrimAll (build_variables);
+}
+
+
 
 /* return milliseconds since first call
  */
@@ -105,6 +121,11 @@ void delay (uint32_t ms)
 long random(int max)
 {
         return ((::random() >> 3) % max);
+}
+
+void randomSeed (int s)
+{
+    ::srandom(s);
 }
 
 uint16_t analogRead(int pin)
@@ -257,7 +278,7 @@ static void logSys()
         if (cwdp)
             printf ("CWD %s\n", cwdp);
         printf ("process id %d\n", getpid());
-        printf ("built as %s\n", our_make);
+        printf ("built as %s %s\n", build_variables, our_make);
         printf ("working directory is %s\n", our_dir.c_str());
         printf ("ruid %d euid %d\n", getuid(), geteuid());
         if (pw_file)
@@ -325,7 +346,7 @@ static void logOS()
 static void showVersion()
 {
         fprintf (stderr, "Version %s\n", hc_version);
-        fprintf (stderr, "built as %s\n", our_make);
+        fprintf (stderr, "built as: make %s %s\n", build_variables, our_make);
 }
 
 /* show error or usage then exit(1)
@@ -346,7 +367,7 @@ static void usage (const char *errfmt, ...)
             fprintf (stderr, "Purpose: display time and other information useful to amateur radio operators\n");
             fprintf (stderr, "Usage: %s [options]\n", me);
             fprintf (stderr, "Version %s\n", hc_version);
-            fprintf (stderr, "Built as %s\n", our_make);
+            fprintf (stderr, "Built as: make %s %s\n", build_variables, our_make);
             fprintf (stderr, "Options:\n");
             fprintf (stderr, " -0   : restore all original default Setup values\n");
             fprintf (stderr, " -a x : set debug name=level, bogus name gives list\n");
@@ -616,8 +637,12 @@ int main (int ac, char *av[])
         // save our args for restart or remote update
 	our_argv = av;
 
-        // always want stdout synchronous 
+        // always want stdout immediate and allow for multiple processes writing
+        fcntl (1, F_SETFL, fcntl (1, F_GETFL, 0) | O_APPEND);
         setbuf (stdout, NULL);
+
+        // initialize extra defines
+        initBuildVariables();
 
         // check args
         crackArgs (ac, av);

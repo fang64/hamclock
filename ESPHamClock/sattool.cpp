@@ -441,24 +441,20 @@ void drawSatTool()
         SBox popup_b = {0,0,0,0};
 
         // report info for tap times until time out or tap Resume button
-        SCoord s;
-        char c;
         UserInput ui = {
             map_b,
             UI_UFuncNone,
             UF_UNUSED,
             ST_TO,
             UF_CLOCKSOK,
-            s,
-            c,
-            false,
-            false
+            {0, 0}, TT_NONE, '\0', false, false
         };
+
         while (waitForUser(ui)) {
 
             // done if return, esc or tap Resume button or tap outside box
-            if (c == CHAR_CR || c == CHAR_NL || c == CHAR_ESC || inBox (s, resume_b) || 
-                                                    (c == CHAR_NONE && !inBox (s, map_b)))
+            if (ui.kb_char == CHAR_CR || ui.kb_char == CHAR_NL || ui.kb_char == CHAR_ESC
+                        || inBox (ui.tap, resume_b) || (ui.kb_char == CHAR_NONE && !inBox (ui.tap, map_b)))
                 break;
 
             // first erase previous popup, if any
@@ -471,13 +467,14 @@ void drawSatTool()
             }
 
             // show new popup if tap within the plot area but outside previous popup
-            if (s.x > ST_X0 && s.x < ST_X0 + ST_PW && s.y > ST_E2Y(M_PI_2F) && s.y < ST_E2Y(-M_PI_2F)
-                                && (!popup_was_up || !inBox (s, popup_b))) {
+            if (ui.tap.x > ST_X0 && ui.tap.x < ST_X0 + ST_PW && ui.tap.y > ST_E2Y(M_PI_2F)
+                                && ui.tap.y < ST_E2Y(-M_PI_2F)
+                                && (!popup_was_up || !inBox (ui.tap, popup_b))) {
 
 
                 // popup at s
-                popup_b.x = s.x;
-                popup_b.y = s.y;
+                popup_b.x = ui.tap.x;
+                popup_b.y = ui.tap.y;
                 popup_b.w = 122;
                 popup_b.h = 45;
 
@@ -488,7 +485,7 @@ void drawSatTool()
                     popup_b.y = ST_E2Y(-M_PI_2F) - ST_MT - popup_b.h;
 
                 // draw popup
-                drawSTPopup (ST_X2T(s.x), popup_b);
+                drawSTPopup (ST_X2T(ui.tap.x), popup_b);
 
                 // update popup state
                 popup_was_up = popup_is_up;

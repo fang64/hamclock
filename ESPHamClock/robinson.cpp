@@ -121,7 +121,7 @@ bool s2llRobinson (const SCoord &s, LatLong &ll)
     ll.lng_d += 360.0F*pan_zoom.pan_x/map_b.w;
     if (core_map != CM_USER)
         ll.lng_d += getCenterLng();
-    normalizeLL (ll);
+    ll.normalize();
 
     // ok?
     return (ok);
@@ -154,15 +154,6 @@ void fatalError (const char *fmt, ...)
 int16_t getCenterLng()
 {
     return (-90);
-}
-
-void normalizeLL (LatLong &ll)
-{
-    ll.lat_d = CLAMPF(ll.lat_d,-90,90);                 // clamp lat
-    ll.lat = deg2rad(ll.lat_d);
-
-    ll.lng_d = fmodf(ll.lng_d+(2*360+180),360)-180;     // wrap lng
-    ll.lng = deg2rad(ll.lng_d);
 }
 
 

@@ -1,4 +1,4 @@
-/* this is the same as Adafruit_RA8875 but runs on Rasp Pi using /dev/fb0 or any UNIX using X Windows.
+/* this is the same as Adafruit_RA8875 plus support for /dev/fb0 and X11 Windows.
  * N.B. we only remimplented the functions we use, we may have missed a few.
  */
 
@@ -37,20 +37,18 @@ struct fb_var_screeninfo {
 
 #endif	// _USE_FB0
 
+
 #include "gfxfont.h"
 extern const GFXfont Courier_Prime_Sans6pt7b;
 
+#define	RA8875_800x480 1
+#define RA8875_PWM_CLK_DIV1024 1
+#define	RA8875_MRWC 1
 
 
-#if defined(B_AND_W)
-// this only works for 32 bit framebuffer
-#define	RGB1632(C16)    ((((uint32_t)((((C16)&0xF800)>>8)*0.3F + (((C16)&0x07E0)>>3)*0.59F + (((C16)&0x001F)<<3)*0.11F))<<16) \
-                       | (((uint32_t)((((C16)&0xF800)>>8)*0.3F + (((C16)&0x07E0)>>3)*0.59F + (((C16)&0x001F)<<3)*0.11F))<<8)  \
-                       | (((uint32_t)((((C16)&0xF800)>>8)*0.3F + (((C16)&0x07E0)>>3)*0.59F + (((C16)&0x001F)<<3)*0.11F))<<0))
-#else
-#define	RGB1632(C16)	((((uint32_t)(C16)&0xF800)<<8) | (((uint32_t)(C16)&0x07E0)<<5) | (((C16)&0x001F)<<3))
-#endif
+// collection of format conversions for 16 and 32 bit pixels, chosen at compile time.
 
+#define RGB1632(C16)    ((((uint32_t)(C16)&0xF800)<<8) | (((uint32_t)(C16)&0x07E0)<<5) | (((C16)&0x001F)<<3))
 #define	RGB3216(C32)	RGB565(((C32)>>16)&0xFF, ((C32)>>8)&0xFF, ((C32)&0xFF))
 
 #define	RA8875_BLACK	RGB565(0,0,0)
@@ -62,33 +60,32 @@ extern const GFXfont Courier_Prime_Sans6pt7b;
 #define	RA8875_MAGENTA	RGB565(255,0,255)
 #define	RA8875_YELLOW	RGB565(255,255,0)
 
-#define	RA8875_800x480 1
-#define RA8875_PWM_CLK_DIV1024 1
-#define	RA8875_MRWC 1
-
-
-// choose 16 or 32 bit hw frame buffer
-#if defined(_USE_FB0)
-    // can find no way to support 32 on Pi5 so use 16 by default
-    #define _16BIT_FB
+// honor the build depth
+#if defined(_FB_DEPTH)
+    #if _FB_DEPTH==16
+        #define  _16BIT_FB
+    #endif
 #endif
+
 #if defined(_16BIT_FB)
-typedef uint16_t fbpix_t;
-#define BYTESPFBPIX     2
-#define BITSPFBPIX      16
-#define RGB16TOFBPIX(x) x
-#define FBPIXTORGB16(x) x
-#define FBPIXTORGB32(x) RGB1632(x)
-#define RGB32TOFBPIX(x) RGB565( (((x)>>16)&0xff), (((x)>>8)&0xff), ((x)&0xff) )
+    typedef uint16_t fbpix_t;
+    #define BYTESPFBPIX     2
+    #define BITSPFBPIX      16
+    #define RGB16TOFBPIX(x) x
+    #define FBPIXTORGB16(x) x
+    #define FBPIXTORGB32(x) RGB1632(x)
+    #define RGB32TOFBPIX(x) RGB565( (((x)>>16)&0xff), (((x)>>8)&0xff), ((x)&0xff) )
 #else   // 32 bpp
-typedef uint32_t fbpix_t;
-#define BYTESPFBPIX     4
-#define BITSPFBPIX      32
-#define RGB16TOFBPIX(x) RGB1632(x)
-#define FBPIXTORGB16(x) RGB3216(x)
-#define FBPIXTORGB32(x) x
-#define RGB32TOFBPIX(x) x
+    typedef uint32_t fbpix_t;
+    #define BYTESPFBPIX     4
+    #define BITSPFBPIX      32
+    #define RGB16TOFBPIX(x) RGB1632(x)
+    #define FBPIXTORGB16(x) RGB3216(x)
+    #define FBPIXTORGB32(x) x
+    #define RGB32TOFBPIX(x) x
 #endif
+
+
 
 // basic background refresh interval, usecs
 #define REFRESH_US      50000
@@ -202,8 +199,11 @@ class Adafruit_RA8875 {
         // use to learn whether display is ready
         bool displayReady(void);
 
-        // very fast pixel access
-        bool getRawPix(uint8_t *rgb24, int bytes);
+        // user direct pixel access
+        bool getBackingStore (uint8_t *&bs, int x0, int y0, int w, int h);
+        bool setBackingStore (uint8_t *&bs, int x0, int y0, int w, int h);
+        bool getRawPix (uint8_t *rgb24, int npix);
+
 
         // control whether to display gray
         void setGrayDisplay (GrayDpy_t g) {

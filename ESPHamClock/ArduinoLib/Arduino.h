@@ -13,8 +13,6 @@
 
 #define	String std::string
 
-#define	randomSeed(x)
-
 #define	PROGMEM	
 #define	F(X)	 X
 #define	PSTR(X)	 X
@@ -50,6 +48,7 @@
 
 extern uint32_t millis(void);
 extern long random(int max);
+extern void randomSeed(int s);
 extern void delay (uint32_t ms);
 extern uint16_t analogRead(int pin);
 extern void setup(void);
@@ -60,6 +59,7 @@ extern bool ignore_x11geom;
 
 extern char **our_argv;
 extern char our_make[];
+extern char build_variables[];
 
 extern void capturePasswords (const char *fn);
 

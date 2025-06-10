@@ -1111,6 +1111,27 @@ static void changeBrightness (const SCoord &s)
 
 }
 
+/* update after changing brb_mode
+ */
+static void engageNewBRBMode (void)
+{
+    // make a note
+    logBRBRotSet();
+
+    // match beacons to new state
+    updateBeacons (true);
+
+    // update on/off times if now used
+    if (brb_mode == BRB_SHOW_ONOFF)
+        getPersistentOnOffTimes (DEWeekday(), mins_on, mins_off);
+
+    // immediate redraw
+    brb_next_update = 0;
+
+    // save
+    NVWriteUInt16 (NV_BRB_ROTSET, brb_rotset);
+}
+
 /* run the brb/ncdxf box menu
  */
 static void runNCDXFMenu (void)
@@ -1178,32 +1199,22 @@ static void runNCDXFMenu (void)
                 }
             }
 
-            // make a note
-            logBRBRotSet();
-
-            // match beacons to new state
-            updateBeacons (true);
-
-            // update on/off times if now used
-            if (brb_mode == BRB_SHOW_ONOFF)
-                getPersistentOnOffTimes (DEWeekday(), mins_on, mins_off);
+            // go
+            engageNewBRBMode();
         }
-
-        // immediate redraw even if no change in order to erase menu
-        brb_next_update = 0;
-
-        // save
-        NVWriteUInt16 (NV_BRB_ROTSET, brb_rotset);
 }
 
 /* perform proper action given s known to be within NCDXF_b.
  */
-void doNCDXFBoxTouch (const SCoord &s)
+void doNCDXFBoxTouch (TouchType tt, const SCoord &s)
 {
     if (s.y < NCDXF_b.y + NCDXF_b.h/10) {
 
-        // tapped near the top so show menu of options
-        runNCDXFMenu ();
+        // tapped near the top so show menu of options or auto rotate if control-tap
+        if (tt == TT_TAP_BX && (brb_rotset & ~(1U << brb_mode)) != 0)   // test for >1 rotset
+            engageNewBRBMode();
+        else
+            runNCDXFMenu ();
 
     } else {
 

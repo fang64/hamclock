@@ -250,27 +250,27 @@ bool parseWebCommand (WebArgs &wa, char line[], size_t line_len)
                 state = PWC_LOOKING_4_VALUE;                    // now look for value
             } else if (*line == '&') {
                 *line = '\0';                                   // terminate name
-                if (!setWCValue (wa, strtrim(name), NULL, line0, line_len))
+                if (!setWCValue (wa, strTrimAll(name), NULL, line0, line_len))
                     return (false);
                 name = line + 1;                                // start next name
                 value = NULL;                                   // no value yet
             } else if (*line == '\0') {
                 if (name[0] == '\0')
                     return (true);                              // no name at all is ok
-                return (setWCValue (wa, strtrim(name), strtrim(value), line0, line_len));
+                return (setWCValue (wa, strTrimAll(name), strTrimAll(value), line0, line_len));
             }
             break;
 
         case PWC_LOOKING_4_VALUE:
             if (*line == '&') {
                 *line = '\0';                                   // terminate value
-                if (!setWCValue (wa, strtrim(name), strtrim(value), line0, line_len))
+                if (!setWCValue (wa, strTrimAll(name), strTrimAll(value), line0, line_len))
                     return (false);
                 name = line + 1;                                // start next name
                 value = NULL;                                   // no value yet
                 state = PWC_LOOKING_4_NAME;                     // now look for name
             } else if (*line == '\0') {
-                return (setWCValue (wa, strtrim(name), strtrim(value), line0, line_len));
+                return (setWCValue (wa, strTrimAll(name), strTrimAll(value), line0, line_len));
             }
             break;
         }
@@ -878,6 +878,55 @@ static bool getWiFiContests (WiFiClient &client, char *unused_line, size_t line_
     return (true);
 
 }
+
+/* get a user GPIO pin
+ */
+static bool getWiFiGPIO (WiFiClient &client, char line[], size_t line_len)
+{
+    // define all possible args
+    WebArgs wa;
+    wa.nargs = 0;
+    wa.name[wa.nargs++] = "pin";
+    wa.name[wa.nargs++] = "latched";    // optional, false by default
+
+    // parse
+    if (!parseWebCommand (wa, line, line_len))
+        return (false);
+
+    // get pin
+    int pin = 0;
+    if (wa.found[0])
+        pin = atoi (wa.value[0]);
+    else {
+        snprintf (line, line_len, "MCP pin is required");
+        return (false);
+    }
+
+    // get whether latched, default false
+    bool latched = false;
+    if (wa.found[1]) {
+        if (strcasecmp (wa.value[1], "true") == 0)
+            latched = true;
+        else if (strcasecmp (wa.value[1], "false") != 0) {
+            snprintf (line, line_len, "latched true or false");
+            return (false);
+        }
+    }
+
+    // get state
+    Message ynot;
+    bool state;
+    if (!getUserGPIO (pin, latched, state, ynot)) {
+        snprintf (line, line_len, "%s", ynot.get());
+        return (false);
+    }
+
+    // reply with state
+    startPlainText (client);
+    client.println (state ? 1 : 0);
+    return (true);
+}
+
 
 /* remote report current known set of DXpeditions
  */
@@ -1508,6 +1557,11 @@ static bool getWiFiSpaceWx (WiFiClient &client, char *unused_line, size_t line_l
         client.print (buf);
     }
 
+    if (space_wx[SPCWX_DST].value_ok) {
+        snprintf (buf, sizeof(buf), "DST       %8.0f\n", space_wx[SPCWX_DST].value);
+        client.print (buf);
+    }
+
 
     // show path reliability for the current hour
     if (bc_matrix.ok) {
@@ -1871,14 +1925,14 @@ static bool setWiFiDemo (WiFiClient &client, char line[], size_t line_len)
     if (wa.found[0] && wa.value[0] == NULL) {
         // on
         setDemoMode(true);
-        drawScreenLock();
+        drawDemoRunner();
         strcpy (buf, "Demo mode on\n");
         Serial.print (buf);
 
     } else if (wa.found[1] && wa.value[1] == NULL) {
         // off
         setDemoMode(false);
-        drawScreenLock();
+        drawDemoRunner();
         strcpy (buf, "Demo mode off\n");
         Serial.print (buf);
 
@@ -1893,7 +1947,7 @@ static bool setWiFiDemo (WiFiClient &client, char line[], size_t line_len)
         // turn on if not already
         if (!getDemoMode()) {
             setDemoMode(true);
-            drawScreenLock();
+            drawDemoRunner();
         }
 
         // run it
@@ -3668,6 +3722,78 @@ static bool setWiFiTouch (WiFiClient &client, char line[], size_t line_len)
     return (true);
 }
 
+/* set a user GPIO pin
+ *   pin=MCP&level=[hi,lo]&blink=hz
+ */
+static bool setWiFiGPIO (WiFiClient &client, char line[], size_t line_len)
+{
+    enum {
+        SETG_PIN,
+        SETG_LEVEL,
+        SETG_BLINK
+    };
+
+    WebArgs wa;
+    wa.nargs = 0;
+    wa.name[wa.nargs++] = "pin";
+    wa.name[wa.nargs++] = "level";
+    wa.name[wa.nargs++] = "blink";
+
+    // parse
+    if (!parseWebCommand (wa, line, line_len))
+        return (false);
+
+    // get pin
+    int pin = 0;
+    if (wa.found[SETG_PIN])
+        pin = atoi (wa.value[SETG_PIN]);
+    else {
+        snprintf (line, line_len, "MCP pin is required");
+        return (false);
+    }
+
+    // exactly one of level or blink is required
+    if (wa.found[SETG_LEVEL] == wa.found[SETG_BLINK]) {
+        snprintf (line, line_len, "set one of level or blink");
+        return (false);
+    }
+
+    Message ynot;
+
+    // check level
+    if (wa.found[SETG_LEVEL]) {
+        if (strcasecmp (wa.value[SETG_LEVEL], "hi") == 0 || strcmp (wa.value[SETG_LEVEL], "1") == 0) {
+            if (!setUserGPIO (pin, BLINKER_ON, ynot)) {
+                snprintf (line, line_len, "%s", ynot.get());
+                return (false);
+            }
+        } else if (strcasecmp (wa.value[SETG_LEVEL], "lo") == 0 || strcmp (wa.value[SETG_LEVEL], "0") == 0) {
+            if (!setUserGPIO (pin, BLINKER_OFF, ynot)) {
+                snprintf (line, line_len, "%s", ynot.get());
+                return (false);
+            }
+        } else {
+            snprintf (line, line_len, "level must be hi or lo");
+            return (false);
+        }
+    }
+
+    // check blink
+    if (wa.found[SETG_BLINK]) {
+        int hz = atoi (wa.value[SETG_BLINK]);
+        if (!setUserGPIO (pin, hz, ynot)) {
+            snprintf (line, line_len, "%s", ynot.get());
+            return (false);
+        }
+    }
+
+
+    // ack
+    startPlainText (client);
+    client.print("ok\n");
+    return (true);
+}
+
 /* set the VOACAP DE-DX map options
  * return whether all ok.
  */
@@ -4166,6 +4292,7 @@ static const CmdTble command_table[] = {
     { "get_dx.txt ",        getWiFiDXInfo,         "get DX info" },
     { "get_dxpeds.txt ",    getWiFiDXPeds,         "get current list of DXpeditions" },
     { "get_dxspots.txt ",   getWiFiDXSpots,        "get DX spots" },
+    { "get_gpio?",          getWiFiGPIO,           "pin=MCP&latched=[true,false]" }, // params!
     { "get_livespots.txt ", getWiFiLiveSpots,      "get live spots list" },
     { "get_livestats.txt ", getWiFiLiveStats,      "get live spots statistics" },
     { "get_ontheair.txt ",  getWiFiOnTheAir,       "get POTA/SOTA activators" },
@@ -4185,8 +4312,8 @@ static const CmdTble command_table[] = {
     { "set_defmt?",         setWiFiDEformat,       "fmt=[one_from_menu]&atin=RSAtAt|RSInAgo" },
     { "set_displayOnOff?",  setWiFiDisplayOnOff,   "on|off" },
     { "set_displayTimes?",  setWiFiDisplayTimes,   "on=HR:MN&off=HR:MN&day=[Sun..Sat]&idle=mins" },
+    { "set_gpio?",          setWiFiGPIO,           "pin=MCP&level=[hi,lo]&blink=hz" },
     { "set_livespots?",     setWiFiLiveSpots,      "(see error message)" },
-    { "set_screenlock?",    setWiFiScreenLock,     "lock=on|off" },
     { "set_mapcenter?",     setWiFiMapCenter,      "lng=X" },
     { "set_mapcolor?",      setWiFiMapColor,       "setup=name&color=R,G,B" },
     { "set_mapview?",       setWiFiMapView,        "Style=S&Grid=G&Projection=P&RSS=on|off&Night=on|off" },
@@ -4199,6 +4326,7 @@ static const CmdTble command_table[] = {
     { "set_rss?",           setWiFiRSS,            "reset|add=X|network|interval=secs|on|off|file (POST)" },
     { "set_satname?",       setWiFiSatName,        "abc|none" },
     { "set_sattle?",        setWiFiSatTLE,         "name=abc&t1=line1&t2=line2" },
+    { "set_screenlock?",    setWiFiScreenLock,     "lock=on|off" },
     { "set_senscorr?",      setWiFiSensorCorr,     "sensor=76|77&dTemp=X&dPres=Y" },
     { "set_stopwatch?",     setWiFiStopwatch,      "reset|run|stop|lap|countdown=mins" },
     { "set_time?",          setWiFiTime,           "change=delta_seconds" },
@@ -4640,12 +4768,12 @@ static bool runDemoChoice (DemoChoice choice, bool &slow, char msg[], size_t msg
         {
             // walk a small collection of cities
             static LatLong demo_ll[] = {
-                {0, 0, -26.2,  28.0},           // Johannesburg, South Africa
-                {0, 0, -22.9, -43.2},           // Rio de Janeiro, Brazi
-                {0, 0,  35.7, 139.7},           // Tokyo, Japan 
-                {0, 0, -33.9, 151.2},           // Sydney, Australia
-                {0, 0,  40.7, -74.0},           // New York City
-                {0, 0,  51.5, - 0.2},           // London
+                LatLong (-26.2,  28.0),       // Johannesburg, South Africa
+                LatLong (-22.9, -43.2),       // Rio de Janeiro, Brazi
+                LatLong ( 35.7, 139.7),       // Tokyo, Japan 
+                LatLong (-33.9, 151.2),       // Sydney, Australia
+                LatLong ( 40.7, -74.0),       // New York City
+                LatLong ( 51.5,  -0.2),       // London
             };
             static int demo_ll_i;
             LatLong &dll = demo_ll[demo_ll_i];
@@ -4779,12 +4907,7 @@ static bool runDemoChoice (DemoChoice choice, bool &slow, char msg[], size_t msg
         break;
 
     case DEMO_EME:
-        ok = findPaneChoiceNow(PLOT_CH_MOON) != PANE_NONE;
-        if (ok) {
-            drawEMETool();
-            initEarthMap();
-            slow = true;                // allow for time spent in EME tool
-        }
+        ok = false;             // no longer resumes by itself
         demoMsg (ok, choice, msg, msg_len, "EME");
         break;
 

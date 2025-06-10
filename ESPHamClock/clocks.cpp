@@ -1169,7 +1169,7 @@ bool checkClockTouch (SCoord &s)
 
         runAuxTimeMenu();
 
-        // we never change the time still need to claim the touch and restore under menu
+        // we never change the time but still need to claim the touch
         ours = true;
 
     } else if (inBox (s, clock_b) && !inBox (s, lkscrn_b) && !inBox (s, stopwatch_b)) {
@@ -1324,16 +1324,6 @@ bool checkClockTouch (SCoord &s)
                 drawSatPass();
         }
 
-    }
-
-    if (ours) {
-        // restore under menu
-        if (SHOWING_PANE_0())
-            scheduleNewPlot (plot_ch[PANE_0]);
-        else {
-            drawOneTimeDE();
-            drawDEInfo();
-        }
     }
 
     return (ours);

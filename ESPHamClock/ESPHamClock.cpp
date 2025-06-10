@@ -7,9 +7,10 @@
 
 // clock, aux time and stopwatch boxes
 SBox clock_b = { 0, 65, 230, 49};
-SBox auxtime_b = { 0, 113, 205, 32};
+SBox auxtime_b = { 0, 113, 204, 32};
 SBox stopwatch_b = {149, 93, 38, 22};
-SBox lkscrn_b = {216, 117, 13, 20};     // size must match HC_RUNNER_W/H base size
+SBox lkscrn_b = {217, 118, 11, 16};     // best if odd width
+static SBox demo_b = {204, 121, 11, 13};// N.B. must match runner.pl
 
 // DE and DX map boxes
 SBox dx_info_b;                         // dx info location
@@ -83,7 +84,6 @@ static int rssi_avg;                            // running rssi mean
 #define RSSI_ALPHA 0.5F                         // rssi blending coefficient
 #define CSINFO_DROP     2                       // gap below cs_info
 #define CSINFO_H        9                       // up/wifi/version box heights
-static MCPPoller onair_poller;                  // pin polling control
 
 // de and dx sun rise/set boxes, dxsrss_b also used for DX prefix depending on dxsrss
 SBox desrss_b, dxsrss_b;
@@ -124,6 +124,10 @@ static char dx_override_prefix[MAX_PREF_LEN];
 // whether flash crc is ok -- from old ESP days
 uint8_t flash_crc_ok = 1;
 
+// whether and which new version is available
+static bool new_avail;
+static char new_version[20];
+
 // name of each DETIME setting, for menu and set_defmt
 #define X(a,b)  b,                              // expands DETIMES to name plus comma
 const char *detime_names[DETIME_N] = {
@@ -137,6 +141,7 @@ static void drawVersion(bool force);
 static void checkTouch(void);
 static void drawUptime(bool force);
 static void drawRotatingMessage(void);
+static void drawScreenLock(void);
 static void toggleLockScreen(void);
 static void setDXPrefixOverride (const char *ovprefix);
 static void unsetDXPrefixOverride (void);
@@ -155,7 +160,7 @@ static void defaultState()
     // return all IO pins to stable defaults
     SWresetIO();
     satResetIO();
-    disableMCPPoller (onair_poller);
+    disableMCPPoller (ONAIR_PIN);
     radioResetIO();
 }
 
@@ -243,7 +248,7 @@ void setup()
     showDefines();
 
     // random seed, not critical
-    randomSeed(micros());
+    randomSeed(getpid());
 
     // Initialise the display -- not worth continuing if not found
     if (!tft.begin(RA8875_800x480)) {
@@ -394,7 +399,7 @@ void setup()
         Serial.println("MCP: GPIO mechanism not found");
 
     // start onair poller
-    startMCPPoller (onair_poller, ONAIR_PIN, 2);
+    startMCPPoller (ONAIR_PIN);
 
     // continue with user's desired brightness
     setupBrightness();
@@ -461,7 +466,7 @@ void setup()
     // get from nvram even if set prior from setup, geolocate or gpsd
     NVReadFloat(NV_DE_LAT, &de_ll.lat_d);
     NVReadFloat(NV_DE_LNG, &de_ll.lng_d);
-    normalizeLL(de_ll);
+    de_ll.normalize();
     if (!NVReadTZ (NV_DE_TZ, de_tz)) {
         setTZAuto (de_tz);
         NVWriteTZ (NV_DE_TZ, de_tz);
@@ -469,10 +474,10 @@ void setup()
 
     // ask to update if new version available -- never returns if update succeeds
     if (!skip_skip) {
-        char nv[50];
-        if (newVersionIsAvailable (nv, sizeof(nv)) && askOTAupdate (nv, false)) {
+        new_avail = newVersionIsAvailable (new_version, sizeof(new_version));
+        if (new_avail && askOTAupdate (new_version, true, false)) {
             if (askPasswd ("upgrade", false))
-                doOTAupdate(nv);
+                doOTAupdate(new_version);
             eraseScreen();
         }
     }
@@ -560,7 +565,7 @@ void setup()
         setTZAuto (dx_tz);
         NVWriteTZ (NV_DX_TZ, dx_tz);
     }
-    normalizeLL (dx_ll);
+    dx_ll.normalize();
     ll2s (dx_ll, dx_c.s, DX_R);
 
     // sat pass circle
@@ -789,6 +794,7 @@ void initScreen()
     initWiFiRetry();
     drawUptime(true);
     drawScreenLock();
+    drawDemoRunner();
 
     // always close so it will restart if open in any pane
     closeGimbal();
@@ -826,7 +832,7 @@ static void checkTouch()
     }
 
     // check lock
-    if (inBox (s, lkscrn_b))
+    if (inBox (s, lkscrn_b) || inBox (s, demo_b))
         runShutdownMenu();
     if (screenIsLocked())
         return;
@@ -836,8 +842,15 @@ static void checkTouch()
     // check all touch locations, ones that can be over map checked first and beware showing PANE_0
     LatLong ll;
     if (inBox (s, view_btn_b)) {
-        // set flag to draw map menu at next opportunity
-        mapmenu_pending = true;
+        if (tt == TT_TAP_BX) {
+            if (mapIsRotating()) {
+                rotateNextMap();
+                scheduleFreshMap();
+            }
+        } else {
+            // set flag to draw map menu at next opportunity
+            mapmenu_pending = true;
+        }
     } else if (!dx_info_for_sat && checkSatMapTouch (s)) {
         // set showing sat in DX box
         dx_info_for_sat = true;
@@ -867,12 +880,13 @@ static void checkTouch()
             scheduleNewPlot(PLOT_CH_MOON);
             scheduleNewPlot(PLOT_CH_SDO);
             scheduleNewPlot(PLOT_CH_BC);
+            drawDEInfo();
         }
-        drawDEInfo();   // restore regardless
     } else if (!SHOWING_PANE_0() && !dx_info_for_sat && inBox (s, dx_tz.box)) {
-        if (TZMenu (dx_tz, dx_ll))
+        if (TZMenu (dx_tz, dx_ll)) {
             NVWriteTZ (NV_DX_TZ, dx_tz);
-        drawDXInfo();   // restore regardless
+            drawDXInfo();
+        }
     } else if (inBox (s, cs_info.box)) {
         doCallsignTouch (s);
     } else if (!SHOWING_PANE_0() && !dx_info_for_sat && checkPathDirTouch(s)) {
@@ -911,33 +925,28 @@ static void checkTouch()
         }
     } else if (!SHOWING_PANE_0() && !dx_info_for_sat && inCircle(s, dx_marker_c)) {
         newDX (dx_ll, NULL, NULL);
-    } else if (SHOWING_PANE_0() && checkPlotTouch(s, PANE_0)) {
+    } else if (SHOWING_PANE_0() && checkPlotTouch(tt, s, PANE_0)) {
         updateWiFi();
-    } else if (checkPlotTouch(s, PANE_1)) {
+    } else if (checkPlotTouch(tt, s, PANE_1)) {
         updateWiFi();
-    } else if (checkPlotTouch(s, PANE_2)) {
+    } else if (checkPlotTouch(tt, s, PANE_2)) {
         updateWiFi();
-    } else if (checkPlotTouch(s, PANE_3)) {
+    } else if (checkPlotTouch(tt, s, PANE_3)) {
         updateWiFi();
     } else if (inBox (s, NCDXF_b)) {
-        doNCDXFBoxTouch(s);
+        doNCDXFBoxTouch(tt, s);
     } else if (!SHOWING_PANE_0() && checkSatNameTouch(s)) {
         dx_info_for_sat = querySatSelection();
         initScreen();
     } else if (!SHOWING_PANE_0() && dx_info_for_sat && inBox (s, dx_info_b)) {
         drawDXSatMenu(s);
     } else if (inBox (s, version_b)) {
-        char nv[50];
-        if (newVersionIsAvailable(nv, sizeof(nv))) {
-            if (askOTAupdate (nv, false) && askPasswd ("upgrade", false))
-                doOTAupdate(nv);
+        new_avail = newVersionIsAvailable(new_version, sizeof(new_version));
+        if (new_avail) {
+            if (askOTAupdate (new_version, true, false) && askPasswd ("upgrade", false))
+                doOTAupdate(new_version);
         } else {
-            eraseScreen();
-            tft.setTextColor (RA8875_WHITE);
-            tft.setCursor (tft.width()/8, tft.height()/3);
-            selectFontStyle (BOLD_FONT, SMALL_FONT);
-            tft.print ("You're up to date!");        // match webserver response
-            wdDelay(3000);
+            (void) askOTAupdate (new_version, false, false);
         }
         initScreen();
     } else if (inBox (s, wifi_b)) {
@@ -962,20 +971,6 @@ static void checkTouch()
     }
 }
 
-/* given the degree members:
- *   clamp lat to [-90,90];
- *   modulo lng to [-180,180).
- * then fill in the radian members.
- */
-void normalizeLL (LatLong &ll)
-{
-    ll.lat_d = CLAMPF(ll.lat_d,-90,90);                 // clamp lat
-    ll.lat = deg2rad(ll.lat_d);
-
-    ll.lng_d = fmodf(ll.lng_d+(2*360+180),360)-180;     // wrap lng
-    ll.lng = deg2rad(ll.lng_d);
-}
-
 /* set new DX location from ll in dx_info.
  * use the given grid, else look up from ll.
  * also set override prefix unless NULL
@@ -993,7 +988,7 @@ void newDX (LatLong &ll, const char grid[MAID_CHARLEN], const char *ovprefix)
     }
 
     // set grid and TZ
-    normalizeLL (ll);
+    ll.normalize();
     if (grid)
         NVWriteString (NV_DX_GRID, grid);
     else
@@ -1016,7 +1011,7 @@ void newDX (LatLong &ll, const char grid[MAID_CHARLEN], const char *ovprefix)
         unsetDXPrefixOverride();
 
     // enable great path unless very close to DE
-    dxpath_time = ERAD_M * simpleSphereDist (dx_ll, de_ll) > DEDX_MINPATH ? millis() : 0;
+    dxpath_time = ERAD_M * dx_ll.GSD(de_ll) > DEDX_MINPATH ? millis() : 0;
 
     // just call initEarthMap??
     drawDXInfo ();
@@ -1041,7 +1036,7 @@ void newDE (LatLong &ll, const char grid[MAID_CHARLEN])
         return;
 
     // set grid and TZ
-    normalizeLL (ll);
+    ll.normalize();
     if (grid)
         NVWriteString (NV_DE_GRID, grid);
     else
@@ -1181,7 +1176,7 @@ bool waiting4DXPath()
 static void checkOnAirPin()
 {
     // force on for debugging else read IO line which is grounded when active
-    bool on_now = debugLevel (DEBUG_RIG, 5) || !readMCPPoller (onair_poller);
+    bool on_now = debugLevel (DEBUG_RIG, 5) || readMCPPoller (ONAIR_PIN) == false;
     setOnAirHW (on_now);
 }
 
@@ -1230,31 +1225,66 @@ static void drawVersion (bool draw)
     // occasionally check for new version, much more often if beta
     const uint32_t checkv_dt = weAreBeta() ? 5*60*1000UL : 6*3600*1000UL;   // millis
     static uint32_t checkv_t;
-    static bool new_avail;
-    static char new_version[20];
-    if (timesUp (&checkv_t, checkv_dt))
+    if (!new_avail && timesUp (&checkv_t, checkv_dt)) {
         new_avail = newVersionIsAvailable (new_version, sizeof(new_version));
+        if (new_avail) {
+            Serial.printf ("found new version %s available\n", new_version);
+            draw = true;
+        }
+    }
 
     // perform update if scheduled
     if (new_avail) {
+
+        // get desired local time of automatic upgrade, if desired
         int update_hour;
         if (autoUpgrade(update_hour)) {
-            int hour_now = hour (nowWO() + getTZ (de_tz));
-            if (hour_now == update_hour) {
-                static int last_check_hour = -1;                // don't ask again in the same hour
-                if (hour_now != last_check_hour) {
-                    last_check_hour = hour_now;
-                    if (askOTAupdate (new_version, true) && askPasswd ("upgrade", false))
-                        doOTAupdate(new_version);               // never returns
-                    initScreen();
+
+            // user's now
+            time_t now = nowWO();
+
+            // establish initial check time at random moment into requested hour.
+            // N.B. may or may not allow upgrade this time if currently within the appointed hour
+            static time_t next_check;
+            if (next_check == 0) {
+                // init using local then convert back to utc, insuring first test is always in the future
+                int tz = getTZ(de_tz);
+                time_t local = now + tz;
+                next_check = local - (local%(24*3600)) + 3600*update_hour + random(3600) - tz;
+                while (now > next_check)
+                    next_check += 24*3600;
+                Serial.printf ("initial upgrade check at %ld for hour %d\n", (long)next_check, update_hour);
+            }
+
+            // ask when reach next_check then advance to next day if declined
+            if (now > next_check) {
+
+                // check for an even newer version
+                char newer_ver[20];
+                if (newVersionIsAvailable (newer_ver, sizeof(newer_ver)) && strcmp (newer_ver, new_version)) {
+                    strcpy (new_version, newer_ver);
+                    Serial.printf ("found even newer upgrade version %s\n", new_version);
                 }
+
+                Serial.printf ("auto upgrading to %s %ld > %ld hour %d\n",
+                                                    new_version, now, next_check, hour(now+getTZ(de_tz)));
+                if (askOTAupdate (new_version, true, true) && askPasswd ("upgrade", false))
+                    doOTAupdate(new_version);               // never returns
+
+                // declined, so advance to next day
+                next_check += 24*3600;
+                Serial.printf ("next upgrade check at %ld\n", (long)next_check);
+
+                // N.B. must follow next_check update because it calls us!
+                initScreen();
             }
         }
+
     }
 
     // draw if desired
     if (draw) {
-        // show current version, but highlight if new version is available
+        // show current version, highlight if new version is available
         char ver[50];
         uint16_t col = new_avail ? RA8875_RED : GRAY;
         selectFontStyle (LIGHT_FONT, FAST_FONT);
@@ -1718,39 +1748,46 @@ void setScreenLock (bool on)
 {
     if (on != screenIsLocked()) {
         toggleLockScreen();
-        // ?? setDemoMode (false);
         if (mainpage_up)
             drawScreenLock();
     }
 }
 
-/* draw the lock screen symbol according to demo and/or NV_LKSCRN_ON.
+/* draw, or erase, the demo runner
+ */
+void drawDemoRunner()
+{
+    fillSBox (demo_b, RA8875_BLACK);
+
+    if (getDemoMode()) {
+
+        // runner icon at full res
+
+        const uint16_t rx = tft.SCALESZ*demo_b.x;
+        const uint16_t ry = tft.SCALESZ*demo_b.y;
+
+        for (uint16_t dy = 0; dy < HC_RUNNER_H; dy++)
+            for (uint16_t dx = 0; dx < HC_RUNNER_W; dx++)
+                tft.drawPixelRaw (rx+dx, ry+dy, runner[dy*HC_RUNNER_W + dx]);
+
+    }
+}
+
+/* draw the lock screen symbol according to NV_LKSCRN_ON.
  */
 void drawScreenLock()
 {
     fillSBox (lkscrn_b, RA8875_BLACK);
 
-    if (getDemoMode()) {
+    uint16_t hh = lkscrn_b.h/2;
+    uint16_t hw = lkscrn_b.w/2;
 
-        // runner icon
-        const uint16_t rx = tft.SCALESZ*lkscrn_b.x;
-        const uint16_t ry = tft.SCALESZ*lkscrn_b.y;
-        for (uint16_t dy = 0; dy < HC_RUNNER_H; dy++)
-            for (uint16_t dx = 0; dx < HC_RUNNER_W; dx++)
-                tft.drawPixelRaw (rx+dx, ry+dy, pgm_read_word(&runner[dy*HC_RUNNER_W + dx]));
+    tft.fillRect (lkscrn_b.x, lkscrn_b.y+hh, lkscrn_b.w, hh, RA8875_WHITE);
+    tft.drawLine (lkscrn_b.x+hw, lkscrn_b.y+hh+2, lkscrn_b.x+hw, lkscrn_b.y+hh+hh/2, 2, RA8875_BLACK);
+    tft.drawCircle (lkscrn_b.x+hw, lkscrn_b.y+hh, hw, RA8875_WHITE);
 
-    } else {
-
-        uint16_t hh = lkscrn_b.h/2;
-        uint16_t hw = lkscrn_b.w/2;
-
-        tft.fillRect (lkscrn_b.x, lkscrn_b.y+hh, lkscrn_b.w, hh, RA8875_WHITE);
-        tft.drawLine (lkscrn_b.x+hw, lkscrn_b.y+hh+2, lkscrn_b.x+hw, lkscrn_b.y+hh+hh/2, 2, RA8875_BLACK);
-        tft.drawCircle (lkscrn_b.x+hw, lkscrn_b.y+hh, hw, RA8875_WHITE);
-
-        if (!screenIsLocked())
-            tft.fillRect (lkscrn_b.x+hw+2, lkscrn_b.y, hw, hh, RA8875_BLACK);
-    }
+    if (!screenIsLocked())
+        tft.fillRect (lkscrn_b.x+hw+2, lkscrn_b.y, hw, hh, RA8875_BLACK);
 }
 
 /* offer menu of DE format options and engage selection
@@ -2283,7 +2320,7 @@ static void runShutdownMenu(void)
 
     // boxes
     uint16_t menu_x = locked ? 150 : 114;       // just one entry if locked
-    uint16_t menu_y = locked ? 120 : 37;        // just one entry if locked
+    uint16_t menu_y = locked ? 105 : 25;        // just one entry if locked
     SBox menu_b = {menu_x, menu_y, 0, 0};       // shrink wrap size
     SBox ok_b;
 
@@ -2304,6 +2341,7 @@ static void runShutdownMenu(void)
         }
 
         setDemoMode (mitems[1].set);
+        drawDemoRunner();
 
         if (mitems[2].set) {
             if (askPasswd ("configurations", true))
@@ -2387,19 +2425,8 @@ static void runShutdownMenu(void)
         }
     }
 
-    // redraw stuff nearby regardless to remove menu
-    if (do_full_init) {
-        // need full screen redo
+    if (do_full_init)
         initScreen();
-    } else {
-        // just need updating in upper corner
-        updateCallsign (true);
-        showClocks();
-        updateClocks(true);
-        drawMainPageStopwatch(true);
-        drawScreenLock();
-        drawVersion(true);
-    }
 }
 
 
@@ -2511,18 +2538,13 @@ void fatalError (const char *fmt, ...)
         const char x_msg[] = "Exit";
         bool select_restart = true;
 
-        SCoord s;
-        char kbc;
         UserInput ui = {
             screen_b,
             UI_UFuncNone,
             UF_UNUSED,
             UI_NOTIMEOUT,
             UF_NOCLOCKS,
-            s,
-            kbc,
-            false,
-            false
+            {0, 0}, TT_NONE, '\0', false, false
         };
 
         drainTouch();
@@ -2537,22 +2559,22 @@ void fatalError (const char *fmt, ...)
             // wait for any user action
             (void) waitForUser(ui);
 
-            if (kbc == CHAR_LEFT || kbc == CHAR_RIGHT) {
+            if (ui.kb_char == CHAR_LEFT || ui.kb_char == CHAR_RIGHT) {
 
                 // L/R arrow keys appear to move to opposite selection
                 select_restart = !select_restart;
 
             } else {
 
-                bool typed_ok = kbc == CHAR_CR || kbc == CHAR_NL;
+                bool typed_ok = ui.kb_char == CHAR_CR || ui.kb_char == CHAR_NL;
 
-                if ((typed_ok && select_restart) || (kbc == CHAR_NONE && inBox(s, r_b))) {
+                if ((typed_ok && select_restart) || (ui.kb_char == CHAR_NONE && inBox(ui.tap, r_b))) {
                     drawStringInBox (r_msg, r_b, true, RA8875_WHITE);
                     Serial.print ("Fatal error: rebooting\n");
                     doReboot(false, false);
                 }
 
-                if ((typed_ok && !select_restart) || (kbc == CHAR_NONE && inBox(s, x_b))) {
+                if ((typed_ok && !select_restart) || (ui.kb_char == CHAR_NONE && inBox(ui.tap, x_b))) {
                     drawStringInBox (x_msg, x_b, true, RA8875_WHITE);
                     Serial.print ("Fatal error: exiting\n");
                     doExit();

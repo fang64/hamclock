@@ -269,7 +269,8 @@ static bool retrievePSK (void)
 
         // reset lists
         n_reports = 0;
-        memset (bstats, 0, sizeof(bstats));
+        for (int i = 0; i < HAMBAND_N; i++)
+            bstats[i] = {};
 
         // read lines -- anything unexpected is considered an error message
         char line[100];
@@ -280,8 +281,7 @@ static bool retrievePSK (void)
             // parse.
             // N.B. match sscanf sizes with array sizes
             // N.B. first grid/call pair is always TX, second always RX; which is DE depends on PSKMB_OFDE
-            DXSpot new_sp;
-            memset (&new_sp, 0, sizeof(new_sp));
+            DXSpot new_sp = {};
             long posting_temp;
             long Hz_temp;
             if (sscanf (line, "%ld,%6[^,],%11[^,],%6[^,],%11[^,],%7[^,],%ld,%f", &posting_temp,
@@ -571,11 +571,6 @@ bool checkPSKTouch (const SCoord &s, const SBox &box)
             // refresh with new criteria
             updatePSKReporter (box, true);
         }
-
-    } else  {
-
-        // just restore current settings
-        drawPSKPane(box);
     }
 
     // ours alright
@@ -594,7 +589,7 @@ bool getPSKBandStats (PSKBandStats stats[HAMBAND_N], const char *names[HAMBAND_N
     for (int i = 0; i < HAMBAND_N; i++) {
         if (bstats[i].count == 0) {
             stats[i].maxkm = 0;
-            memset (&stats[i].maxll, 0, sizeof(stats[i].maxll));
+            stats[i].maxll = {};
         }
         names[i] = findBandName((HamBandSetting)i);
     }
@@ -655,7 +650,7 @@ void drawPSKPaths ()
 
 /* report spot closest to ll and which end to mark on map, if any within MAX_CSR_DIST.
  */
-bool getClosestPSK (const LatLong &ll, DXSpot *sp, LatLong *mark_ll)
+bool getClosestPSK (LatLong &ll, DXSpot *sp, LatLong *mark_ll)
 {
     // ignore if not in any rotation set
     if (findPaneForChoice(PLOT_CH_PSK) == PANE_NONE)
@@ -672,7 +667,7 @@ bool getClosestPSK (const LatLong &ll, DXSpot *sp, LatLong *mark_ll)
         int min_i = -1;
         for (int i = 0; i < HAMBAND_N; i++) {
             if (TST_PSKBAND(i)) {
-                float d = simpleSphereDist (ll, bstats[i].maxll);
+                float d = ll.GSD(bstats[i].maxll);
                 if (min_i < 0 || d < min_d) {
                     min_d = d;
                     min_i = i;
@@ -696,12 +691,12 @@ bool getClosestPSK (const LatLong &ll, DXSpot *sp, LatLong *mark_ll)
         for (int i = 0; i < n_reports; i++) {
             DXSpot &s = reports[i];
             if (TST_PSKBAND(findHamBand(s.kHz))) {
-                float d = simpleSphereDist (ll, s.rx_ll);
+                float d = ll.GSD(s.rx_ll);
                 if (min_i < 0 || d < min_d) {
                     min_d = d;
                     min_i = i;
                 }
-                d = simpleSphereDist (ll, s.tx_ll);
+                d = ll.GSD(s.tx_ll);
                 if (min_i < 0 || d < min_d) {
                     min_d = d;
                     min_i = i;

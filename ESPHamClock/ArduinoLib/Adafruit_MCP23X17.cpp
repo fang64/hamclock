@@ -32,13 +32,24 @@ Adafruit_MCP23X17::Adafruit_MCP23X17(void)
     mcp_rpipin_map[SW_CD_RED_PIN]   = 13;       // header 33
     mcp_rpipin_map[SW_CD_GRN_PIN]   = 19;       // header 35
     mcp_rpipin_map[SW_CD_RESET_PIN] = 26;       // header 37
-    mcp_rpipin_map[SW_ALARMOUT_PIN] = 06;       // header 31
-    mcp_rpipin_map[SW_ALARMOFF_PIN] = 05;       // header 29
+    mcp_rpipin_map[SW_ALARMOUT_PIN] = 6;        // header 31
+    mcp_rpipin_map[SW_ALARMOFF_PIN] = 5;        // header 29
     mcp_rpipin_map[SATALARM_PIN]    = 20;       // header 38
     mcp_rpipin_map[ONAIR_PIN]       = 21;       // header 40
+    mcp_rpipin_map[RESERVED_PIN]    = 17;       // header 11
+    mcp_rpipin_map[USER1_PIN]       = 27;       // header 13
+    mcp_rpipin_map[USER2_PIN]       = 22;       // header 15
+    mcp_rpipin_map[USER3_PIN]       = 23;       // header 16
+    mcp_rpipin_map[USER4_PIN]       = 24;       // header 18
+    mcp_rpipin_map[USER5_PIN]       = 12;       // header 32
+    mcp_rpipin_map[USER6_PIN]       = 16;       // header 36
+    mcp_rpipin_map[USER7_PIN]       = 7;        // header 26
+    mcp_rpipin_map[USER8_PIN]       = 4;        // header 7
+
 
     // no MCP yet
     mcp_found = false;
+    max_hz = 0;
 
     #if defined(_NATIVE_GPIOD_LINUX)
 
@@ -206,6 +217,7 @@ bool Adafruit_MCP23X17::begin_I2C (uint8_t addr)
             if (gpiochip) {
                 printf ("MCP: found %s\n", gpiod_chip_name(gpiochip));
                 any_ok = true;
+                max_hz = 100;
             } else
                 printf ("MCP: no suitable /dev/gpiochip found\n");
         }
@@ -222,6 +234,7 @@ bool Adafruit_MCP23X17::begin_I2C (uint8_t addr)
             if (bc_ready) {
                 printf ("MCP: found broadcom linux\n");
                 any_ok = true;
+                max_hz = 100;
             } else
                 printf ("MCP: broadcom map failed: %s\n", ynot);
         }
@@ -235,6 +248,7 @@ bool Adafruit_MCP23X17::begin_I2C (uint8_t addr)
             if (handle != GPIO_INVALID_HANDLE) {
                 printf ("MCP: found freebsd gpio\n");
                 any_ok = true;
+                max_hz = 100;
             } else
                 printf ("MCP: freebsd gpio_open(0) failed: %s\n", strerror(errno));
         }
@@ -249,6 +263,7 @@ bool Adafruit_MCP23X17::begin_I2C (uint8_t addr)
         if (Wire.write8 (my_addr, MCP23X17_IOCON, 0)) {
             printf ("MCP: found MCP23017 at 0x%02X\n", my_addr);
             mcp_found = any_ok = true;
+            max_hz = 4;
         } else
             printf ("MCP: MCP23017 at 0x%02X failed\n", my_addr);
     }
@@ -632,4 +647,11 @@ void Adafruit_MCP23X17::digitalWrite(uint8_t mcp_pin, uint8_t value)
             return;
         }
     }
+}
+
+/* return the max polling rate supported, Hz
+ */
+int Adafruit_MCP23X17::maxPollRate(void)
+{
+    return (max_hz);
 }

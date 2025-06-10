@@ -42,29 +42,17 @@ typedef struct {
 } AlarmDaily;
 
 
-/* info to manage the stopwatch blinker threads
- */
 #define SW_CD_BLINKHZ   2                       // LED warning blink rate, Hz
-static volatile ThreadBlinker sw_cd_blinker_red;
-static volatile ThreadBlinker sw_cd_blinker_grn;
-static volatile MCPPoller sw_cd_reset;
-static volatile MCPPoller sw_alarmoff;
 
 
 /* return all IO lines to benign state
  */
 void SWresetIO()
 {
-    disableBlinker (sw_cd_blinker_red);
-    disableBlinker (sw_cd_blinker_grn);
-    disableMCPPoller (sw_cd_reset);
-    disableMCPPoller (sw_alarmoff);
-
-    mcp.pinMode (SW_CD_RED_PIN, INPUT);
-    mcp.pinMode (SW_CD_GRN_PIN, INPUT);
-    mcp.pinMode (SW_ALARMOUT_PIN, INPUT);
-    mcp.pinMode (SW_ALARMOFF_PIN, INPUT);
-
+    disableBlinker (SW_CD_RED_PIN);
+    disableBlinker (SW_CD_GRN_PIN);
+    disableMCPPoller (SW_ALARMOUT_PIN);
+    disableMCPPoller (SW_ALARMOFF_PIN);
 }
 
 /* set the LEDs to indicate the given countdown range state
@@ -74,23 +62,23 @@ static void setCDLEDState (SWCDState cds)
     switch (cds) {
     case SWCDS_OFF:
         // both off
-        setBlinkerRate (sw_cd_blinker_grn, BLINKER_OFF_HZ);
-        setBlinkerRate (sw_cd_blinker_red, BLINKER_OFF_HZ);
+        setBlinkerRate (SW_CD_GRN_PIN, BLINKER_OFF);
+        setBlinkerRate (SW_CD_RED_PIN, BLINKER_OFF);
         break;
     case SWCDS_RUNOK:
         // green on
-        setBlinkerRate (sw_cd_blinker_grn, BLINKER_ON_HZ);
-        setBlinkerRate (sw_cd_blinker_red, BLINKER_OFF_HZ);
+        setBlinkerRate (SW_CD_GRN_PIN, BLINKER_ON);
+        setBlinkerRate (SW_CD_RED_PIN, BLINKER_OFF);
         break;
     case SWCDS_WARN: 
         // green blinking, red on
-        setBlinkerRate (sw_cd_blinker_grn, SW_CD_BLINKHZ);
-        setBlinkerRate (sw_cd_blinker_red, BLINKER_ON_HZ);
+        setBlinkerRate (SW_CD_GRN_PIN, SW_CD_BLINKHZ);
+        setBlinkerRate (SW_CD_RED_PIN, BLINKER_ON);
         break;
     case SWCDS_TIMEOUT:
         // red blinking
-        setBlinkerRate (sw_cd_blinker_grn, BLINKER_OFF_HZ);
-        setBlinkerRate (sw_cd_blinker_red, SW_CD_BLINKHZ);
+        setBlinkerRate (SW_CD_GRN_PIN, BLINKER_OFF);
+        setBlinkerRate (SW_CD_RED_PIN, SW_CD_BLINKHZ);
         break;
     }
 }
@@ -104,7 +92,7 @@ static bool countdownSwitchIsTrue()
     static bool prev_pin_known;
 
     // read pin, active low
-    bool pin_true = !readMCPPoller (sw_cd_reset);
+    bool pin_true = !readMCPPoller (SW_CD_RESET_PIN);
 
     // init history if first time
     if (!prev_pin_known) {
@@ -126,7 +114,7 @@ static bool countdownSwitchIsTrue()
 static bool alarmSwitchIsTrue(void)
 {
     // pin is active-low
-    return (!readMCPPoller (sw_alarmoff));
+    return (!readMCPPoller (SW_ALARMOFF_PIN));
 }
 
 /* control the alarm clock output pin
@@ -1662,18 +1650,13 @@ static void showAlarmRinging()
         drawStringInBox (" Cancel ", dismiss_b, false, BRGRAY);
 
         // wait for tap anywhere or time out
-        SCoord s;
-        char c;
         UserInput ui = {
             b,
             checkExternalTurnOff,
             UF_FALSE,
             ALM_RINGTO * 1000,                  // wants ms
             UF_CLOCKSOK,
-            s,
-            c,
-            false,
-            false
+            {0, 0}, TT_NONE, '\0', false, false
         };
         (void) waitForUser (ui);
 
@@ -1926,8 +1909,11 @@ static void updateOnceAlarmTouch (SCoord &s)
 static void checkSWPageTouch()
 {
     // out fast if nothing to do
+    if (screenIsLocked())
+        return;
     SCoord s;
-    if (screenIsLocked() || (readCalTouchWS(s) == TT_NONE && checkKBWarp(s) == TT_NONE))
+    TouchType tt;
+    if ((tt = readCalTouchWS(s)) == TT_NONE && (tt = checkKBWarp(s)) == TT_NONE)
         return;
 
     // update idle timer, ignore if this tap is restoring full brightness
@@ -1940,237 +1926,306 @@ static void checkSWPageTouch()
 
         if (inBox (s, countdown_lbl_b)) {
 
-            // start countdown timer regardless of current state
-            setSWEngineState (SWE_COUNTDOWN, countdown_period);
+            if (tt == TT_TAP_BX)
+                tooltip (s, "Click to start counting down from period on right");
+            else {
+                // start countdown timer regardless of current state
+                setSWEngineState (SWE_COUNTDOWN, countdown_period);
+            }
 
         } else if (inBox (s, cd_time_up_b)) {
 
-            // increment countdown period
-            countdown_period += 60000;
-            countdown_period -= (countdown_period % 60000);             // insure whole minute
-            saveSWNV();
-            if (sws_engine == SWE_COUNTDOWN)
-                setSWEngineState (sws_engine, countdown_period);        // engage new value immediately
-            else
-                drawSWCDPeriod();                                       // just display new value
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click slightly above to increase or below to decrease count down timer period");
+            } else {
+                // increment countdown period
+                countdown_period += 60000;
+                countdown_period -= (countdown_period % 60000);             // insure whole minute
+                saveSWNV();
+                if (sws_engine == SWE_COUNTDOWN)
+                    setSWEngineState (sws_engine, countdown_period);        // engage new value immediately
+                else
+                    drawSWCDPeriod();                                       // just display new value
+            }
 
         } else if (inBox (s, cd_time_dw_b)) {
 
-            // decrement countdown period
-            if (countdown_period >= 2*60000) {                          // 1 minute minimum
-                countdown_period -= 60000;
-                countdown_period -= (countdown_period % 60000);         // insure whole minute
-                saveSWNV();
-                if (sws_engine == SWE_COUNTDOWN)
-                    setSWEngineState (sws_engine, countdown_period);    // engage new value immediately
-                else
-                    drawSWCDPeriod();                                   // just display new value
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click slightly above to increase or below to decrease count down timer period");
+            } else {
+                // decrement countdown period
+                if (countdown_period >= 2*60000) {                          // 1 minute minimum
+                    countdown_period -= 60000;
+                    countdown_period -= (countdown_period % 60000);         // insure whole minute
+                    saveSWNV();
+                    if (sws_engine == SWE_COUNTDOWN)
+                        setSWEngineState (sws_engine, countdown_period);    // engage new value immediately
+                    else
+                        drawSWCDPeriod();                                   // just display new value
+                }
             }
 
         } else if (inBox (s, alarm_daily.lbl_b)) {
 
-            // cycle daily alarm clock mode
-            switch (alarm_daily.state) {
-            case ALMS_OFF:
-                alarm_daily.state = ALMS_ARMED;
-                break;
-            case ALMS_ARMED:
-                alarm_daily.state = ALMS_OFF;
-                break;
-            case ALMS_RINGING:
-                alarm_daily.state = ALMS_ARMED;
-                break;
-            }
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to cycle the daily alarm Armed or Off");
+            } else {
+                // cycle daily alarm clock mode
+                switch (alarm_daily.state) {
+                case ALMS_OFF:
+                    alarm_daily.state = ALMS_ARMED;
+                    break;
+                case ALMS_ARMED:
+                    alarm_daily.state = ALMS_OFF;
+                    break;
+                case ALMS_RINGING:
+                    alarm_daily.state = ALMS_ARMED;
+                    break;
+                }
 
-            drawAlarmIndicators (true);
-            saveSWNV();
+                drawAlarmIndicators (true);
+                saveSWNV();
+            }
 
         } else if (inBox (s, alarm_daily.time_b)) {
 
-            // N.B. coordinate with drawing locations
-
-            uint16_t t_left  = alarm_daily.time_b.x + alarm_daily.time_b.w/4;
-
-            if (s.x < t_left) {
-
-                // toggle time zone
-
-                alarm_daily.utc = !alarm_daily.utc;
-
-                // change to new timezone
-                int tz_mins = getTZ (de_tz)/60;                 // think of hhmm as just minutes
-                if (alarm_daily.utc) {
-                    // was local so subtract tz to get utc
-                    alarm_daily.hrmn += (1440 - tz_mins);       // keep hrmn positive -- it's unsigned!
-                } else {
-                    // was utc so add tz to get local
-                    alarm_daily.hrmn += (1440 + tz_mins);       // keep hrmn positive -- it's unsigned!
-                }
-                alarm_daily.hrmn %= 1440;                       // insure back to [0,1440)
-
-
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click time zone to cycle the daily alarm to use DE or UTC,"
+                            "click slightly above or below hour or minute to increase or decrease");
             } else {
 
-                // adjust time
-                uint16_t t_mid   = alarm_daily.time_b.x + alarm_daily.time_b.w/2;
-                uint16_t t_right = alarm_daily.time_b.x + 3*alarm_daily.time_b.w/4;
+                // N.B. coordinate with drawing locations
 
-                if (s.x > t_mid) {
+                uint16_t t_left  = alarm_daily.time_b.x + alarm_daily.time_b.w/4;
 
-                    uint16_t a_hr = alarm_daily.hrmn/60;
-                    uint16_t a_mn = alarm_daily.hrmn%60;
+                if (s.x < t_left) {
 
-                    if (s.y < alarm_daily.time_b.y + alarm_daily.time_b.h/2) {
-                        // above center: increase daily alarm hour or minute
-                        if (s.x < t_right)
-                            a_hr = (a_hr + 1) % 24;
-                        else {
-                            if (++a_mn == 60) {
-                                if (++a_hr == 24)
-                                    a_hr = 0;
-                                a_mn = 0;
-                            }
-                        }
+                    // toggle time zone
+
+                    alarm_daily.utc = !alarm_daily.utc;
+
+                    // change to new timezone
+                    int tz_mins = getTZ (de_tz)/60;                 // think of hhmm as just minutes
+                    if (alarm_daily.utc) {
+                        // was local so subtract tz to get utc
+                        alarm_daily.hrmn += (1440 - tz_mins);       // keep hrmn positive -- it's unsigned!
                     } else {
-                        // below center: decrease daily alarm hour or minute
-                        if (s.x < t_right)
-                            a_hr = (a_hr + 23) % 24;
-                        else {
-                            if (a_mn == 0) {
-                                a_mn = 59;
+                        // was utc so add tz to get local
+                        alarm_daily.hrmn += (1440 + tz_mins);       // keep hrmn positive -- it's unsigned!
+                    }
+                    alarm_daily.hrmn %= 1440;                       // insure back to [0,1440)
+
+
+                } else {
+
+                    // adjust time
+                    uint16_t t_mid   = alarm_daily.time_b.x + alarm_daily.time_b.w/2;
+                    uint16_t t_right = alarm_daily.time_b.x + 3*alarm_daily.time_b.w/4;
+
+                    if (s.x > t_mid) {
+
+                        uint16_t a_hr = alarm_daily.hrmn/60;
+                        uint16_t a_mn = alarm_daily.hrmn%60;
+
+                        if (s.y < alarm_daily.time_b.y + alarm_daily.time_b.h/2) {
+                            // above center: increase daily alarm hour or minute
+                            if (s.x < t_right)
+                                a_hr = (a_hr + 1) % 24;
+                            else {
+                                if (++a_mn == 60) {
+                                    if (++a_hr == 24)
+                                        a_hr = 0;
+                                    a_mn = 0;
+                                }
+                            }
+                        } else {
+                            // below center: decrease daily alarm hour or minute
+                            if (s.x < t_right)
                                 a_hr = (a_hr + 23) % 24;
-                            } else {
-                                a_mn -= 1;
+                            else {
+                                if (a_mn == 0) {
+                                    a_mn = 59;
+                                    a_hr = (a_hr + 23) % 24;
+                                } else {
+                                    a_mn -= 1;
+                                }
                             }
                         }
+
+                        alarm_daily.hrmn = a_hr*60 + a_mn;
                     }
-
-                    alarm_daily.hrmn = a_hr*60 + a_mn;
                 }
-            }
 
-            drawAlarmIndicators (false);
-            saveSWNV();
+                drawAlarmIndicators (false);
+                saveSWNV();
+            }
 
         } else if (inBox (s, alarm_once.lbl_b)) {
 
-            // cycle one-time alarm clock mode
-            switch (alarm_once.state) {
-            case ALMS_OFF:
-                // don't allow arming if time is in the past
-                if (alarm_once.time < nowWO()) {
-                    drawStringInBox ("Time is in the past", alarm_once.lbl_b, false, RA8875_RED);
-                    wdDelay (3000);
-                } else
-                    alarm_once.state = ALMS_ARMED;
-                break;
-            case ALMS_ARMED:
-                alarm_once.state = ALMS_OFF;
-                break;
-            case ALMS_RINGING:
-                // turn off because time will be too old after ringing
-                alarm_once.state = ALMS_OFF;
-                break;
-            }
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to cycle the one-time alarm Armed or Off;"
+                            "it is not allowed to set a time in the past");
+            } else {
+                // cycle one-time alarm clock mode
+                switch (alarm_once.state) {
+                case ALMS_OFF:
+                    // don't allow arming if time is in the past
+                    if (alarm_once.time < nowWO()) {
+                        drawStringInBox ("Time is in the past", alarm_once.lbl_b, false, RA8875_RED);
+                        wdDelay (3000);
+                    } else
+                        alarm_once.state = ALMS_ARMED;
+                    break;
+                case ALMS_ARMED:
+                    alarm_once.state = ALMS_OFF;
+                    break;
+                case ALMS_RINGING:
+                    // turn off because time will be too old after ringing
+                    alarm_once.state = ALMS_OFF;
+                    break;
+                }
 
-            drawAlarmIndicators  (true);
-            saveSWNV();
+                drawAlarmIndicators  (true);
+                saveSWNV();
+            }
 
         } else if (inBox (s, alarm_once.time_b)) {
 
-            updateOnceAlarmTouch(s);
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click slightly above or below each component to change the one-time alarm");
+            } else {
+                updateOnceAlarmTouch(s);
 
-            // erase contest title since it likely no longer matches
-            eraseContestTitle();
-            drawContestTitle();
+                // erase contest title since it likely no longer matches
+                eraseContestTitle();
+                drawContestTitle();
 
-            drawAlarmIndicators (false);
-            saveSWNV();
+                drawAlarmIndicators (false);
+                saveSWNV();
+            }
         
         } else if (inBox (s, A_b)) {
 
             // box action depends on current engine state
-            SWEngineState new_sws;
+            SWEngineState new_sws = SWE_RESET;
             switch (sws_engine) {
             case SWE_RESET:
                 // clicked Run
-                new_sws = SWE_RUN;
+                if (tt == TT_TAP_BX)
+                    tooltip (s, "Click to start stopwatch");
+                else
+                    new_sws = SWE_RUN;
                 break;
             case SWE_RUN:
                 // clicked Stop
-                new_sws = SWE_STOP;
+                if (tt == TT_TAP_BX)
+                    tooltip (s, "Click to stop stopwatch");
+                else
+                    new_sws = SWE_STOP;
                 break;
             case SWE_STOP:
                 // clicked Run
-                new_sws = SWE_RUN;
+                if (tt == TT_TAP_BX)
+                    tooltip (s, "Click to start stopwatch");
+                else
+                    new_sws = SWE_RUN;
                 break;
             case SWE_LAP:
                 // clicked Reset
-                new_sws = SWE_RESET;
+                if (tt == TT_TAP_BX)
+                    tooltip (s, "Click to reset stopwatch");
+                else
+                    new_sws = SWE_RESET;
                 break;
             case SWE_COUNTDOWN:
                 // clicked Reset
-                new_sws = SWE_RESET;
-                break;
-            default:
-                new_sws = SWE_RESET;
+                if (tt == TT_TAP_BX)
+                    tooltip (s, "Click to reset stopwatch");
+                else
+                    new_sws = SWE_RESET;
                 break;
             }
 
             // update state and GUI
-            setSWEngineState (new_sws, countdown_period);
+            if (tt == TT_TAP)
+                setSWEngineState (new_sws, countdown_period);
 
         } else if (inBox (s, B_b)) {
 
             // box action depends on current engine state
-            SWEngineState new_sws;
+            SWEngineState new_sws = SWE_RESET;
             switch (sws_engine) {
             case SWE_RESET:
                 // clicked Reset
-                new_sws = SWE_RESET;
+                if (tt == TT_TAP_BX)
+                    tooltip (s, "Click to reset stopwatch");
+                else
+                    new_sws = SWE_RESET;
                 break;
             case SWE_RUN:
                 // clicked Lap
-                new_sws = SWE_LAP;
+                if (tt == TT_TAP_BX)
+                    tooltip (s, "Click to pause display but continue timing");
+                else
+                    new_sws = SWE_LAP;
                 break;
             case SWE_STOP:
                 // clicked Reset
-                new_sws = SWE_RESET;
+                if (tt == TT_TAP_BX)
+                    tooltip (s, "Click to reset stopwatch");
+                else
+                    new_sws = SWE_RESET;
                 break;
             case SWE_LAP:
                 // clicked Resume
-                new_sws = SWE_RUN;
+                if (tt == TT_TAP_BX)
+                    tooltip (s, "Click to resume stopwatch");
+                else
+                    new_sws = SWE_RUN;
                 break;
             case SWE_COUNTDOWN:
                 // clicked Reset
-                new_sws = SWE_RESET;
-                break;
-            default:
-                new_sws = SWE_RESET;
+                if (tt == TT_TAP_BX)
+                    tooltip (s, "Click to reset stopwatch");
+                else
+                    new_sws = SWE_RESET;
                 break;
             }
 
             // update state and GUI
-            setSWEngineState (new_sws, countdown_period);
+            if (tt == TT_TAP)
+                setSWEngineState (new_sws, countdown_period);
 
         } else if (inBox (s, exit_b)) {
 
-            // done
-            sws_display = SWD_NONE;
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to exit stopwatch and return to main HamClock display");
+            } else {
+                // done
+                sws_display = SWD_NONE;
+            }
 
         } else if (inBox (s, color_b)) {
 
-            // change color and redraw
-            sw_hue = 255*(s.x - color_b.x)/color_b.w;
-            NVWriteUInt8 (NV_SWHUE, sw_hue);
-            drawSWMainPage();
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to adjust stopwatch color");
+            } else {
+                // change color and redraw
+                sw_hue = 255*(s.x - color_b.x)/color_b.w;
+                NVWriteUInt8 (NV_SWHUE, sw_hue);
+                drawSWMainPage();
+            }
 
         } else if (inBox (s, bigclock_b)) {
 
-            // start desired big clock
-            Serial.println("SW: BigClock enter");
-            sws_display = (bc_bits & SW_BCDIGBIT) ? SWD_BCDIGITAL : SWD_BCANALOG;
-            drawBigClock (true);
+            if (tt == TT_TAP_BX) {
+                tooltip (s, "Click to change display to Big Clock");
+            } else {
+                // start desired big clock
+                Serial.println("SW: BigClock enter");
+                sws_display = (bc_bits & SW_BCDIGBIT) ? SWD_BCDIGITAL : SWD_BCANALOG;
+                drawBigClock (true);
+            }
         }
 
     } else if (sws_display == SWD_BCDIGITAL || sws_display == SWD_BCANALOG) {
@@ -2198,8 +2253,6 @@ static void checkSWPageTouch()
                 Serial.println("SW: BigClock exit");
                 eraseScreen();
                 drawSWMainPage();
-            } else {
-                drawBigClock (true);
             }
             saveSWNV();
         }
@@ -2312,14 +2365,10 @@ void initStopwatch()
     // read values from NV
     loadSWNV();
 
-    // init pins
-    mcp.pinMode (SW_ALARMOUT_PIN, OUTPUT);
-    mcp.digitalWrite (SW_ALARMOUT_PIN, LOW);            // off low
-
-    startBinkerThread (sw_cd_blinker_grn, SW_CD_GRN_PIN, true); // on is low
-    startBinkerThread (sw_cd_blinker_red, SW_CD_RED_PIN, true); // on is low
-    startMCPPoller (sw_cd_reset, SW_CD_RESET_PIN, 2);
-    startMCPPoller (sw_alarmoff, SW_ALARMOFF_PIN, 2);
+    startBinkerThread (SW_CD_GRN_PIN, true); // on is low
+    startBinkerThread (SW_CD_RED_PIN, true); // on is low
+    startMCPPoller (SW_CD_RESET_PIN);
+    startMCPPoller (SW_ALARMOFF_PIN);
 
     setCDLEDState (SWCDS_OFF);
     setAlarmPin (false);
@@ -2421,8 +2470,6 @@ void checkCountdownTouch(void)
  */
 bool runStopwatch()
 {
-    resetWatchdog();
-
     // always honor countdown switch regardless of display state
     if (countdownSwitchIsTrue())
         setSWEngineState (SWE_COUNTDOWN, countdown_period);

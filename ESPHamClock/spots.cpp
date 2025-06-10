@@ -7,8 +7,8 @@
 /* find list element, subject to possible filtering, that is closest to ll on the given end(s).
  * return whether found one within MAX_CSR_DIST.
  */
-bool getClosestSpot (const DXSpot *list, int n_list, SpotFilter sfp, LabelOnMapEnd which_end,
-const LatLong &from_ll, DXSpot *closest_sp, LatLong *closest_llp)
+bool getClosestSpot (DXSpot *list, int n_list, SpotFilter sfp, LabelOnMapEnd which_end,
+LatLong &from_ll, DXSpot *closest_sp, LatLong *closest_llp)
 {
     // linear search -- not worth kdtree etc
     const DXSpot *min_sp = NULL;   
@@ -16,7 +16,7 @@ const LatLong &from_ll, DXSpot *closest_sp, LatLong *closest_llp)
     bool min_is_de = false;         
     for (int i = 0; i < n_list; i++) {
 
-        const DXSpot *sp = &list[i];
+        DXSpot *sp = &list[i];
 
         // skip if filtered out
         if (sfp && !(*sfp)(sp))
@@ -24,7 +24,7 @@ const LatLong &from_ll, DXSpot *closest_sp, LatLong *closest_llp)
 
         // check RX end if used
         if (which_end == LOME_RXEND || which_end == LOME_BOTH) {
-            float d = simpleSphereDist (sp->rx_ll, from_ll);
+            float d = sp->rx_ll.GSD(from_ll);
             if (d < min_d) {
                 min_d = d;
                 min_sp = sp;
@@ -34,7 +34,7 @@ const LatLong &from_ll, DXSpot *closest_sp, LatLong *closest_llp)
 
         // check TX end if used
         if (which_end == LOME_TXEND || which_end == LOME_BOTH) {
-            float d = simpleSphereDist (sp->tx_ll, from_ll);
+            float d = sp->tx_ll.GSD(from_ll);
             if (d < min_d) {
                 min_d = d;
                 min_sp = sp;
@@ -64,31 +64,29 @@ const LatLong &from_ll, DXSpot *closest_sp, LatLong *closest_llp)
 /* draw a dot and/or label at the given end of a spot path, as per setup options.
  * N.B. this only handles LOME_RXEND or LOME_TXEND, not LOME_BOTH.
  */
-static void drawSpotTXRXOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMapDot dot)
+static void drawSpotTXRXOnMap (DXSpot &spot, LabelOnMapEnd txrx, LabelOnMapDot dot)
 {
     // always draw at least the dot unless no label at all
     LabelType lblt = getSpotLabelType();
     if (lblt == LBL_NONE)
         return;
 
-    // handy bools
+    // handy
     bool tx_end = txrx == LOME_TXEND;
-    bool just_dot = dot == LOMD_JUSTDOT;
+    LatLong &ll = tx_end ? spot.tx_ll : spot.rx_ll;
+    bool just_dot = dot == LOMD_JUSTDOT || de_ll.GSD(ll) < minLabelDist();
 
     // get dot size
     int dot_r = getRawBandSpotRadius (spot.kHz);
-
-    // handy ll of desired end
-    const LatLong &ll = tx_end ? spot.tx_ll : spot.rx_ll;
-
-    // color depends on band
-    uint16_t b_color = getBandColor (spot.kHz);
 
     // get screen coord, insure over map
     SCoord s;
     ll2s (ll, s, dot_r);                                                // overkill since raw >= canonical
     if (!overMap(s))
         return;
+
+    // color depends on band
+    uint16_t b_color = getBandColor (spot.kHz);
 
     // rx "dot" end is square, tx is a circle
     SCoord s_raw;
@@ -122,7 +120,7 @@ static void drawSpotTXRXOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMa
 /* draw a dot and/or label at the given end/ends of a spot path, as per setup options.
  * N.B. we don't draw the path, use drawSpotPathOnMap() for that.
  */
-void drawSpotLabelOnMap (const DXSpot &spot, LabelOnMapEnd txrx, LabelOnMapDot dot)
+void drawSpotLabelOnMap (DXSpot &spot, LabelOnMapEnd txrx, LabelOnMapDot dot)
 {
     if (txrx == LOME_TXEND || txrx == LOME_BOTH)
         drawSpotTXRXOnMap (spot, LOME_TXEND, dot);
@@ -213,11 +211,11 @@ void drawSpotOnList (const SBox &box, const DXSpot &spot, int row, uint16_t bg_c
  */
 void ditherLL (LatLong &ll)
 {
-    // move around within roughly 1 pixel
+    // move around within roughly +/- 2 pixels
     const float deg_per_pix = (360.0F/BUILD_W)/pan_zoom.zoom;
-    ll.lat_d += deg_per_pix * (0.5F - random(100)/100.0F);
-    ll.lng_d += deg_per_pix * (0.5F - random(100)/100.0F);
-    normalizeLL (ll);
+    ll.lat_d += deg_per_pix * 2*(random(100)/50.0F - 1);
+    ll.lng_d += deg_per_pix * 2*(random(100)/50.0F - 1);
+    ll.normalize();
 }
 
 
@@ -311,8 +309,8 @@ int qsDXCDist (const void *v1, const void *v2)
 {
     DXSpot *s1 = (DXSpot *)v1;
     DXSpot *s2 = (DXSpot *)v2;
-    float d1 = simpleSphereDist (s1->rx_ll, s1->tx_ll);
-    float d2 = simpleSphereDist (s2->rx_ll, s2->tx_ll);
+    float d1 = s1->rx_ll.GSD(s1->tx_ll);
+    float d2 = s2->rx_ll.GSD(s2->tx_ll);
     return (roundf(1000*(d1 - d2)));            // want farthest (largest) first
 }
 

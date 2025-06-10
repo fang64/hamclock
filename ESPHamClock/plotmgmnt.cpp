@@ -125,6 +125,7 @@ bool plotChoiceIsAvailable (PlotChoice pc)
     case PLOT_CH_ONTA:          // fallthru
     case PLOT_CH_AURORA:        // fallthru
     case PLOT_CH_DXPEDS:        // fallthru
+    case PLOT_CH_DST:           // fallthru
         return (true);
 
     case PLOT_CH_N:
@@ -372,8 +373,9 @@ void insureCountdownPaneSensible()
 
 /* check for touch in the given pane, return whether ours.
  * N.B. accommodate a few choices that have their own touch features.
+ * N.B. TT_TAP_BX means to force rotation now
  */
-bool checkPlotTouch (const SCoord &s, PlotPane pp)
+bool checkPlotTouch (TouchType tt, const SCoord &s, PlotPane pp)
 {
     // ignore taps in this pane while reverting
     if (pp == ignorePaneTouch())
@@ -384,8 +386,13 @@ bool checkPlotTouch (const SCoord &s, PlotPane pp)
     if (!inBox (s, box))
         return (false);
 
-    // reserve top 20% for bringing up choice menu
+    // reserve top portion for bringing up choice menu or forcing rotation
     bool in_top = s.y < box.y + PANETITLE_H;
+
+    if (in_top && tt == TT_TAP_BX) {
+        forcePaneRotation (pp);
+        return (true);
+    }
 
     // check the choices that have their own active areas
     switch (plot_ch[pp]) {
@@ -517,13 +524,10 @@ bool checkPlotTouch (const SCoord &s, PlotPane pp)
         drawDEFormatMenu();
     } else {
 
+        // ask for new set, engage if change current
         PlotChoice pc = askPaneChoice(pp);
-
-        // always engage even if same to erase menu
-        if (!setPlotChoice (pp, pc)) {
+        if (pc != plot_ch[pp] && !setPlotChoice (pp, pc))
             fatalError ("checkPlotTouch bad choice %d pane %d", (int)pc, (int)pp);
-            // never returns
-        }
     }
 
     // it was ours

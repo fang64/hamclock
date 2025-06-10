@@ -97,8 +97,8 @@ bool ESPhttpUpdate::runCommand (bool use_euid, int p0, int p1, int pn, const cha
         // parent arranges to read from pipe_fd[0] from child until EOF
         FILE *rsp_fp = fdopen (pipe_fd[0], "r");
 
-        // read and log output, report progress if desired
-        for (int nlines = 0; ; nlines++) {
+        // read and log output until EOF, report progress if desired
+        for (int nlines = 0; true; nlines++) {
 
             if (want_cb) {
                 int percent = p0 + nlines*(p1 - p0)/pn;
@@ -107,7 +107,7 @@ bool ESPhttpUpdate::runCommand (bool use_euid, int p0, int p1, int pn, const cha
                 (*progressCB) (percent, 100);
             }
 
-            char rsp[1000];
+            char rsp[10000];
             if (!fgets (rsp, sizeof(rsp), rsp_fp))
                 break;
             prError ("%s", rsp);                // already includes nl
@@ -293,13 +293,18 @@ t_httpUpdate_return ESPhttpUpdate::update(WiFiClient &client, const char *url)
 
 	// within the new source tree, make the same target we were made with
         printf ("OTA: making %s\n", our_make);
+
+        // use all but one core for building
+        int ncores = sysconf(_SC_NPROCESSORS_ONLN);
+        int j = ncores > 1 ? ncores - 1 : 1;  // use n-1 cores, but at least 1
+
     #ifdef _IS_FREEBSD
-	if (!runCommand (false, 12, 99, N_MAKE_LINES, "cd %s/%s && gmake -j 3 %s",tmp_dir,make_dir,our_make)) {
+	if (!runCommand (false, 12, 99, N_MAKE_LINES, "cd %s/%s && gmake -j %d %s %s", tmp_dir, make_dir, j, build_variables, our_make)) {
     #else
-	if (!runCommand (false, 12, 99, N_MAKE_LINES, "cd %s/%s && make -j 3 %s",tmp_dir,make_dir,our_make)) {
+	if (!runCommand (false, 12, 99, N_MAKE_LINES, "cd %s/%s && make -j %d %s %s", tmp_dir, make_dir, j, build_variables, our_make)) {
     #endif
             cleanupDir (tmp_dir);
-	    return (HTTP_UPDATE_FAILED);
+	        return (HTTP_UPDATE_FAILED);
         }
 
         // get the mode of the currently running file before we remove it
@@ -352,17 +357,17 @@ int ESPhttpUpdate::getLastError(void)
 
 String ESPhttpUpdate::getLastErrorString(void)
 {
-        // collect lines
-        // N.B. don't bother to reclaim memory, we know this is fatal
+        // collect lines, oldest first
+        // N.B. don't worry about reclaiming memory, we know this is fatal
         char *err_msg = strdup("");
-        int err_msg_len = 0;
         for (int i = 0; i < MAXERRLINES; i++) {
-            char *el = err_lines_q[(err_lines_head+i)%MAXERRLINES];
-            if (el) {
-                int ll = strlen (el);
-                err_msg = (char *) realloc (err_msg, err_msg_len + ll + 1);
-                strcpy (err_msg+err_msg_len, el);
-                err_msg_len += ll;
+            char *err_line = err_lines_q[(err_lines_head+i)%MAXERRLINES];
+            if (err_line) {
+                // append to err_msg
+                size_t el = strlen (err_msg);
+                size_t ll = strlen (err_line);
+                err_msg = (char *) realloc (err_msg, el + ll + 1);              // +1 EOS
+                strcpy (err_msg+el, err_line);
             }
         }
 
@@ -373,7 +378,7 @@ String ESPhttpUpdate::getLastErrorString(void)
 void ESPhttpUpdate::prError (const char *fmt, ...)
 {
         // format
-        char msg[1000];
+        char msg[10000];
         va_list ap;
         va_start (ap, fmt);
         vsnprintf (msg, sizeof(msg), fmt, ap);

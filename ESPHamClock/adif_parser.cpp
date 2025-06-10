@@ -93,22 +93,23 @@ static bool parseDT2UNIX (const char *date, const char *tim, time_t &unix)
 
 
 typedef struct {
-    const char name[7];         // just long enough for longest band
+    const char *name;
     float MHz;
 } ADIFBand;
 
-/* convert BAND ADIF enumeration to lower frequency in kHz.
- * return whether recognized
+/* convert BAND ADIF enumeration to typical frequency in kHz.
+ * N.B. return whether recognized as one supported by HamClock
  */
 static bool parseADIFBand (const char *band, float &kHz)
 {
+    // https://www.adif.org/315/ADIF_315.htm#Band_Enumeration
     static ADIFBand bands[] = {
         { "2190m",       0.1357	},
         { "630m",        0.472	},
         { "560m",        0.501	},
         { "160m",        1.8	},
         { "80m",         3.5	},
-        { "60m",         5.06	},
+        { "60m",         5.36	},
         { "40m",         7.0	},
         { "30m",        10.1	},
         { "20m",        14.0	},
@@ -141,7 +142,8 @@ static bool parseADIFBand (const char *band, float &kHz)
     for (int i = 0; i < NARRAY(bands); i++) {
         if (strcasecmp (band, bands[i].name) == 0) {
             kHz = 1e3 * bands[i].MHz;
-            return (true);
+            if (findHamBand (kHz) != HAMBAND_NONE)
+                return (true);
         }
     }
     return (false);
@@ -260,7 +262,7 @@ static bool addADIFFIeld (ADIFParser &adif, DXSpot &spot)
         // don't use BAND if FREQ already set
         if (!CHECK_AFB (adif, AFB_FREQ) && !parseADIFBand (adif.value, spot.kHz)) {
             if (debugLevel (DEBUG_ADIF, 3))
-                Serial.printf ("ADIF: line %d unknown band %s\n", adif.line_n, adif.value);
+                Serial.printf ("ADIF: line %d unknown or unsupported band %s\n", adif.line_n, adif.value);
             return (false);
         }
         ADD_AFB (adif, AFB_BAND);
@@ -454,9 +456,9 @@ static bool spotLooksGood (ADIFParser &adif, DXSpot &spot)
 
     // all good, just tidy up a bit
     strtoupper (spot.tx_call);
-    normalizeLL (spot.tx_ll);
+    spot.tx_ll.normalize();
     strtoupper (spot.rx_call);
-    normalizeLL (spot.rx_ll);
+    spot.rx_ll.normalize();
 
     return (true);
 }
@@ -479,7 +481,7 @@ static bool parseADIF (char c, ADIFParser &adif, DXSpot &spot)
         // full init
         memset (&adif, 0, sizeof(adif));
         adif.line_n = 1;
-        memset (&spot, 0, sizeof(spot));
+        spot = {};
 
         // fallthru
 
@@ -492,7 +494,7 @@ static bool parseADIF (char c, ADIFParser &adif, DXSpot &spot)
         // init spot
         if (debugLevel (DEBUG_ADIF, 3))
             Serial.printf ("ADIF: starting new spot scan\n");
-        memset (&spot, 0, sizeof(spot));
+        spot = {};
 
         // init per-spot fields in parser
         adif.qso_date[0] = '\0';

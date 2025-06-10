@@ -13,27 +13,24 @@
 #define MP_NI           10                                      // next-both-up table indent
 #define MP_MT           5                                       // up marker line thickness
 #define MP_TL           2                                       // tick length
-#define MP_PH           (map_b.h - MP_TB - MP_BB)               // plot height
-#define MP_PW           (map_b.w - MP_LB - MP_RB)               // plot width
-#define MP_X0           (map_b.x + MP_LB)                       // x coord of plot left
+#define MP_PH           (480 - MP_TB - MP_BB)                   // plot height
+#define MP_PW           (800 - MP_LB - MP_RB)                   // plot width
+#define MP_X0           (MP_LB)                                 // x coord of plot left
 #define MP_DUR          (2*24*3600)                             // plot duration, seconds
 #define MP_DT           (MP_DUR/100)                            // plot step size, seconds
 #define MP_US           30                                      // micro step refined time, seconds
-#define MP_TO           (30*1000)                               // time out, millis
+#define MP_TO           (60*1000)                               // time out, millis
 #define MP_FC           RGB565(65,200,65)                       // fill color 
 #define MP_TT           7                                       // timeline marker thickness
-#define MP_E2Y(E)       ((uint16_t)(map_b.y+MP_TB + MP_PH*(M_PI_2F-(E))/M_PIF + 0.5F)) // elev to y coord
+#define MP_E2Y(E)       ((uint16_t)(MP_TB + MP_PH*(M_PI_2F-(E))/M_PIF + 0.5F)) // elev to y coord
 #define MP_T2X(T)       ((uint16_t)(MP_X0 + MP_PW*((T)-t0)/MP_DUR))     // time_t to x coord
 #define MP_X2T(X)       ((time_t)(t0 + MP_DUR*((X)-MP_X0)/MP_PW))       // x coord to time_t
 
 
-/* draw everything in the moon EME plot except the elevation plots, Resume button and the "Next Up" table.
- * t0 is nowWO()
+/* draw everything in the moon EME plot except the elevation plots, Exit button and the "Next Up" table.
  */
 static void drawMPSetup (time_t t0)
 {
-        resetWatchdog();
-
         // grid lines color
         const uint16_t dark = RGB565(50,50,50);
 
@@ -41,7 +38,7 @@ static void drawMPSetup (time_t t0)
         const char *title = "Lunar Elevation at DE and DX";
         selectFontStyle (LIGHT_FONT, SMALL_FONT);
         uint16_t tw = getTextWidth(title);
-        tft.setCursor (map_b.x + (map_b.w-tw)/2, map_b.y + 30);
+        tft.setCursor ((800-tw)/2, 30);
         tft.setTextColor (RA8875_WHITE);
         tft.print (title);
 
@@ -60,20 +57,28 @@ static void drawMPSetup (time_t t0)
         // y labels
         selectFontStyle (LIGHT_FONT, FAST_FONT);
         tft.setTextColor(BRGRAY);
-        tft.setCursor (MP_X0 - 20, MP_E2Y(M_PI_2F) - 4);
+        tft.setCursor (MP_X0 - 22, MP_E2Y(M_PI_2F) - 4);
         tft.print ("+90");
+        tft.setCursor (MP_X0 - 22, MP_E2Y(2*M_PI_2F/3) - 4);
+        tft.print ("+60");
+        tft.setCursor (MP_X0 - 22, MP_E2Y(M_PI_2F/3) - 4);
+        tft.print ("+30");
         tft.setCursor (MP_X0 - 10, MP_E2Y(0) - 4);
         tft.print ("0");
-        tft.setCursor (MP_X0 - 20, MP_E2Y(-M_PI_2F) - 4);
+        tft.setCursor (MP_X0 - 22, MP_E2Y(-M_PI_2F/3) - 4);
+        tft.print ("-30");
+        tft.setCursor (MP_X0 - 22, MP_E2Y(-2*M_PI_2F/3) - 4);
+        tft.print ("-60");
+        tft.setCursor (MP_X0 - 22, MP_E2Y(-M_PI_2F) - 4);
         tft.print ("-90");
-        tft.setCursor(MP_X0-17, MP_E2Y(deg2rad(50)));
+        tft.setCursor(MP_X0-30, MP_E2Y(deg2rad(45)) - 4);
         tft.print("Up");
-        tft.setCursor(MP_X0-29, MP_E2Y(deg2rad(-45)));
+        tft.setCursor(MP_X0-30, MP_E2Y(deg2rad(-45)) - 4);
         tft.print("Down");
         const char estr[] = "Elevation";
         const int estr_l = strlen(estr);
         for (int i = 0; i < estr_l; i++) {
-            tft.setCursor(MP_X0-42, MP_E2Y(deg2rad(45-10*i)));
+            tft.setCursor(MP_NI, MP_E2Y(deg2rad(27-6*i)));
             tft.print(estr[i]);
         }
 
@@ -148,12 +153,9 @@ static void drawMPSetup (time_t t0)
  *   end == 0 means both-up never ended within plot duration;
  *   both above means always both-up;
  *   start == 0 means never both-up, end has no meaning
- * t0 is nowWO()
  */
 static void drawMPElPlot (time_t t0, time_t &t_start, time_t &t_end)
 {
-        resetWatchdog();
-
         // reset start/end so we can set with first occurance
         t_start = t_end = 0;
 
@@ -167,7 +169,6 @@ static void drawMPElPlot (time_t t0, time_t &t_start, time_t &t_end)
 
         // work across plot
         for (time_t t = t0; t <= t0 + MP_DUR; t += MP_DT) {
-            resetWatchdog();
 
             // find circumstances at time t
             AstroCir de_ac, dx_ac;
@@ -267,10 +268,16 @@ static void drawMPBothUpTable (time_t t0, time_t t_start, time_t t_end)
                                 hour(better_end), minute(better_end));
         }
 
+        // circumstances at t0
+        AstroCir de_ac, dx_ac;
+        getLunarCir (t0, de_ll, de_ac);
+        getLunarCir (t0, dx_ll, dx_ac);
+
+
         // table title
         selectFontStyle (LIGHT_FONT, FAST_FONT);
         tft.setTextColor (RA8875_WHITE);
-        tft.setCursor (map_b.x+MP_NI, map_b.y+5);
+        tft.setCursor (MP_NI, 5);
         if (always_both_up) {
             tft.print ("Both always up");
             return;
@@ -280,36 +287,40 @@ static void drawMPBothUpTable (time_t t0, time_t t_start, time_t t_end)
             return;
         }
         int dt = better_end - better_start;
-        snprintf (buf, sizeof(buf), "Next both up %02dh%02d", dt/3600, (dt%3600)/60);
+        snprintf (buf, sizeof(buf), "Next both up %02dh%02d    Az Now El", dt/3600, (dt%3600)/60);
         tft.print (buf);
 
 
         // DE row
         int detz = getTZ (de_tz);
         if (better_start == t0)  {
-            snprintf (buf, sizeof(buf), "DE    now    %02d:%02d",
-                    hour(better_end+detz), minute(better_end+detz));
+            snprintf (buf, sizeof(buf), "DE    now    %02d:%02d   %3.0f    %3.0f",
+                    hour(better_end+detz), minute(better_end+detz),
+                    rad2deg(de_ac.az), rad2deg(de_ac.el));
         } else {
-            snprintf (buf, sizeof(buf), "DE   %02d:%02d   %02d:%02d",
+            snprintf (buf, sizeof(buf), "DE   %02d:%02d   %02d:%02d   %3.0f    %3.0f",
                     hour(better_start+detz), minute(better_start+detz),
-                    hour(better_end+detz), minute(better_end+detz));
+                    hour(better_end+detz), minute(better_end+detz),
+                    rad2deg(de_ac.az), rad2deg(de_ac.el));
         }
         tft.setTextColor (DE_COLOR);
-        tft.setCursor (map_b.x+MP_NI, map_b.y+15);
+        tft.setCursor (MP_NI, 15);
         tft.print (buf);
 
         // DX row
         int dxtz = getTZ (dx_tz);
         if (better_start == t0)  {
-            snprintf (buf, sizeof(buf), "DX    now    %02d:%02d",
-                    hour(better_end+dxtz), minute(better_end+dxtz));
+            snprintf (buf, sizeof(buf), "DX    now    %02d:%02d   %3.0f    %3.0f",
+                    hour(better_end+dxtz), minute(better_end+dxtz),
+                    rad2deg(dx_ac.az), rad2deg(dx_ac.el));
         } else {
-            snprintf (buf, sizeof(buf), "DX   %02d:%02d   %02d:%02d",
+            snprintf (buf, sizeof(buf), "DX   %02d:%02d   %02d:%02d   %3.0f    %3.0f",
                     hour(better_start+dxtz), minute(better_start+dxtz),
-                    hour(better_end+dxtz), minute(better_end+dxtz));
+                    hour(better_end+dxtz), minute(better_end+dxtz),
+                    rad2deg(dx_ac.az), rad2deg(dx_ac.el));
         }
         tft.setTextColor (DX_COLOR);
-        tft.setCursor (map_b.x+MP_NI, map_b.y+25);
+        tft.setCursor (MP_NI, 25);
         tft.print (buf);
 
         // UTC rows
@@ -322,7 +333,7 @@ static void drawMPBothUpTable (time_t t0, time_t t_start, time_t t_end)
                     hour(better_end), minute(better_end));
         }
         tft.setTextColor (RA8875_WHITE);
-        tft.setCursor (map_b.x+MP_NI, map_b.y+35);
+        tft.setCursor (MP_NI, 35);
         tft.print (buf);
 }
 
@@ -330,8 +341,6 @@ static void drawMPBothUpTable (time_t t0, time_t t_start, time_t t_end)
  */
 static void drawMPPopup (const time_t t, const SBox &popup_b)
 {
-        resetWatchdog();
-
         // circumstances at t
         AstroCir de_ac, dx_ac;
         getLunarCir (t, de_ll, de_ac);
@@ -373,103 +382,125 @@ static void drawMPPopup (const time_t t, const SBox &popup_b)
         tft.drawPR();
 }
 
-/* plot lunar elevation vs time on map_b. time goes forward a few days. label in DE DX local and UTC.
+/* start fresh, returning time and its display period
  */
-void drawEMETool()
+static void freshEMETool (const SBox &exit_b, const char *exit_name,
+time_t &t0, time_t &t_start, time_t &t_end)
 {
         // start now
-        time_t t0 = nowWO();
+        t0 = nowWO();
 
-        // erase
-        fillSBox (map_b, RA8875_BLACK);
+        // fresh
+        eraseScreen();
 
         // draw boilerplate
         drawMPSetup (t0);
 
         // draw elevation plot, find first period when both up
-        time_t t_start, t_end;
         drawMPElPlot (t0, t_start, t_end);
 
         // refine and draw both-up table
         drawMPBothUpTable (t0, t_start, t_end);
 
-        // create resume button box
-        SBox resume_b;
-        resume_b.w = 100;
-        resume_b.x = map_b.x + map_b.w - resume_b.w - MP_RB;
-        resume_b.h = 40;
-        resume_b.y = map_b.y + 4;
-        const char button_name[] = "Resume";
+        // exit button box
         selectFontStyle (LIGHT_FONT, SMALL_FONT);
-        drawStringInBox (button_name, resume_b, false, RA8875_GREEN);
+        drawStringInBox (exit_name, exit_b, false, RA8875_GREEN);
 
         // see it all now
         tft.drawPR();
+}
+
+/* plot lunar elevation vs time full screen.
+ * time goes forward a few days. label in DE DX local and UTC.
+ */
+void drawEMETool()
+{
+        // create exit button box
+        static const char exit_name[] = "Exit";
+        SBox exit_b;
+        exit_b.w = 80;
+        exit_b.x = 800 - exit_b.w - MP_RB;
+        exit_b.h = 40;
+        exit_b.y = 4;
+
+        // fresh
+        time_t t0, t_start, t_end;
+        freshEMETool (exit_b, exit_name, t0, t_start, t_end);
 
         // popup history for erasing
         bool popup_is_up = false;
         bool popup_was_up = false;
         SBox popup_b = {0,0,0,0};
 
-        // report info for tap times until time out or tap Resume button
-        SCoord s;
-        char c;
+        // report info for tap times until time out or tap Exit button
+        const SBox screen_b = {0, 0, 800, 480};
         UserInput ui = {
-            map_b,
+            screen_b,
             UI_UFuncNone,
             UF_UNUSED,
             MP_TO,
-            UF_CLOCKSOK,
-            s,
-            c,
-            false,
-            false
+            UF_NOCLOCKS,
+            {0, 0}, TT_NONE, '\0', false, false
         };
-        while (waitForUser(ui)) {
 
-            // done if return, esc or tap Resume button or tap outside box
-            if (c == CHAR_CR || c == CHAR_NL || c == CHAR_ESC || inBox (s, resume_b) || 
-                                                    (c == CHAR_NONE && !inBox (s, map_b)))
-                break;
+        // repeat until actively does something to exit
+        for (;;) {
 
-            // first erase previous popup, if any
-            if (popup_is_up) {
-                fillSBox (popup_b, RA8875_BLACK);
-                drawMPSetup (t0);
-                drawMPElPlot (t0, t_start, t_end);
+            if (waitForUser(ui)) {
+
+                // done if return, esc or tap Exit button or tap outside box
+                if (ui.kb_char == CHAR_CR || ui.kb_char == CHAR_NL || ui.kb_char == CHAR_ESC
+                                    || inBox (ui.tap, exit_b))
+                    break;
+
+                // first erase previous popup, if any
+                if (popup_is_up) {
+                    fillSBox (popup_b, RA8875_BLACK);
+                    drawMPSetup (nowWO());
+                    drawMPElPlot (nowWO(), t_start, t_end);
+                    popup_is_up = false;
+                    popup_was_up = true;
+                }
+
+                // show new popup if tap within the plot area but outside previous popup
+                if (ui.tap.x > MP_X0 && ui.tap.x < MP_X0 + MP_PW && ui.tap.y > MP_E2Y(M_PI_2F)
+                            && ui.tap.y < MP_E2Y(-M_PI_2F) && (!popup_was_up || !inBox (ui.tap, popup_b))) {
+
+                    // popup at s
+                    popup_b.x = ui.tap.x;
+                    popup_b.y = ui.tap.y;
+                    popup_b.w = 122;
+                    popup_b.h = 45;
+
+                    // insure entirely over plot
+                    if (popup_b.x + popup_b.w > MP_X0 + MP_PW)
+                        popup_b.x = MP_X0 + MP_PW - popup_b.w;
+                    if (popup_b.y + popup_b.h > MP_E2Y(-M_PI_2F) - MP_MT)
+                        popup_b.y = MP_E2Y(-M_PI_2F) - MP_MT - popup_b.h;
+
+                    // draw popup
+                    drawMPPopup (MP_X2T(ui.tap.x), popup_b);
+
+                    // update popup state
+                    popup_was_up = popup_is_up;
+                    popup_is_up = true;
+                }
+
+            } else {
+
+                // timed out, redraw with current time on left
+                freshEMETool (exit_b, exit_name, t0, t_start, t_end);
                 popup_is_up = false;
-                popup_was_up = true;
-            }
-
-            // show new popup if tap within the plot area but outside previous popup
-            if (s.x > MP_X0 && s.x < MP_X0 + MP_PW && s.y > MP_E2Y(M_PI_2F) && s.y < MP_E2Y(-M_PI_2F)
-                                && (!popup_was_up || !inBox (s, popup_b))) {
-
-                resetWatchdog();
-
-                // popup at s
-                popup_b.x = s.x;
-                popup_b.y = s.y;
-                popup_b.w = 122;
-                popup_b.h = 45;
-
-                // insure entirely over plot
-                if (popup_b.x + popup_b.w > MP_X0 + MP_PW)
-                    popup_b.x = MP_X0 + MP_PW - popup_b.w;
-                if (popup_b.y + popup_b.h > MP_E2Y(-M_PI_2F) - MP_MT)
-                    popup_b.y = MP_E2Y(-M_PI_2F) - MP_MT - popup_b.h;
-
-                // draw popup
-                drawMPPopup (MP_X2T(s.x), popup_b);
-
-                // update popup state
-                popup_was_up = popup_is_up;
-                popup_is_up = true;
+                popup_was_up = false;
             }
         }
 
         // ack
         selectFontStyle (LIGHT_FONT, SMALL_FONT);
-        drawStringInBox (button_name, resume_b, true, RA8875_GREEN);
+        drawStringInBox (exit_name, exit_b, true, RA8875_GREEN);
+        wdDelay (300);
         tft.drawPR();
+
+        // restore
+        initScreen();
 }

@@ -25,13 +25,11 @@ static const char v_page[] = "/version.pl";
 #define NBOX_Y          C_Y                             // no box y
 #define YBOX_X          (800-NBOX_X-YNBOX_W)            // yes box x
 #define YBOX_Y          C_Y                             // yes box y
-#define SCR_W           17                              // scroll arrow width
-#define SCR_H           30                              // scroll arrow height
-#define SCR_BGAP        5                               // scroll arrows box border gap
-#define SCR_UPX         (800-SCR_BGAP-SCR_W-5)          // scroll up x
-#define SCR_UPY         INFO_Y                          // scroll up top y
-#define SCR_DWX         SCR_UPX                         // scroll down x
-#define SCR_DWY         (480-SCR_H-10)                  // scroll down top y
+#define SCR_W           30                              // scroll width
+#define SCR_M           5                               // scroll LR margin
+#define SCR_X           (800-SCR_M-SCR_W-5)             // scroll x
+#define SCR_Y           INFO_Y                          // scroll y
+#define SCR_H           (480-10-SCR_Y)                  // scroll height
 
 // install layout
 #define PROG_Y0         100                             // progress text y
@@ -64,7 +62,6 @@ bool newVersionIsAvailable (char *new_ver, uint16_t new_verl)
 
     Serial.printf ("%s/%s\n", backend_host, v_page);
     if (v_client.connect (backend_host, backend_port)) {
-        resetWatchdog();
 
         // query page
         httpHCGET (v_client, backend_host, v_page);
@@ -128,7 +125,7 @@ static void drawChangeList (char **line, int top_line, int n_lines)
     uint16_t line_y = INFO_Y;
 
     // erase over to scroll bar
-    tft.fillRect (0, line_y, SCR_UPX-SCR_BGAP-1, tft.height() - line_y, RA8875_BLACK);
+    tft.fillRect (0, line_y, SCR_X-SCR_M-1, tft.height() - line_y, RA8875_BLACK);
 
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
     tft.setTextColor (RA8875_WHITE);
@@ -138,61 +135,13 @@ static void drawChangeList (char **line, int top_line, int n_lines)
     }
 }
 
-
-/* draw or erase an up or down arrow in the given box
+/* show release notes for current or pending release.
+ * if pending:
+ *    ask and return whether to install the given version using the given default answer
+ * else
+ *    always return false.
  */
-typedef enum {
-    DA_UP,
-    DA_DOWN
-} DrawArrowDir;
-typedef enum {
-    DA_ON,
-    DA_OFF
-} DrawArrowOnOff;
-static void drawArrow (const SBox &b, DrawArrowOnOff oo, DrawArrowDir ud)
-{
-    // stay within b
-    uint16_t b_y = b.y + b.h - 1;
-    uint16_t r_x = b.x + b.w - 1;
-    uint16_t tip_x = b.x + b.w/2;
-
-    if (oo == DA_ON) {
-        if (ud == DA_UP)
-            tft.fillTriangle (tip_x, b.y,   b.x, b_y,   r_x, b_y,    RA8875_WHITE);
-        else
-            tft.fillTriangle (tip_x, b_y,   b.x, b.y,   r_x, b.y,    RA8875_WHITE);
-    } else {
-        fillSBox (b, RA8875_BLACK);
-        if (ud == DA_UP)
-            tft.drawTriangle (tip_x, b.y,   b.x, b_y,   r_x, b_y,    RA8875_WHITE);
-        else
-            tft.drawTriangle (tip_x, b_y,   b.x, b.y,   r_x, b.y,    RA8875_WHITE);
-    }
-}
-
-/* draw the scale trough
- */
-static void drawTrough (int max_lines, int n_lines, int top_line)
-{
-    // erase trough the border and arrows
-    uint16_t in_x = SCR_UPX-SCR_BGAP+2;
-    uint16_t in_y = SCR_UPY+SCR_H+2;
-    uint16_t in_w = SCR_W+2*SCR_BGAP-4;
-    uint16_t in_h = SCR_DWY-2 - in_y;
-    tft.fillRect (in_x, in_y, in_w, in_h, RA8875_BLACK);
-
-    // draw thumb
-    uint16_t tr_x = in_x;
-    uint16_t tr_y = in_y + (int)top_line * in_h / n_lines;
-    uint16_t tr_w = in_w;
-    uint16_t tr_h = (int)max_lines * in_h / n_lines;
-    tft.fillRect (tr_x, tr_y, tr_w, tr_h, RA8875_WHITE);
-}
-
-/* ask and return whether to install the given (presumably newer) version.
- * default no if trouble of no user response.
- */
-bool askOTAupdate(char *new_ver, bool init_yes)
+bool askOTAupdate(char *new_ver, bool show_pending, bool def_yes)
 {
     // prep
     eraseScreen();
@@ -201,24 +150,34 @@ bool askOTAupdate(char *new_ver, bool init_yes)
     tft.setTextColor (RA8875_WHITE);
     char line[128];
 
-    // ask whether to install
+    // title
     tft.setCursor (LINDENT, Q_Y);
-    snprintf (line, sizeof(line), "New version %s is available. Update now?  ... ", new_ver);
+    if (show_pending)
+        snprintf (line, sizeof(line), "New version %s is available. Update now?  ... ", new_ver);
+    else
+        snprintf (line, sizeof(line), "You're up to date with the following changes ... ");
     tft.print (line);
+
+    // get cursor location for count down
     uint16_t count_x = tft.getCursorX();
     uint16_t count_y = tft.getCursorY();
     int count_s = ASK_TO;
     tft.print(count_s);
 
-    // draw yes/no boxes
+    // draw button boxes, no is just Ok if not pending
     SBox no_b =  {NBOX_X, NBOX_Y, YNBOX_W, YNBOX_H};
     SBox yes_b = {YBOX_X, YBOX_Y, YNBOX_W, YNBOX_H};
-    bool active_yes = init_yes;
-    drawStringInBox ("No", no_b, !active_yes, RA8875_WHITE);
-    drawStringInBox ("Yes", yes_b, active_yes, RA8875_WHITE);
+    bool active_yes = def_yes;
+    if (show_pending) {
+        drawStringInBox ("No", no_b, !active_yes, RA8875_WHITE);
+        drawStringInBox ("Yes", yes_b, active_yes, RA8875_WHITE);
+    } else {
+        drawStringInBox ("Ok", no_b, false, RA8875_WHITE);
+    }
 
     // prep for potentially long wait
     closeGimbal();
+    closeDXCluster();
 
     // read list of changes
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
@@ -226,7 +185,6 @@ bool askOTAupdate(char *new_ver, bool init_yes)
     char **lines = NULL;                        // malloced list of malloced strings -- N.B. free!
     int n_lines = 0;
     if (v_client.connect (backend_host, backend_port)) {
-        resetWatchdog();
 
         // query page
         httpHCGET (v_client, backend_host, v_page);
@@ -245,7 +203,7 @@ bool askOTAupdate(char *new_ver, bool init_yes)
 
         // remaining lines are changes, add to lines[]
         while (getTCPLine (v_client, line, sizeof(line), NULL)) {
-            maxStringW (line, SCR_UPX-SCR_BGAP-LINDENT-1);       // insure fit
+            maxStringW (line, SCR_X-SCR_M-LINDENT-1);       // insure fit
             lines = (char **) realloc (lines, (n_lines+1) * sizeof(char*));
             if (!lines)
                 fatalError ("no memory for %d version changes", n_lines+1);
@@ -259,128 +217,93 @@ bool askOTAupdate(char *new_ver, bool init_yes)
     const int max_lines = (tft.height() - FD - INFO_Y)/LH;
 
     // prep first display of changes
-    int top_line = 0;
-    drawChangeList (lines, top_line, n_lines);
+    drawChangeList (lines, 0, n_lines);
 
-    // scrolling tests
-    #define NEED_SCR    (n_lines > max_lines)
-    #define MORE_UP     (NEED_SCR && top_line > 0)
-    #define MORE_DOWN   (NEED_SCR && top_line < n_lines - max_lines)
+    // scrollbar
+    SBox sb_b = {SCR_X, SCR_Y, SCR_W, SCR_H}; 
+    ScrollBar sb;
+    sb.init (max_lines, n_lines, sb_b);
 
-    // add scroll controls if needed
-
-    SBox sup_b;
-    sup_b.x = SCR_UPX;
-    sup_b.y = SCR_UPY;
-    sup_b.w = SCR_W;
-    sup_b.h = SCR_H;
-    if (NEED_SCR)
-        drawArrow (sup_b, MORE_UP ? DA_ON : DA_OFF, DA_UP);
-
-    SBox sdw_b;
-    sdw_b.x = SCR_DWX;
-    sdw_b.y = SCR_DWY;
-    sdw_b.w = SCR_W;
-    sdw_b.h = SCR_H;
-    if (NEED_SCR)
-        drawArrow (sdw_b, MORE_DOWN ? DA_ON : DA_OFF, DA_DOWN);
-
-    // draw arrows border if needed
-    if (NEED_SCR) {
-        uint16_t brd_x = SCR_UPX-SCR_BGAP;
-        uint16_t brd_y = SCR_UPY-SCR_BGAP;
-        uint16_t brd_w = SCR_W+2*SCR_BGAP;
-        uint16_t brd_h = SCR_DWY+SCR_H+SCR_BGAP - brd_y;
-        tft.drawRect (brd_x, brd_y, brd_w, brd_h, RA8875_WHITE);
-    }
-
-    // draw scale if needed
-    if (NEED_SCR)
-        drawTrough (max_lines, n_lines, top_line);
+    // prep for user input
+    SBox screen_b = {0, 0, tft.width(), tft.height()};
+    UserInput ui = {
+        screen_b,
+        UI_UFuncNone,
+        UF_UNUSED,
+        1000,
+        UF_NOCLOCKS,
+        {0, 0}, TT_NONE, '\0', false, false
+    };
 
     // wait for response or time out
     drainTouch();
-    uint32_t t0 = millis();
     Serial.println ("Waiting for update y/n ...");
     bool finished = false;
     while (!finished && count_s > 0) {
 
-        // check for scroll
-        int prev_topl = top_line;
+        // wait for any user action
+        if (waitForUser(ui)) {
 
-        // needed if UTC button is flashing "Off"
-        tft.setTextColor (RA8875_WHITE);
+            // reset counter
+            count_s = ASK_TO;
+
+            if (sb.checkTouch (ui.kb_char, ui.tap)) {
+
+                drawChangeList (lines, sb.getTop(), n_lines);
+
+            } else {
+
+                switch (ui.kb_char) {
+                case CHAR_TAB:
+                case CHAR_LEFT:
+                case CHAR_RIGHT:
+                    if (show_pending) {
+                        active_yes = !active_yes;
+                        drawStringInBox ("Yes", yes_b, active_yes, RA8875_WHITE);
+                        drawStringInBox ("No", no_b, !active_yes, RA8875_WHITE);
+                    }
+                    break;
+                case CHAR_ESC:
+                    finished = true;
+                    active_yes = false;
+                    break;
+                case CHAR_CR:
+                case CHAR_NL:
+                    finished = true;
+                    break;
+
+                case CHAR_NONE:
+                    // click?
+                    if (show_pending && inBox (ui.tap, yes_b)) {
+                        drawStringInBox ("Yes", yes_b, true, RA8875_WHITE);
+                        drawStringInBox ("No", no_b, false, RA8875_WHITE);
+                        wdDelay(200);
+                        finished = true;
+                        active_yes = true;
+                    }
+                    if (inBox (ui.tap, no_b)) {
+                        if (show_pending) {
+                            drawStringInBox ("No", no_b, true, RA8875_WHITE);
+                            drawStringInBox ("Yes", yes_b, false, RA8875_WHITE);
+                        } else {
+                            drawStringInBox ("Ok", no_b, true, RA8875_WHITE);
+                        }
+                        wdDelay(200);
+                        finished = true;
+                        active_yes = false;
+                    }
+                    break;
+                }
+            }
+        }
 
         // update countdown
-        wdDelay(10);
-        if (timesUp(&t0,1000)) {
-            selectFontStyle (BOLD_FONT, SMALL_FONT);
-            tft.fillRect (count_x, count_y-30, 60, 40, RA8875_BLACK);
-            tft.setCursor (count_x, count_y);
-            tft.print(--count_s);
-        }
+        tft.setTextColor (RA8875_WHITE);
+        selectFontStyle (BOLD_FONT, SMALL_FONT);
+        tft.fillRect (count_x, count_y-30, 60, 40, RA8875_BLACK);
+        tft.setCursor (count_x, count_y);
+        tft.print(--count_s);
 
-        // handle typed chars
-        switch (tft.getChar(NULL,NULL)) {
-        case CHAR_TAB:
-        case CHAR_LEFT:
-        case CHAR_RIGHT:
-            active_yes = !active_yes;
-            drawStringInBox ("Yes", yes_b, active_yes, RA8875_WHITE);
-            drawStringInBox ("No", no_b, !active_yes, RA8875_WHITE);
-            count_s = ASK_TO;
-            break;
-        case CHAR_ESC:
-            finished = true;
-            active_yes = false;
-            break;
-        case CHAR_CR:
-        case CHAR_NL:
-            finished = true;
-            break;
-        case CHAR_UP:
-            if (MORE_UP)
-                drawChangeList (lines, --top_line, n_lines);
-            count_s = ASK_TO;
-            break;
-        case CHAR_DOWN:
-            if (MORE_DOWN)
-                drawChangeList (lines, ++top_line, n_lines);
-            count_s = ASK_TO;
-            break;
-        }
-
-        // handle clicks
-        SCoord s;
-        if (readCalTouchWS(s) != TT_NONE) {
-            if (inBox (s, yes_b)) {
-                drawStringInBox ("Yes", yes_b, true, RA8875_WHITE);
-                finished = true;
-                active_yes = true;
-            }
-            if (inBox (s, no_b)) {
-                drawStringInBox ("No", no_b, false, RA8875_WHITE);
-                finished = true;
-                active_yes = false;
-            }
-            if (inBox (s, sup_b)) {
-                if (MORE_UP)
-                    drawChangeList (lines, --top_line, n_lines);
-                count_s = ASK_TO;
-            }
-            if (inBox (s, sdw_b)) {
-                if (MORE_DOWN)
-                    drawChangeList (lines, ++top_line, n_lines);
-                count_s = ASK_TO;
-            }
-        }
-
-        // manage scroll arrows
-        if (prev_topl != top_line && NEED_SCR) {
-            drawArrow (sup_b, MORE_UP ? DA_ON : DA_OFF, DA_UP);
-            drawArrow (sdw_b, MORE_DOWN ? DA_ON : DA_OFF, DA_DOWN);
-            drawTrough (max_lines, n_lines, top_line);
-        }
     }
 
     // clean up
@@ -389,6 +312,7 @@ bool askOTAupdate(char *new_ver, bool init_yes)
     free (lines);
 
     // return result
+    Serial.printf ("... update answer %d\n", active_yes);
     return (active_yes);
 }
 
@@ -397,7 +321,7 @@ bool askOTAupdate(char *new_ver, bool init_yes)
  */
 void doOTAupdate(const char *newver)
 {
-    Serial.println ("Begin download");
+    Serial.printf ("Begin download version %s\n", newver);
 
     // inform user
     eraseScreen();
@@ -412,17 +336,15 @@ void doOTAupdate(const char *newver)
     ESPhttpUpdate.onProgress (onProgressCB);
 
     // build url
-    resetWatchdog();
     WiFiClient client;
-    char url[200];
+    char url[400];
     if (strchr(newver, 'b'))
-        snprintf (url, sizeof(url), "http://%s/ham/HamClock/ESPHamClock-V%s.zip", backend_host, newver);
+        snprintf (url, sizeof(url), "https://%s/ham/HamClock/ESPHamClock-V%s.zip", backend_host, newver);
     else
         snprintf (url, sizeof(url), "https://%s/ham/HamClock/ESPHamClock.zip", backend_host);
 
     // go
     t_httpUpdate_return ret = ESPhttpUpdate.update(client, url);
-    resetWatchdog();
 
     // show error message and exit
     switch (ret) {
@@ -432,7 +354,7 @@ void doOTAupdate(const char *newver)
         break;
 
     case HTTP_UPDATE_NO_UPDATES:
-        fatalError ("No updates found");
+        fatalError ("No updates found after all??");
         break;
 
     case HTTP_UPDATE_OK:
@@ -440,8 +362,7 @@ void doOTAupdate(const char *newver)
         break;
 
     default:
-        fatalError ("Unknown failure code: ");
-        tft.println (ret);
+        fatalError ("Unknown failure code: %d", (int)ret);
         break;
     }
 }

@@ -94,11 +94,10 @@ bool maidenhead2ll (LatLong &ll, const char maid[MAID_CHARLEN])
     else if (uc_maid[4] < 'A' || uc_maid[4] > 'X' || uc_maid[5] < 'A' || uc_maid[5] > 'X')
         return (false);
 
+    // ok
     ll.lng_d = 20.0F*(uc_maid[0] - 'A') + 2.0F*(uc_maid[2] - '0') + (5.0F/60.0F)*(uc_maid[4] - 'A') + - 180;
-    ll.lng = deg2rad (ll.lng_d);
-
     ll.lat_d = 10.0F*(uc_maid[1] - 'A') + 1.0F*(uc_maid[3] - '0') + (2.5F/60.0F)*(uc_maid[5] - 'A') + - 90;
-    ll.lat = deg2rad (ll.lat_d);
+    ll.normalize();
 
     return (true);
 }

@@ -18,7 +18,8 @@ static bool fileSizeOk (const char *path, int min_size)
         const char *basename = strrchr (path, '/');
         if (basename)
             path = basename + 1;
-        Serial.printf ("Cache: %s size ok: %ld >= %d\n", path, (long)sbuf.st_size, min_size);
+        if (debugLevel (DEBUG_CACHE, 1))
+            Serial.printf ("Cache: %s size ok: %ld >= %d\n", path, (long)sbuf.st_size, min_size);
         return (true);
     }
     return (false);
@@ -43,7 +44,8 @@ static bool fileAgeOk (const char *path, int max_age)
             const char *basename = strrchr (path, '/');
             if (basename)
                 path = basename + 1;
-            Serial.printf ("Cache: %s age ok: %d <= %d\n", path, age, max_age);
+            if (debugLevel (DEBUG_CACHE, 1))
+                Serial.printf ("Cache: %s age ok: %d <= %d\n", path, age, max_age);
             return (true);
         }
     }
