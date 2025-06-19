@@ -46,6 +46,9 @@
       #if __has_include(<gpiod.h>) || __has_include(<bcm_host.h>) || __has_include(<pigpio.h>)
         #define _IS_LINUX_RPI
       #endif
+      #if __has_include("/etc/armbian-release")
+        #define _IS_LINUX_ARMBIAN
+      #endif
   #endif
 #endif
 

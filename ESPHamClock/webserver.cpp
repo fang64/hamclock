@@ -9,6 +9,8 @@
 // platform
 #if defined (_IS_ESP8266)
 const char platform[] = "ESPHamClock";
+#elif defined(_IS_LINUX_ARMBIAN)
+const char platform[] = "HamClock-armbian";
 #elif defined(_IS_LINUX_RPI)
 const char platform[] = "HamClock-rpi";
 #elif defined(_IS_LINUX)

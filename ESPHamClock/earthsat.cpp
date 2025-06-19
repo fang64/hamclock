@@ -1240,32 +1240,34 @@ static bool checkSatUpToDate (bool *updated)
     if (!obs || !SAT_NAME_IS_SET())
         return (false);
 
-    // do fresh lookup but first capture current epoch to check whether it was updated
+    // do fresh lookup in case local file changed but first capture current epoch to check if updated
     DateTime e0_dt = sat ? sat->epoch() : DateTime();
     if (!satLookup())
         return (false);                         // already posted error
 
-    // confirm age ok
-    time_t t = nowWO();
-    if (!satEpochOk(sat_name, t)) {
+    // confirm age still ok
+    time_t now_wo = nowWO();
+    if (!satEpochOk(sat_name, now_wo)) {
         fatalSatError ("Epoch for %s is out of date", sat_name);
         return (false);
     }
 
-    // update if epoch changed
+    // check if epoch changed
     DateTime e1_dt = sat->epoch();
     float e_diff = e1_dt - e0_dt;
     bool new_epoch = e_diff != 0;
-    if (new_epoch) {
-        Serial.printf ("SAT: %s updated because epoch changed by %g days\n", sat_name, e_diff);
-        findNextPass (sat_name, t, sat_rs);
+
+    // update sat_rs if new epoch or just set
+    if (new_epoch || findPassState(NULL) == PS_HASSET) {
+        findNextPass (sat_name, now_wo, sat_rs);
+        if (updated)
+            *updated = true;
+    } else {
+        if (updated)
+            *updated = false;
     }
 
-    // report if care
-    if (updated)
-        *updated = new_epoch;
-
-    // report lookup succeeded regardless of whether elements changed
+    // lookup succeeded regardless of whether elements changed
     return (true);
 }
 

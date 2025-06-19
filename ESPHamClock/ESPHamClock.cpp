@@ -192,6 +192,10 @@ static void showDefines(void)
         _PR_MAC(_IS_LINUX_RPI);
     #endif
 
+    #if defined(_IS_LINUX_ARMBIAN)
+        _PR_MAC(_IS_LINUX_ARMBIAN);
+    #endif
+
     #if defined(_NATIVE_I2C_FREEBSD)
         _PR_MAC(_NATIVE_I2C_FREEBSD);
     #endif

@@ -594,6 +594,8 @@ bool plotNOAASWx (const SBox &box)
     uint16_t label_x0 = box.x + 6;
     uint16_t value_x0 = label_x0 + 10 * FONTW;
     uint16_t value_w = (box.x + box.w - value_x0)/N_NOAASW_V;
+    uint16_t footer_y = box.y + box.h - 12;
+
     for (int i = 0; i < N_NOAASW_C; i++) {
 
         // label
@@ -622,16 +624,28 @@ bool plotNOAASWx (const SBox &box)
             break;                                                      // lint
         }
 
-        // value
-        selectFontStyle (LIGHT_FONT, SMALL_FONT);
+        // value and label below
         uint16_t value_y = table_y0 + i*table_h/N_NOAASW_C + 19;        // font baseline is at bottom
         for (int j = 0; j < N_NOAASW_V; j++) {
+            selectFontStyle (LIGHT_FONT, SMALL_FONT);
             uint16_t value_x = value_x0 + j*value_w;
             int val = noaa.val[i][j];
             tft.setCursor (value_x, value_y);
             tft.setTextColor(val == 0 ? RA8875_GREEN : (val <= 3 ? RA8875_YELLOW : RA8875_RED));
             tft.print (val);
         }
+    }
+
+    // labels below
+    selectFontStyle (LIGHT_FONT, FAST_FONT);
+    for (int i = 0; i < N_NOAASW_V; i++) {
+        uint16_t value_x = value_x0 + i*value_w - 3;
+        selectFontStyle (LIGHT_FONT, FAST_FONT);
+        tft.setCursor (value_x, footer_y);
+        if (i == 0)
+            tft.print ("Now");
+        else
+            tft.printf ("D+%d", i);
     }
 
     // ok
