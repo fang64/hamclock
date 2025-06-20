@@ -13,10 +13,11 @@ sed -i 's/"/-AUR"/g' version.h
 sed -i 's/\t-AUR"/\t"/g' version.h
 
 # Do not check for/install updates
-sed -i "s/tft.print (F(\"You're up to date\!\"));"'/tft.print(F("Updates disabled for AUR")); tft.setCursor (tft.width()\/8, tft.height()\/3+40); tft.print(F("If this build is outdated by more than a few days,")); tft.setCursor (tft.width()\/8, tft.height()\/3+80); tft.print(F("please email fang64@gmail.com.")); wdDelay(2000);/g' ESPHamClock.ino
-sed -i 's/bool found_newer = false;/return false;bool found_newer;/g' OTAupdate.cpp
+patch -Np1 -i no-updates.patch
 ```
-This simply redirects users to contact AUR maintainer if they are out-of-date. It also disables the update check entirely.
+This simply redirects users to contact AUR maintainer if they are out-of-date. It also disables the update check entirely. The patch is actually in a alternate branch called patch, linked here:
+[AUR Patch](https://raw.githubusercontent.com/fang64/hamclock/refs/heads/patch/aur/no-updates.patch)
+[Pacstall Patch](https://raw.githubusercontent.com/fang64/hamclock/refs/heads/patch/pacstall/no-updates.patch)
 
 Downstream libgpio patch:
 
