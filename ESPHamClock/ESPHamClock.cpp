@@ -92,6 +92,8 @@ typedef enum {
     ROTM_RSSI,                                  // show RSSI
     ROTM_LIP,                                   // show local IP
     ROTM_PIP,                                   // show public IP
+    ROTM_BE,                                    // show backend hostname
+    ROTM_BEIP,                                  // show backend ip address
     ROTM_CPUTEMP,                               // show CPU temperature
     ROTM_FSUSE,                                 // show file system usage
     ROTM_N,                                     // n values
@@ -979,6 +981,8 @@ static void checkTouch()
         case ROTM_FSUSE:        // fallthru
         case ROTM_LIP:  // fallthru
         case ROTM_PIP:
+        case ROTM_BE:
+        case ROTM_BEIP:
             // sorry, nothing fun
             break;
         case ROTM_N:
@@ -1429,6 +1433,42 @@ static void drawRotatingMessage()
 
             break;
 
+        case ROTM_BE: {
+
+            if (backend_host[0]) {
+                snprintf (str, sizeof(str), "%s", backend_host);
+            } else {
+                strcpy (str, "No host");
+                tft.setTextColor (RA8875_RED);
+            }
+            }
+
+            break;
+
+        case ROTM_BEIP: {
+            if (backend_host[0]) {
+                struct addrinfo hints, *res;
+                memset(&hints, 0, sizeof(hints));
+                hints.ai_family = AF_INET; // Force IPv4 for a simple string
+                hints.ai_socktype = SOCK_STREAM;
+
+                // Attempt to resolve the hostname
+                if (getaddrinfo(backend_host, NULL, &hints, &res) == 0) {
+                    struct sockaddr_in *ipv4 = (struct sockaddr_in *)res->ai_addr;
+                    char be_addr[INET_ADDRSTRLEN];
+                    inet_ntop(AF_INET, &(ipv4->sin_addr), be_addr, sizeof(be_addr));
+                    snprintf (str, sizeof(str), "BE-IP %s", be_addr);
+                    freeaddrinfo(res);
+                } else {
+                    strcpy(str, "Res Err");
+                    tft.setTextColor(RA8875_RED);
+                }
+            } else {
+                strcpy(str, "No host");
+                tft.setTextColor(RA8875_RED);
+            }
+            break;
+        }
 
         case ROTM_N:
             // lint -- never get here
@@ -2218,7 +2258,7 @@ bool postDiags (void)
         int buf_l = 0;
 
         // hand-crafted POST header, move to its own func if ever used for something else
-        buf_l += snprintf (buf+buf_l, sizeof(buf)-buf_l, "POST %s HTTP\r\n", fn);
+        buf_l += snprintf (buf+buf_l, sizeof(buf)-buf_l, "POST %s HTTP/1.0\r\n", fn);
         buf_l += snprintf (buf+buf_l, sizeof(buf)-buf_l, "Content-Length: %d\r\n", cl);
         pd_client.print (buf);
         sendUserAgent (pd_client);

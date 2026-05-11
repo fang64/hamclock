@@ -21,6 +21,19 @@ ifdef FB_DEPTH
     CXXFLAGS += -D_FB_DEPTH=$(FB_DEPTH)
 endif
 
+# add server alias as _T if defined
+ifdef T
+    CXXFLAGS += -D_T=$(T)
+endif
+# add backend server as _B if defined
+ifdef B
+    CXXFLAGS += -D_B=$(B)
+endif
+
+# add software download server as _S if defined
+ifdef S
+    CXXFLAGS += -D_S=$(S)
+endif
 # handle WiFi configuration
 ifeq ($(WIFI_NEVER),1)
     CXXFLAGS += -D_WIFI_NEVER
@@ -98,7 +111,7 @@ OBJS = \
 	earthsat.o \
 	emetool.o \
 	favicon.o \
-        fsfree.o \
+	fsfree.o \
 	gimbal.o \
 	gpsd.o \
 	grayline.o \
@@ -172,7 +185,10 @@ help:
 	@printf "Optional command line variables which may be set before the desired target:\n"
 	@printf "    FB_DEPTH=16 or 32         - Specify a given frame buffer pixel size (default is 32 on all but fb0)\n"
 	@printf "    WIFI_NEVER=1              - Disable WiFi fields in setup (already the default on all but fb0)\n"
-
+	@printf "    B=backend                 - Set backend server default so -b is not required, format host:port\n"
+	@printf "    S=software                - Set software server default so -S is not required. format host.domain\n"
+	@printf "    T=time                    - Set timout default (seconds) so -b is not required if timout to backend need to be increased\n"
+ 
 
 # supporting libs
 hclibs:
@@ -280,15 +296,15 @@ install:
 	DIR=/usr/local/bin ; \
 	TARGET=$$DIR/hamclock ; \
 	if ! [ -x $$SOURCE ] ; then \
-	    echo 'make something first' ; \
-	    make help ; \
+		echo 'make something first' ; \
+		make help ; \
 	elif [ `id -un` != 'root' ] ; then \
-	    echo please run with sudo ; \
+		echo please run with sudo ; \
 	else \
-	    mkdir -p $$DIR \
-	    && mv -f $$SOURCE $$TARGET \
-	    && chown root $$TARGET \
-	    && chmod u+s $$TARGET; \
+		mkdir -p $$DIR \
+		&& mv -f $$SOURCE $$TARGET \
+		&& chown root $$TARGET \
+		&& chmod u+s $$TARGET; \
 	fi
 
 clean clobber:

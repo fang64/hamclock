@@ -7,7 +7,8 @@
 // host name and port of backend server
 const char *backend_host = "clearskyinstitute.com";
 int backend_port = 80;
-
+// host name of software server
+const char *software_host = "clearskyinstitute.com";
 // IP where server thinks we came from
 char remote_addr[16];                           // INET_ADDRSTRLEN
 
@@ -397,7 +398,9 @@ static void initWiFi (bool verbose)
         tftMsg (verbose, 0, "GW: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
         ip = WiFi.dnsIP();
         tftMsg (verbose, 0, "DNS: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-
+        tftMsg (verbose, 0, "BE: %s:%d", backend_host, backend_port);
+        if (strcmp(backend_host,software_host) != 0)
+            tftMsg (verbose, 0, "SE: %s", software_host);
         int rssi;
         bool is_dbm;
         if (readWiFiRSSI(rssi,is_dbm)) {
@@ -1422,6 +1425,22 @@ void httpHCGET (WiFiClient &client, const char *server, const char *hc_page)
     httpGET (client, server, full_hc_page);
 }
 
+/* issue an HTTPS Get to a /ham/HamClock page named in ram by using a curl command
+ */
+
+bool connecthttpsHCGET (WiFiClient &client, const char *server, const char *hc_page)
+{
+    static const char c1[] = "curl -A \"";  //then platform
+    static const char c2[] = "/";                    //then hc_version
+    static const char c3[] = "\" --max-time 15 --silent --retry 2 https://"; //then server
+    static const char hc[] = "/ham/HamClock";        // then hc_page
+    int memlen = strlen(c1)+strlen(platform)+strlen(c2)+strlen(hc_version)+strlen(c3)+strlen(server)+strlen(hc)+strlen(hc_page)+1;
+    StackMalloc curlbuf(memlen);
+    char *curl = (char *) curlbuf.getMem();
+    snprintf (curl, memlen, "%s%s%s%s%s%s%s%s",c1,platform,c2,hc_version,c3,server,hc, hc_page);
+    printf("wifi: connecting to command %s\n",curl);
+    return (client.connectCommand(curl));
+}
 /* skip the given wifi client stream ahead to just after the first blank line, return whether ok.
  * this is often used so subsequent stop() on client doesn't slam door in client's face with RST.
  * Along the way, if find a header field with the given name (unless NULL) return value in the given string.
@@ -1572,7 +1591,7 @@ static bool updateXRay(const SBox &box)
             // overlay short over long with fixed y axis
             char level_str[10];
             plotXYstr (box, xray.x, xray.l, XRAY_NV, "Hours", "GOES 16 X-Ray", XRAY_LCOLOR, -9, -2, NULL)
-                 && plotXYstr (box, xray.x, xray.s, XRAY_NV, NULL, NULL, XRAY_SCOLOR, -9, -2,     
+                 && plotXYstr (box, xray.x, xray.s, XRAY_NV, NULL, NULL, XRAY_SCOLOR, -9, -2,
                                 xrayLevel(level_str, space_wx[SPCWX_XRAY]));
         }
 
@@ -1887,7 +1906,7 @@ bool checkBCTouch (const SCoord &s, const SBox &b)
             mi.indent = 5;
             mi.label = labels[i];
             snprintf (labels[i], sizeof(labels[i]), "%d watt%s", bc_powers[i],
-                                bc_powers[i] > 1 ? "s" : ""); 
+                                bc_powers[i] > 1 ? "s" : "");
         };
 
         SBox menu_b;
@@ -1999,7 +2018,7 @@ bool checkBCTouch (const SCoord &s, const SBox &b)
             scheduleNewCoreMap(core_map);
         drawDXInfo ();
         (void) updateBandConditions (b, true);
-    
+
     } else if (inBox (s, tl_b)) {
 
         // toggle bc_utc_tl and redraw
@@ -2443,7 +2462,7 @@ void scheduleNewPlot (PlotChoice pc)
                 // just mark for fresh redraw when it's turn comes
                 fresh_redraw[pc] = true;
             }
-        } 
+        }
     } else {
         // currently visible: force fresh redraw now
         fresh_redraw[pc] = true;

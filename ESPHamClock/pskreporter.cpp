@@ -288,9 +288,22 @@ static bool retrievePSK (void)
             DXSpot new_sp = {};
             long posting_temp;
             long Hz_temp;
-            if (sscanf (line, "%ld,%6[^,],%11[^,],%6[^,],%11[^,],%7[^,],%ld,%f", &posting_temp,
-                            new_sp.tx_grid, new_sp.tx_call, new_sp.rx_grid, new_sp.rx_call,
-                            new_sp.mode, &Hz_temp, &new_sp.snr) != 8) {
+            char txcall_temp[64], rxcall_temp[64]; // Large enough to hold long calls prior to trim
+            int count = sscanf(line, "%ld,%6[^,],%63[^,],%6[^,],%63[^,],%7[^,],%ld,%f",
+                            &posting_temp,
+                            new_sp.tx_grid,
+                            txcall_temp,
+                            new_sp.rx_grid,
+                            rxcall_temp,
+                            new_sp.mode,
+                            &Hz_temp,
+                            &new_sp.snr);
+            if (count == 8) {
+                strncpy(new_sp.tx_call, txcall_temp, 10);
+                new_sp.tx_call[10] = '\0';
+                strncpy(new_sp.rx_call, rxcall_temp, 10);
+                new_sp.rx_call[10] = '\0';
+            } else {
                 Serial.printf ("PSK: %s\n", line);
                 goto out;
             }

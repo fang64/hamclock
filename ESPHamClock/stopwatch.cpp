@@ -117,6 +117,13 @@ static bool alarmSwitchIsTrue(void)
     return (!readMCPPoller (SW_ALARMOFF_PIN));
 }
 
+/* init the alarm clock output pin
+ */
+static void initAlarmPin (void)
+{
+    mcp.pinMode (SW_ALARMOUT_PIN, OUTPUT);
+}
+
 /* control the alarm clock output pin
  */
 static void setAlarmPin (bool set)
@@ -2377,6 +2384,7 @@ void initStopwatch()
     startMCPPoller (SW_ALARMOFF_PIN);
 
     setCDLEDState (SWCDS_OFF);
+    initAlarmPin ();
     setAlarmPin (false);
 }
 
