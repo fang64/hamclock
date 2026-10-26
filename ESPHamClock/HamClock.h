@@ -378,6 +378,9 @@ typedef enum {
     BAND10_CSPR,
     BAND6_CSPR,
     BAND2_CSPR,
+    // N.B. appended so existing bit-mask/table indices for prior entries remain unchanged
+    BORDERS_CSPR,
+    STATES_CSPR,
     N_CSPR
 } ColorSelection;
 
@@ -611,6 +614,12 @@ extern SCircle satpass_c;               // satellite pass horizon
 
 extern uint8_t night_on;                // show night portion of map on/off
 extern uint8_t names_on;                // show place names when roving
+extern uint8_t borders_on;              // show country/state borders overlay on Clouds/Terrain
+extern SBox borders_btn_b;              // on-map "Borders On/Off" badge, next to the View button
+extern bool bordersBadgeVisible(void);  // whether that badge should currently be shown
+extern void initCountryBorders(void);   // one-time fetch/load, call once at startup
+extern void updateCountryBorders(void); // reproject cached data to current pan/zoom/projection
+extern void drawCountryBorders(void);   // draw from the cached, already-projected data
 extern uint8_t lightning_on;            // show lightning strikes overlay
 
 extern SBox desrss_b, dxsrss_b;         // sun rise/set display
@@ -691,6 +700,7 @@ extern SBox satname_b;                  // satellite name pick
 extern SBox de_info_b;                  // de info pane
 extern SBox map_b;                      // main map 
 extern SBox view_btn_b;                 // map view menu button
+
 extern SBox motd_btn_b;                 // MOTD mailbox icon (next to UTC button)
 extern SBox adsb_btn_b;                 // ADS-B airplane icon (next to MOTD icon)
 extern SBox windy_btn_b;                // Windy.com wind icon (next to ADS-B icon)
@@ -1535,6 +1545,7 @@ extern void drawSun (void);
 extern void drawMoon (void);
 extern void drawDXInfo (void);
 extern void scheduleMapRedraw (void);
+extern bool mapSweepActive (void);
 extern void redrawMapBox (const SBox &box);
 extern void mm_redraw(void);
 extern bool mm_up (void);
@@ -1554,6 +1565,7 @@ extern void roundLatLong (LatLong &ll);
 extern void initScreen(void);
 extern float lngDiff (float dlng);
 extern bool overViewBtn (const SCoord &s, uint16_t border);
+extern bool rawPointClearOfMapEdge (const SCoord &s, uint16_t border);
 extern bool segmentSpanOk (const SCoord &s0, const SCoord &s1, uint16_t border);
 extern bool segmentSpanOkRaw (const SCoord &s0, const SCoord &s1, uint16_t border);
 extern bool desiredBearing (const LatLong &ll, float &bear);
@@ -1605,6 +1617,7 @@ typedef struct {
 extern int getSatFreqs (int norad, SatFreq **fpp);      // caller must free *fpp if return > 0
 
 extern void updateSatPath(void);
+extern void updateSatFootprintFast(void);
 extern void drawSatPathAndFoot(void);
 extern void updateSatPass(void);
 extern bool querySatSelection(void);
@@ -2796,6 +2809,7 @@ extern void drawStringInBox (const char str[], const SBox &b, bool inverted, uin
 extern bool logUsageOk(void);
 extern uint16_t getMapColor (ColorSelection cid);
 extern const char* getMapColorName (ColorSelection cid);
+extern bool getMapColorThin (ColorSelection cid);
 extern uint8_t getBrMax(void);
 extern uint8_t getBrMin(void);
 extern bool getX11FullScreen(void);
@@ -3435,6 +3449,7 @@ extern void scheduleRSSNow(void);
 extern bool getTCPLine (WiFiClient &client, char line[], uint16_t line_len, uint16_t *ll);
 extern void sendUserAgent (WiFiClient &client);
 extern void httpHCGET (WiFiClient &client, const char *server, const char *hc_page);
+extern bool downloadZFile (WiFiClient &client, const char *filename, long len);
 extern bool connecthttpsHCGET (WiFiClient &client, const char *server, const char *hc_page);
 extern bool httpSkipHeader (WiFiClient &client);
 extern bool httpSkipHeader (WiFiClient &client, const char *header, char *value, int value_len);

@@ -111,9 +111,10 @@ static char i2c_fn[NV_I2CFN_LEN];
 #define CSEL_COL2X      415                     // col 2 x (where editing tick box goes)
 #define CSEL_SCY        45                      // top scale y coord
 #define CSEL_SCW        256                     // color scale width -- lt this causes roundoff at end
-#define CSEL_SCH        30                      // color scale height
+#define CSEL_SCH        20                      // color scale height
 #define CSEL_NW         50                      // number value width
-#define CSEL_SCYG       15                      // scale y gap
+#define CSEL_SCYG       8                       // scale y gap -- SCH+SCYG (the row pitch) must stay
+                                                 //   >= PR_H or the R/G/B value numbers overlap
 #define CSEL_VDX        20                      // gap dx to value number
 #define CSEL_VX         (CSEL_SCX+CSEL_SCW+CSEL_VDX)            // rgb values x
 #define CSEL_VYR        (CSEL_SCY)                              // red value y
@@ -136,6 +137,9 @@ static char i2c_fn[NV_I2CFN_LEN];
 #define CSEL_EDX        90                      // editing tick box dx from first tick box x
 #define CSEL_TDX        30                      // thickness tick box dx from first tick box x
 #define CSEL_GAMMA      1.5F                    // swatch background gray scale gamma correction
+#define CSEL_NSDY       6                       // extra downward nudge for the National/States rows
+                                                 //   and their Thin/Edit sub-header so the header
+                                                 //   text isn't crowded against the blue RGB slider
 
 // color table save/load layout
 #define CTSL_H          (PR_A+PR_D)             // color table save/load height
@@ -965,8 +969,6 @@ static BoolPrompt bool_pr[N_BPR] = {
 
 
 
-
-
     // "page 6" -- index 5
 
     // "page 7" -- index 6
@@ -1205,6 +1207,25 @@ static ColSelPrompt csel_pr[N_CSPR] = {
             {CSEL_COL2X+CSEL_DDX2, R2Y(12)+CSEL_DDY, CSEL_DW, CSEL_DH},
             false, true, true, RGB565(100,100,100), NV_2M_COLOR, "2 m",
             {CSEL_COL2X+CSEL_ADX, R2Y(12)+CSEL_TBDY, CSEL_TBSZ, CSEL_TBSZ}, false, 0, 0, 0},
+
+    // rows 1-3 in column 2 are occupied by the RGB editing sliders/title -- country/state border
+    // colors live in rows 4-5, the first genuinely free rows above the column-2 header (row 6)
+    // and the first real column-2 entry (row 7).
+    {{CSEL_COL2X+CSEL_PDX, R2Y(4)+CSEL_NSDY, CSEL_PW, PR_H},
+            {CSEL_COL2X+CSEL_TDX, R2Y(4)+CSEL_NSDY+CSEL_TBDY, CSEL_TBSZ, CSEL_TBSZ},
+            {CSEL_COL2X+CSEL_EDX, R2Y(4)+CSEL_NSDY+CSEL_TBDY, CSEL_TBSZ, CSEL_TBSZ},
+            {0, 0, 0, 0},                                                       // always on -- see on-map Borders badge
+            {CSEL_COL2X+CSEL_DDX2, R2Y(4)+CSEL_NSDY+CSEL_DDY, CSEL_DW, CSEL_DH},
+            false, true, true, RGB565(200,200,200), NV_BORDERCOLOR, "National",
+            {0, 0, 0, 0}, false, 0, 0, 0},                                      // never dashed
+
+    {{CSEL_COL2X+CSEL_PDX, R2Y(5)+CSEL_NSDY, CSEL_PW, PR_H},
+            {CSEL_COL2X+CSEL_TDX, R2Y(5)+CSEL_NSDY+CSEL_TBDY, CSEL_TBSZ, CSEL_TBSZ},
+            {CSEL_COL2X+CSEL_EDX, R2Y(5)+CSEL_NSDY+CSEL_TBDY, CSEL_TBSZ, CSEL_TBSZ},
+            {0, 0, 0, 0},                                                       // always on -- shown automatically at max zoom
+            {CSEL_COL2X+CSEL_DDX2, R2Y(5)+CSEL_NSDY+CSEL_DDY, CSEL_DW, CSEL_DH},
+            false, true, true, RGB565(150,150,150), NV_STATECOLOR, "States",
+            {0, 0, 0, 0}, false, 0, 0, 0},                                      // never dashed
 };
 
 
@@ -2923,6 +2944,11 @@ static void drawCSelInitGUI()
     tft.setCursor (CSEL_COL2X+CSEL_ADX,  R2Y(6)+PR_H/2); tft.print ("Dash");
     tft.setCursor (CSEL_COL2X+CSEL_TDX,  R2Y(6)+PR_H/2); tft.print ("Thin");
 
+    // also label the National/States rows just above them, in the narrow gap between the RGB
+    // sliders and row 4 -- only Thin and Edit apply to these two rows, so only label those
+    tft.setCursor (CSEL_COL2X+CSEL_TDX,  CSEL_SCY+3*CSEL_SCH+2*CSEL_SCYG+2+CSEL_NSDY); tft.print ("Thin");
+    tft.setCursor (CSEL_COL2X+CSEL_EDX,  CSEL_SCY+3*CSEL_SCH+2*CSEL_SCYG+2+CSEL_NSDY); tft.print ("Edit");
+
     // N.B. must restore default font after using smaller font
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
     tft.setTextColor (TX_C);
@@ -2933,7 +2959,7 @@ static void drawCSelInitGUI()
         int v = 255 * powf ((float)dx / (CSEL_DW-1), CSEL_GAMMA);
         uint16_t c = RGB565 (v, v, v);
         tft.fillRect (CSEL_COL1X+CSEL_DDX1+dx, R2Y(1), 1, R2Y(13)-R2Y(1)-5, c);
-        tft.fillRect (CSEL_COL2X+CSEL_DDX2+dx, R2Y(7), 1, R2Y(13)-R2Y(7)-5, c);
+        tft.fillRect (CSEL_COL2X+CSEL_DDX2+dx, R2Y(4), 1, R2Y(13)-R2Y(4)-5, c);
     }
 
     // draw tick boxes, their prompts and set color editing sliders from the one that is set
@@ -4574,6 +4600,12 @@ static void initSetup()
         NVWriteUInt8 (NV_NAMES_ON, names_on);
     }
 
+    // init country/state borders overlay option
+    if (!NVReadUInt8 (NV_CTYBORDERS_ON, &borders_on)) {
+        borders_on = 1;
+        NVWriteUInt8 (NV_CTYBORDERS_ON, borders_on);
+    }
+
     if (!NVReadFloat (NV_TEMPCORR76, &temp_corr[BME_76])) {
         temp_corr[BME_76] = 0;
         NVWriteFloat (NV_TEMPCORR76, temp_corr[BME_76]);
@@ -6098,6 +6130,15 @@ uint16_t getMapColor (ColorSelection id)
     return (c);
 }
 
+/* return whether the given color selection is currently set to "thin", ignoring on/off state.
+ * for overlays like borders whose enable/disable is controlled elsewhere (an on-map badge, an
+ * automatic zoom trigger, etc) rather than by this page's on/off tick box.
+ */
+bool getMapColorThin (ColorSelection id)
+{
+    return (id >= 0 && id < N_CSPR) ? csel_pr[id].t_state : true;
+}
+
 /* return name of the given color
  */
 const char* getMapColorName (ColorSelection id)
@@ -6305,6 +6346,7 @@ bool showPlanets()
 {
     return (bool_pr[SHOWPLANETS_BPR].state);
 }
+
 
 /* return whether to run the automatic space weather map detection.
  */

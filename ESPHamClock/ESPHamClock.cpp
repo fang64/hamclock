@@ -22,6 +22,7 @@ static SBox askde_b;                    // de lat/lng dialog
 SBox de_title_b;                        // de title location
 SBox map_b;                             // entire map, pixels only, not border
 SBox view_btn_b;                        // map View button
+SBox borders_btn_b;                     // on-map Borders On/Off badge, right of the View button
 SBox dx_maid_b;                         // dx maindenhead 
 SBox de_maid_b;                         // de maindenhead 
 
@@ -50,6 +51,7 @@ SCircle satpass_c;
 
 // whether to shade night or show place names
 uint8_t night_on, names_on;
+uint8_t borders_on;
 
 // handy flag when showing main page
 bool mainpage_up;
@@ -454,6 +456,18 @@ void setup()
     view_btn_b.w = 60;
     view_btn_b.h = 14;
 
+    // position Borders on-map badge just to the right of the View button, with a small gap.
+    // width is sized to fit "Borders Off", the longer of its two labels, plus padding.
+    {
+        const int gap = 4;                       // pixels between View button and badge
+        const int pad = 8;                       // pixels of horizontal padding inside the badge
+        selectFontStyle (LIGHT_FONT, FAST_FONT);
+        borders_btn_b.x = view_btn_b.x + view_btn_b.w + gap;
+        borders_btn_b.y = view_btn_b.y;          // tracks view_btn_b.y each time it's (re)drawn
+        borders_btn_b.w = getTextWidth ("Borders Off") + pad;
+        borders_btn_b.h = view_btn_b.h;
+    }
+
     // redefine callsign for main screen
     cs_info.box.x = 0;
     cs_info.box.y = 0;
@@ -685,6 +699,16 @@ void loop()
         // display more of earth map
         drawMoreEarth();
 
+        // refresh just the satellite footprint(s) at a much tighter cadence than the full map
+        // sweep, without the cost of a full sweep (see updateSatFootprintFast())
+        #define SAT_FOOT_FAST_MS 5000U
+        static uint32_t sat_foot_ms;
+        uint32_t now_ms = millis();
+        if (now_ms - sat_foot_ms >= SAT_FOOT_FAST_MS) {
+            sat_foot_ms = now_ms;
+            updateSatFootprintFast();
+        }
+
         // other goodies
         updateCallsignStatus(false);
         followBrightness();
@@ -872,6 +896,11 @@ static void checkTouch()
             // set flag to draw map menu at next opportunity
             mapmenu_pending = true;
         }
+    } else if (bordersBadgeVisible() && inBox (s, borders_btn_b)) {
+        borders_on = !borders_on;
+        NVWriteUInt8 (NV_CTYBORDERS_ON, borders_on);
+        initEarthMap();
+        tft.drawPR();
     } else if (checkSatMapTouch (s)) {
         // set showing sat in DX box
         dx_info_for_sat = true;
@@ -1151,6 +1180,10 @@ bool desiredBearing (const LatLong &ll, float &bear)
         if (!magdecl (ll.lat_d, ll.lng_d, 200, yr, &decl)) {
             Serial.printf ("Magnetic model only valid %g .. %g\n", decl, decl+5);
             return (false);
+        } else if (!isfinite(decl)) {
+            // Never allow a bad model result to turn a valid true bearing into NaN.
+            Serial.printf ("Invalid magnetic declination at %g, %g\n", ll.lat_d, ll.lng_d);
+            return (false);
         } else {
             // Serial.printf ("magdecl @ %g = %g\n", yr, decl);
             bear = fmodf (bear - decl + 360, 360);
@@ -1333,8 +1366,8 @@ static void drawVersion (bool draw)
         uint16_t vw = getTextWidth (ver);
         tft.setTextColor (col);
         tft.setCursor (version_b.x+version_b.w-vw, version_b.y+1);      // right justify
-        // clear a bit beyond box.h to catch descenders from prior strings
-        tft.fillRect (version_b.x, version_b.y, version_b.w, version_b.h+2, RA8875_BLACK);
+        // clear from cs_info.box bottom down through status box to catch any descenders
+        tft.fillRect (version_b.x, cs_info.box.y+cs_info.box.h, version_b.w, CSINFO_DROP+CSINFO_H+2, RA8875_BLACK);
         // drawSBox (version_b, RA8875_GREEN);         // RBF
         tft.print (ver);
     }
@@ -1495,8 +1528,8 @@ static void drawRotatingMessage()
     selectFontStyle (LIGHT_FONT, FAST_FONT);
     tft.setTextColor (show_red ? RA8875_RED : GRAY);
     uint16_t sw = getTextWidth(str);
-    // clear a bit beyond box.h to catch descenders (p, g, q, y) from prior strings
-    tft.fillRect (wifi_b.x, wifi_b.y, wifi_b.w, wifi_b.h+2, RA8875_BLACK);
+    // clear from cs_info.box bottom down through status box to catch any descenders
+    tft.fillRect (wifi_b.x, cs_info.box.y+cs_info.box.h, wifi_b.w, CSINFO_DROP+CSINFO_H+2, RA8875_BLACK);
     tft.setCursor (wifi_b.x+(wifi_b.w-sw)/2, wifi_b.y+1);
     tft.print(str);
 }
@@ -1511,8 +1544,8 @@ static void prepUptime()
     const uint16_t y = cs_info.box.y+cs_info.box.h+CSINFO_DROP;
     const uint16_t w = uptime_b.w - UPTIME_INDENT;
 
-    // clear a bit beyond CSINFO_H to catch descenders from prior strings
-    tft.fillRect (x, y, w, CSINFO_H+2, RA8875_BLACK);             // Skip "Up"
+    // clear from cs_info.box bottom down through status box to catch any descenders
+    tft.fillRect (x, cs_info.box.y+cs_info.box.h, w, CSINFO_DROP+CSINFO_H+2, RA8875_BLACK);             // Skip "Up"
     // drawSBox (uptime_b, RA8875_GREEN);                       // RBF
 
     selectFontStyle (LIGHT_FONT, FAST_FONT);
@@ -1718,6 +1751,7 @@ void drawAllSymbols()
 
     if (mapScaleIsUp())
         drawMapScale();
+    drawCountryBorders();
     if (overMap(sun_c.s))
         drawSun();
     if (overMap(moon_c.s))
@@ -1732,13 +1766,13 @@ void drawAllSymbols()
     drawHamsatOnMap();
     drawMeshtasticOnMap();
     drawPlanetsOnMap();
-    drawStormsOnMap();
     drawLaunchesOnMap();
     drawActiveNetsOnMap();
     drawDEMarker(false);
     drawDXMarker(false);
     drawFarthestPSKSpots();
     drawLightningOnMap();
+    drawStormsOnMap();
     drawSatPathAndFoot();
     drawSanta ();
     drawEnterprise ();

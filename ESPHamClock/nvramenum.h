@@ -392,6 +392,13 @@ typedef enum {
     NV_ONTA_MODES,                 // ONTA mode filter bitmask (see ONTAMB_* in ontheair.cpp)
     NV_ONTA_BANDS,                 // ONTA band filter bitmask, 1 bit per HamBandSetting
 
+    // 258 -- appended so all prior EEPROM addresses remain unchanged
+    NV_CTYBORDERS_ON,               // whether to show the country-borders overlay
+
+    // 259 -- appended so all prior EEPROM addresses remain unchanged
+    NV_BORDERCOLOR,                 // country border overlay color as RGB565
+    NV_STATECOLOR,                  // state/province border overlay color as RGB565
+
 	NV_N
 
 } NV_Name;
