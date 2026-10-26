@@ -468,6 +468,20 @@ void setup()
         borders_btn_b.h = view_btn_b.h;
     }
 
+    // position WEFAX on-map badge in the same slot as the Borders badge, same convention.
+    // the two are never visible at once -- bordersBadgeVisible() requires CM_CLOUDS/CM_TERRAIN
+    // and wefaxBadgeVisible() requires CM_WX, and core_map can only be one value at a time --
+    // so sharing the slot avoids a permanent gap next to the View button when neither is showing.
+    {
+        const int gap = 4;
+        const int pad = 8;
+        selectFontStyle (LIGHT_FONT, FAST_FONT);
+        wefax_btn_b.x = view_btn_b.x + view_btn_b.w + gap;
+        wefax_btn_b.y = view_btn_b.y;
+        wefax_btn_b.w = getTextWidth ("WEFAX Off") + pad;
+        wefax_btn_b.h = view_btn_b.h;
+    }
+
     // redefine callsign for main screen
     cs_info.box.x = 0;
     cs_info.box.y = 0;
@@ -622,6 +636,7 @@ void setup()
     NVReadUInt8 (NV_RSS_ON, &rss_on);
     initLightning();
     initStorms();
+    initWefax();
     if (!NVReadUInt8 (NV_RSS_INTERVAL, &rss_interval) || rss_interval < RSS_MIN_INT) {
         rss_interval = RSS_DEF_INT;
         NVWriteUInt8 (NV_RSS_INTERVAL, rss_interval);
@@ -683,6 +698,7 @@ void loop()
     drawFireworks();                    // only new years midnight
     updateSatPass ();                   // just for the satellite LED
     checkDXCluster ();                  // collect new spots if running
+    checkEclipsePopupTimeout ();        // auto-dismiss the eclipse pane's detail popup, if up
 
     // update stopwatch exclusively, if active
     if (!runStopwatch()) {
@@ -901,6 +917,9 @@ static void checkTouch()
         NVWriteUInt8 (NV_CTYBORDERS_ON, borders_on);
         initEarthMap();
         tft.drawPR();
+    } else if (wefaxBadgeVisible() && inBox (s, wefax_btn_b)) {
+        // runWefaxViewer() blocks until the user closes it, and restores the map on the way out
+        runWefaxViewer();
     } else if (checkSatMapTouch (s)) {
         // set showing sat in DX box
         dx_info_for_sat = true;
@@ -932,6 +951,7 @@ static void checkTouch()
             scheduleNewPlot(PLOT_CH_MOON);
             scheduleNewPlot(PLOT_CH_SDO);
             scheduleNewPlot(PLOT_CH_BC);
+            scheduleNewPlot(PLOT_CH_ECLIPSE);
             drawDEInfo();
         }
     } else if (!SHOWING_PANE_0() && !dx_info_for_sat && inBox (s, dx_tz.box)) {
@@ -1124,6 +1144,7 @@ void newDE (LatLong &ll, const char grid[MAID_CHARLEN])
     scheduleNewPlot(PLOT_CH_MOON);
     scheduleNewPlot(PLOT_CH_SDO);
     scheduleNewPlot(PLOT_CH_BC);
+    scheduleNewPlot(PLOT_CH_ECLIPSE);
     scheduleNewPlot(PLOT_CH_PSK);
     scheduleNewPlot(PLOT_CH_DEWX);
     scheduleNewCoreMap(core_map);
@@ -1983,7 +2004,7 @@ void drawDEFormatMenu()
 
     // run menu
     SBox ok_b;
-    MenuInfo menu = {menu_b, ok_b, UF_NOCLOCKS, M_CANCELOK, 1, NARRAY(mitems), mitems};
+    MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 1, NARRAY(mitems), mitems};
     if (!runMenu (menu))
         return;
 

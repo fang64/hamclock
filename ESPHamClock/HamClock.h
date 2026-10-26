@@ -428,7 +428,8 @@ typedef enum {
 
 #define PLOTNAMES_HIGH \
     X(PLOT_CH_SATACT,       "Sat_Alerts")        \
-    X(PLOT_CH_MESHTASTIC,   "Mesh_Mon")
+    X(PLOT_CH_MESHTASTIC,   "Mesh_Mon")          \
+    X(PLOT_CH_ECLIPSE,      "Eclipse")
 
 #define PLOTNAMES PLOTNAMES_LOW PLOTNAMES_HIGH
 
@@ -617,6 +618,19 @@ extern uint8_t names_on;                // show place names when roving
 extern uint8_t borders_on;              // show country/state borders overlay on Clouds/Terrain
 extern SBox borders_btn_b;              // on-map "Borders On/Off" badge, next to the View button
 extern bool bordersBadgeVisible(void);  // whether that badge should currently be shown
+
+/*********************************************************************************************
+ *
+ * wefax.cpp
+ *
+ */
+
+extern uint8_t wefax_on;                // whether the viewer is currently open; runtime only, not NV
+extern SBox wefax_btn_b;                // on-map "WEFAX On/Off" badge, shares the Borders badge's slot
+extern bool wefaxBadgeVisible(void);    // whether that badge should currently be shown -- CM_WX only
+extern void drawWefaxButton(void);      // draw (or blank) the badge
+extern void initWefax(void);            // restore NV state at startup
+extern void runWefaxViewer(void);       // take over map_b showing the chart, until the user leaves
 extern void initCountryBorders(void);   // one-time fetch/load, call once at startup
 extern void updateCountryBorders(void); // reproject cached data to current pan/zoom/projection
 extern void drawCountryBorders(void);   // draw from the cached, already-projected data
@@ -799,6 +813,7 @@ typedef struct {
     float kHz;                          // freq
     float snr;                          // only used by pskreporter.cpp
     time_t spotted;                     // UTC when spotted
+    char iota[8];                       // IOTA group ref found in comment, eg "EU-005"; else empty
 } DXSpot;
 
 
@@ -1005,6 +1020,30 @@ extern AstroCir lunar_cir, solar_cir;
 extern void now_lst (double mjd, double lng, double *lst);
 extern void getLunarCir (time_t t0, const LatLong &ll, AstroCir &cir);
 extern void getSolarCir (time_t t0, const LatLong &ll, AstroCir &cir);
+
+// solar eclipse local circumstances, see astro.cpp
+
+typedef enum {
+    ECL_NONE,
+    ECL_PARTIAL,
+    ECL_ANNULAR,
+    ECL_TOTAL,
+} EclipseType;
+
+typedef struct {
+    bool visible;             // whether sun is above horizon at t_max
+    EclipseType type;         // ECL_NONE if search failed to find one
+    time_t t_max;             // time of local maximum eclipse (min separation)
+    time_t t_c1, t_c4;        // local first/last contact, 0 if not found
+    float magnitude;          // fraction of solar diameter covered, 0 if none
+    float obscuration;        // fraction of solar disk AREA covered, 0..1
+    float sun_el;             // sun elevation at t_max, rads
+    float sun_r, moon_r;      // angular radii of each disk at t_max, rads -- for exact-scale display
+    float sep;                // angular separation of centers at t_max, rads
+} EclipseCir;
+
+extern bool getNextSolarEclipse (time_t t0, const LatLong &ll, int max_months, EclipseCir &ec,
+                                    bool require_visible = true);
 extern void getSolarRS (const time_t t0, const LatLong &ll, time_t *riset, time_t *sett);
 extern void getLunarRS (const time_t t0, const LatLong &ll, time_t *riset, time_t *sett);
 
@@ -1378,12 +1417,14 @@ extern bool checkDXClusterTouch (const SCoord &s, const SBox &box);
 extern bool getDXClusterSpots (DXSpot **spp, uint8_t *nspotsp);
 extern void drawDXClusterSpotsOnMap (void);
 extern bool isDXClusterConnected(void);
+extern bool dxcHideIOTA(void);
 extern void sendDXClusterDELLGrid(void);
 extern bool getClosestDXCluster (LatLong &ll, DXSpot *sp, LatLong *llp);
 extern bool getDXCPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll);
 extern bool connectDXCluster (void);
 extern const DXSpot *findDXCCall (const char *call);
-extern bool injectDXClusterSpot (const char *tx_call, const char *rx_call, const char *kHz, Message &ynot);
+extern bool injectDXClusterSpot (const char *tx_call, const char *rx_call, const char *kHz,
+const char *comment, Message &ynot);
 
 
 
@@ -2026,6 +2067,14 @@ typedef struct {
     uint8_t indent;             // pixels to indent
     const char *label;          // string -- user must manage memory
     MenuText *textf;            // text field -- type must be MENU_TEXT -- our label is ignored
+    bool submenu;                // true if picking this MENU_1OFN row navigates into another
+                                 // menu (eg a category picker row) rather than making a final
+                                 // choice -- draws with a distinct outline triangle indicator
+                                 // instead of the usual round radio dot, so a nested menu of
+                                 // menus is visually distinguishable from a plain single-pick
+                                 // list. Appended after label/textf so every existing positional
+                                 // aggregate init ({MENU_1OFN, set, group, indent, "label", 0})
+                                 // continues to compile unchanged and defaults this to false.
 } MenuItem;
 
 typedef struct {
@@ -2036,9 +2085,35 @@ typedef struct {
     int n_cols;                 // number of columns in which to display items
     int n_items;                // number of items[]
     MenuItem *items;            // list -- user must manage memory
+    const char *footer_text;    // optional colored status line below the items, above Ok/
+                                 // Cancel -- NULL means no footer. Every existing call site
+                                 // brace-initializes with 7 values, so this (and the field
+                                 // below) is automatically NULL/0 for all of them: adding
+                                 // this changes nothing for callers that don't know about it.
+    uint16_t footer_color;      // ignored if footer_text is NULL; 0 falls back to MENU_FGC
+    bool instant_1ofn;          // when true, tapping a MENU_1OFN item (that ends up .set)
+                                 // exits the menu immediately as if Ok had been pressed,
+                                 // instead of requiring a separate Ok tap after selecting.
+                                 // False (default for every caller not listing this field,
+                                 // same aggregate-init reasoning as footer_text above) means
+                                 // completely unchanged behavior -- selecting still requires
+                                 // a separate Ok, as it always has.
+    bool footer_live_count;     // false (default): footer_text is printed exactly as given,
+                                 // once, at initial draw only -- today's behavior, unchanged.
+                                 // true: footer_text is treated as a label prefix, and
+                                 // runMenu() appends a live "(selected/total)" count over its
+                                 // own MENU_TOGGLE/MENU_AL1OFN/MENU_0OFN/MENU_01OFN/MENU_1OFN
+                                 // items, redrawn after every toggle -- for a menu whose
+                                 // footer describes ITS OWN items. Not appropriate for a
+                                 // footer describing a different, external list (see the
+                                 // pane-choice category picker in plotmgmnt.cpp for exactly
+                                 // that distinction -- its footer reports on a master array
+                                 // living outside the running menu entirely, so it keeps
+                                 // using a plain, caller-formatted string instead).
 } MenuInfo;
 
 extern bool runMenu (MenuInfo &menu);
+extern void menuDrawItem (const MenuItem &mi, const SBox &pb, bool draw_label, bool kb_focus);
 extern void menuMsg (const SBox &box, uint16_t color, const char *msg);
 extern void menuRedrawOk (SBox &ok_b, MenuOkState oks);
 
@@ -2077,6 +2152,17 @@ extern bool waitForUser (UserInput &ui);
 extern void updateMoonPane (const SBox &box);
 extern const uint16_t moon_image[HC_MOON_W*HC_MOON_H] PROGMEM;
 extern bool checkMoonTouch (const SCoord &s, const SBox &box);
+
+
+/*******************************************************************************************
+ *
+ * eclipsepane.cpp
+ *
+ */
+
+extern void updateEclipsePane (const SBox &box);
+extern bool checkEclipseTouch (const SCoord &s, const SBox &box);
+extern void checkEclipsePopupTimeout (void);
 
 
 
@@ -2338,7 +2424,15 @@ extern void forcePaneRotationPrev (PlotPane pp);
 extern bool plotChoiceIsAvailable (PlotChoice ch);
 extern void logPaneRotSet (PlotPane pp, PlotChoice ch);
 extern void logBRBRotSet(void);
-extern void showRotatingBorder (void);
+extern void showRotatingBorder (PlotPane skip_pp = PANE_NONE);   // skip_pp: leave this pane's
+                                                                  // border alone, eg because a
+                                                                  // picker for it is up right now
+extern PlotPane menu_open_for_pane;    // PANE_NONE, or the one pane whose own picker is up right
+                                        // now -- showRotatingBorder() always leaves this pane's
+                                        // border alone too, in addition to any skip_pp a caller
+                                        // passes explicitly, since most of showRotatingBorder()'s
+                                        // callers (eg updateClocks(), on every tick) have no idea
+                                        // a picker might be open and can't pass skip_pp themselves
 extern void initPlotPanes(void);
 extern void savePlotOps(void);
 extern int tickmarks (float min, float max, int numdiv, float ticks[]);
@@ -2458,7 +2552,7 @@ extern QRZURLTable qrz_urltable[QRZ_N];
 
 extern void openQRZBio (const DXSpot &s);
 extern void openURL (const char *url);
-
+extern void openMovieURL (const char *hc_page, const char *orig_url);
 
 
 /*********************************************************************************************
@@ -2842,6 +2936,7 @@ extern bool showNewDXDEWx(void);
 extern int getPaneRotationPeriod (void);
 extern bool showPIP(void);
 extern bool showPlanets(void);
+extern bool wefaxEnabled(void);
 extern bool autoMap(void);
 extern int getMapRotationPeriod(void);
 extern GrayDpy_t getGrayDisplay(void);
@@ -3181,7 +3276,7 @@ extern void drawSpotPathOnMap (const DXSpot &spot);
 extern void ditherLL (LatLong &ll);
 extern void drawSpotDot (int16_t raw_x, int16_t raw_y, uint16_t radius, LabelOnMapEnd txrx, uint16_t color);
 extern void drawVisibleSpots (WatchListId wl_id, const DXSpot *spots, const ScrollState &ss, const SBox &box,
-    int16_t app_color);
+    int16_t app_color, const SBox *ctrl_box = NULL);
 
 
 typedef int (*PQSF)(const void *, const void *);        // pointer to qsort-style compare function
@@ -3440,7 +3535,11 @@ extern void initSys (void);
 extern void initWiFiRetry(void);
 extern void scheduleNewPlot (PlotChoice ch);
 extern void scheduleNewCoreMap (CoreMaps cm);
-extern void updateWiFi(void);
+extern void updateWiFi(PlotPane skip_pp = PANE_NONE);      // skip_pp: don't touch this pane
+                                                             // (rotation or content), eg because
+                                                             // a picker for it is on screen right
+                                                             // now and would have its own overlay
+                                                             // clobbered by a normal pane redraw
 extern bool checkBCTouch (const SCoord &s, const SBox &b);
 extern void setPlotVisible (PlotChoice pc);
 extern bool setPlotChoice (PlotPane new_pp, PlotChoice new_ch);
@@ -3449,10 +3548,13 @@ extern void scheduleRSSNow(void);
 extern bool getTCPLine (WiFiClient &client, char line[], uint16_t line_len, uint16_t *ll);
 extern void sendUserAgent (WiFiClient &client);
 extern void httpHCGET (WiFiClient &client, const char *server, const char *hc_page);
+extern void httpHCGET (WiFiClient &client, const char *server, const char *hc_page, time_t if_modified_since);
 extern bool downloadZFile (WiFiClient &client, const char *filename, long len);
 extern bool connecthttpsHCGET (WiFiClient &client, const char *server, const char *hc_page);
 extern bool httpSkipHeader (WiFiClient &client);
+extern bool httpSkipHeader (WiFiClient &client, int *http_status);
 extern bool httpSkipHeader (WiFiClient &client, const char *header, char *value, int value_len);
+extern bool httpSkipHeader (WiFiClient &client, int *http_status, const char *header, char *value, int value_len);
 extern int getNTPServers (const NTPServer **listp);
 extern bool setRSSTitle (const char *title, int &n_titles, int &max_titles);
 extern time_t nextPaneRotation (PlotPane pp);

@@ -120,6 +120,7 @@ OBJS = \
 	hurricane.o \
 	earthmap.o \
 	earthsat.o \
+	eclipsepane.o \
 	emetool.o \
 	favicon.o \
 	fsfree.o \
@@ -130,6 +131,7 @@ OBJS = \
 	launches.o \
 	lightning.o \
 	infobox.o \
+	iota.o \
 	liveweb.o \
 	liveweb-html.o \
 	magdecl.o \
@@ -176,6 +178,7 @@ OBJS = \
 	tz.o \
 	version.o \
 	webserver.o \
+	wefax.o \
 	watchlist.o \
 	wifi.o \
 	wifimeter.o \

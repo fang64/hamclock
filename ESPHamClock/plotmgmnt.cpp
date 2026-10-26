@@ -3,6 +3,11 @@
  * each pane rotates through the set of bits in its rotset.
  */
 
+// must come before HamClock.h: ArduinoLib/Wire.h #defines byte as uint8_t, which corrupts
+// <functional>'s internal std::byte declaration if <functional> is parsed after that macro
+// exists. Including it first lets it fully expand under its header guard before that happens.
+#include <functional>
+#include <algorithm>
 #include "HamClock.h"
 
 
@@ -15,6 +20,7 @@ const SBox plot_b[PANE_N] = {
 PlotChoice plot_ch[PANE_N];
 PlotMask plot_rotset[PANE_N];
 PlotMask plot_rothold;
+PlotPane menu_open_for_pane = PANE_NONE;   // see HamClock.h
 
 /* true if choice pc is in pane pp's current rotation set. PLOT_CH_NONE has no bit. */
 static bool paneHasChoice (PlotPane pp, PlotChoice pc)
@@ -121,6 +127,7 @@ bool plotChoiceIsAvailable (PlotChoice pc)
     case PLOT_CH_FLUX:          // fallthru
     case PLOT_CH_KP:            // fallthru
     case PLOT_CH_MOON:          // fallthru
+    case PLOT_CH_ECLIPSE:       // fallthru
     case PLOT_CH_NOAASPW:       // fallthru
     case PLOT_CH_SSN:           // fallthru
     case PLOT_CH_XRAY:          // fallthru
@@ -190,6 +197,668 @@ bool enforceCDownAlone (const SBox &box, PlotMask rotset)
  * always return a selection even if it's the current selection again, never PLOT_CH_NONE.
  * N.B. do not use this for PANE_0
  */
+/* category grouping for askPaneChoice()'s pane-choice picker -- keeps each individual
+ * checklist short and fixed-size regardless of how many PLOT_CH choices exist in total,
+ * rather than one ever-growing list whose box has to keep growing to match (which is what
+ * caused the original cramped-then-overlapping problems this replaces).
+ */
+static const char *pane_categories[] = {
+    "Space Wx",
+    "DX & Contest",
+    "Weather",
+    "Sky & Space",
+    "Station & Sensors",
+    "Other",
+};
+#define N_PANE_CATEGORIES  NARRAY(pane_categories)
+
+/* which category a given PlotChoice belongs to, for the picker above.
+ * N.B. deliberately falls through to "Other" (category 5) via default: rather than
+ * enumerating every single PlotChoice explicitly -- a future PLOT_CH_* added here without
+ * being explicitly categorized still shows up (in Other) instead of silently vanishing
+ * from the menu entirely, which would be a much worse failure mode than just being in the
+ * wrong bucket until someone gives it a real category.
+ */
+static int categoryOfChoice (PlotChoice pc)
+{
+    switch (pc) {
+    case PLOT_CH_AURORA: case PLOT_CH_BZBT: case PLOT_CH_DST: case PLOT_CH_DRAP:
+    case PLOT_CH_NOAASPW: case PLOT_CH_KP: case PLOT_CH_FLUX: case PLOT_CH_SOLWIND:
+    case PLOT_CH_SSN: case PLOT_CH_XRAY:
+        return 0;   // Space Weather
+
+    case PLOT_CH_CONTESTS: case PLOT_CH_DXCLUSTER: case PLOT_CH_DXPEDS: case PLOT_CH_HFCOND:
+    case PLOT_CH_PSK: case PLOT_CH_ONTA: case PLOT_CH_VHFCOND: case PLOT_CH_BC:
+        return 1;   // DX & Contest
+
+    case PLOT_CH_DEWX: case PLOT_CH_DXWX: case PLOT_CH_STORMS:
+        return 2;   // Weather
+
+    case PLOT_CH_MOON: case PLOT_CH_SDO: case PLOT_CH_SATACT: case PLOT_CH_ECLIPSE:
+        return 3;   // Sky & Space
+
+    case PLOT_CH_GIMBAL: case PLOT_CH_TEMPERATURE: case PLOT_CH_PRESSURE:
+    case PLOT_CH_HUMIDITY: case PLOT_CH_DEWPOINT: case PLOT_CH_ADIF:
+        return 4;   // Station & Sensors
+
+    default:
+        return 5;   // Other -- Nets, Mesh_Mon, Launches, Countdown, and anything new
+                     // that hasn't been explicitly categorized yet
+    }
+}
+
+/* reverse lookup: MenuItem.label (a pointer into plot_names[]) back to its PlotChoice,
+ * or PLOT_CH_NONE if not found. Same match-by-label technique askPaneChoice()'s commit
+ * step already used inline; factored out since the category loop below needs it too.
+ */
+static PlotChoice labelToChoice (const char *label)
+{
+    for (int j = 0; j < PLOT_CH_N; j++)
+        if (PLOT_CH_IS_REAL(j) && strcmp (plot_names[j], label) == 0)
+            return (PlotChoice) j;
+    return PLOT_CH_NONE;
+}
+
+// accordion layout constants -- duplicated from (and must stay in sync with) the private
+// layout constants in menu.cpp, since those aren't exported. This accordion draws its rows
+// with menuDrawItem(), so rows need to land in boxes sized the way menuDrawItem() expects.
+#define ACC_TBM         5               // top and bottom margin, matches menu.cpp MENU_TBM
+#define ACC_RM          2               // right margin, matches menu.cpp MENU_RM
+#define ACC_LM          2               // left margin for row content -- menuDrawItem() ends
+                                         // every row with its own drawSBox() outline around
+                                         // that row's full pb rectangle; with pb.x sitting
+                                         // exactly on our own box's left border column, each
+                                         // row's outline was overdrawing a black tick over our
+                                         // border there, row by row -- reading as a dotted left
+                                         // edge. This keeps every row's pb clear of that column.
+#define ACC_RH          11              // row height, matches menu.cpp MENU_RH
+#define ACC_IS          6               // indicator size, matches menu.cpp MENU_IS
+#define ACC_BB          5               // ok/cancel button horizontal border, matches MENU_BB
+#define ACC_BDX         2               // ok/cancel button text horizontal offset, matches MENU_BDX
+#define ACC_BDROP       2               // text vertical drop, matches menu.cpp MENU_BDROP
+#define ACC_BG          2               // bottom gap, matches menu.cpp MENU_BG
+#define ACC_CHILD_INDENT 4              // extra indent for a leaf item nested under its header
+                                         // -- was 10; every one of those pixels comes straight
+                                         // out of the column's text budget in a 2-col layout,
+                                         // so trimmed this down to reclaim a bit more room for
+                                         // labels before they run into the next column
+#define ACC_HEADER_INDENT 6             // left padding for a header row's triangle+label,
+                                         // clear of the box's own left edge -- 2px alone (the
+                                         // old plain MenuItem default) sat close enough to that
+                                         // edge to look like it was getting clipped
+#define ACC_SIDE_INSET 0                // how far the visible border+content sits in from the
+                                         // pane's true left/right edges. Was 5, to dodge a
+                                         // border-flicker bug -- that's now fixed at its actual
+                                         // source (see menu_open_for_pane / showRotatingBorder()),
+                                         // and the margin itself, now that it's static rather than
+                                         // flickering, reads as a plain black band cutting into
+                                         // the pane instead. 0 keeps the vis_box/cur_box split in
+                                         // place (harmless) in case a small inset is wanted again.
+#define ACC_FGC         RA8875_WHITE
+#define ACC_BGC         RA8875_BLACK
+#define ACC_FOOTC       RA8875_YELLOW
+
+static const char acc_ok_label[] = "Ok";
+static const char acc_cancel_label[] = "Cancel";
+
+/* accordion-style category picker: every category header is always visible; tapping one
+ * expands its checklist directly beneath it, collapsing whatever else was open, rather than
+ * opening a second pop-up menu on top of the first -- categories behave like folders the user
+ * opens and closes in place. There is exactly one Ok/Cancel pair for the whole operation; the
+ * "Total Selections (N/M)" footer and the Ok/Cancel row always sit directly beneath whatever
+ * is currently expanded, so they move up/down as categories open and close. Returns true (with
+ * mitems[].set updated) if the user pressed Ok, else false (Cancel/ESC/tap-outside/timeout),
+ * in which case mitems[] is left exactly as it was on entry.
+ */
+/* work out how to lay out one expanded category's checklist -- how many columns its
+ * children need, how many of them are shown, and whether every OTHER header has to be
+ * hidden to make room -- so the whole picker fits within budget_h (the pane's own height).
+ * Tries, in order: every header + 1-column children; every header + 2-column children;
+ * only the open header + 1-column children; only the open header + 2-column children;
+ * and finally only the open header + 2-column children truncated to whatever fits, as a
+ * last resort for a pane too small or a category too big for any of the above. Each tier
+ * is tried only because the one before it didn't fit -- most categories never get past the
+ * first.
+ */
+static void fitAccordionLayout (int n_cats, int n_children, int budget_h,
+                                 bool &hide_siblings, int &n_ccols, int &shown_children, int &cur_h)
+{
+    auto calc_h = [](int visible_rows) {
+        return ACC_TBM + (visible_rows + 2)*ACC_RH + ACC_TBM + ACC_BG;    // +2: footer + ok/cancel
+    };
+
+    int rows_1col = n_cats + n_children;
+    int h_1col = calc_h (rows_1col);
+    if (h_1col <= budget_h) {
+        hide_siblings = false; n_ccols = 1; shown_children = n_children; cur_h = h_1col;
+        return;
+    }
+
+    int rows_2col_children = (n_children + 1)/2;
+    int h_2col = calc_h (n_cats + rows_2col_children);
+    if (h_2col <= budget_h) {
+        hide_siblings = false; n_ccols = 2; shown_children = n_children; cur_h = h_2col;
+        return;
+    }
+
+    int h_hide_1col = calc_h (1 + n_children);
+    if (h_hide_1col <= budget_h) {
+        hide_siblings = true; n_ccols = 1; shown_children = n_children; cur_h = h_hide_1col;
+        return;
+    }
+
+    int h_hide_2col = calc_h (1 + rows_2col_children);
+    if (h_hide_2col <= budget_h) {
+        hide_siblings = true; n_ccols = 2; shown_children = n_children; cur_h = h_hide_2col;
+        return;
+    }
+
+    // last resort: only the open header, 2 columns, truncated to whatever fits
+    hide_siblings = true;
+    n_ccols = 2;
+    int max_child_rows = (budget_h - 2*ACC_TBM - ACC_BG)/ACC_RH - 2 - 1;  // - footer,ok,the header
+    if (max_child_rows < 0)
+        max_child_rows = 0;
+    shown_children = max_child_rows * 2;
+    if (shown_children > n_children)
+        shown_children = n_children;
+    cur_h = calc_h (1 + max_child_rows);
+}
+
+// which pane's picker is currently up is tracked in the shared global menu_open_for_pane (see
+// HamClock.h) -- both so accordionServiceOtherPanes() below knows which one NOT to touch, and
+// so showRotatingBorder() leaves its border alone no matter who calls it.
+
+// re-draws whatever the picker's current frame looks like, set fresh each loop iteration in
+// askPaneCategoryAccordion() below; nullptr the rest of the time. The periodic background tick
+// calls this right after servicing other panes/the map, to reclaim any pixels that work may
+// have just drawn over -- our picker's own box is otherwise only ever repainted in response to
+// a tap, so without this, a stray background redraw would sit there until the next tap.
+static std::function<void()> acc_redraw_fn = nullptr;
+
+/* UserInput.fp callback for askPaneCategoryAccordion()'s wait loop: keeps the main clock
+ * ticking at its normal cadence (see below) and services every OTHER pane's normal
+ * rotation/updates (network fetches, redraws, the lot) at a throttled rate while the picker
+ * sits waiting for a tap, so opening one pane's picker doesn't stall every other pane's
+ * rotation -- or the clock -- for as long as it's left open. Also services the map overlays
+ * (DX Cluster spots and the like) and their underlying data collection, since those are
+ * normally driven from the main loop() rather than updateWiFi() and would otherwise sit frozen
+ * the whole time a picker is open. Always returns false so waitForUser() just keeps waiting for
+ * the next tap -- this is a side-effecting tick, not a wait-ending condition.
+ */
+static bool accordionServiceOtherPanes (void)
+{
+    // tick the clock at its normal fast cadence every time we're called, independent of the
+    // once-a-second throttle below -- updateClocks(false) is cheap (no-ops unless the displayed
+    // second actually changed), so there's no reason it should have to wait behind however long
+    // the heavier pane-refresh work below takes. Without this, the clock only advanced via
+    // waitForUser()'s own post-callback call, which can't run until this function returns -- and
+    // if several other panes happen to be due for a refresh at once, updateWiFi() below services
+    // all of them in one synchronous pass, easily several seconds, freezing the clock for that
+    // whole time.
+    updateClocks (false);
+
+    static uint32_t last_ms;
+    uint32_t now_ms = millis();
+    if (now_ms - last_ms < 1000)               // once a second is plenty; this work can be heavy
+        return false;
+    last_ms = now_ms;
+
+    updateWiFi (menu_open_for_pane);
+    checkDXCluster();
+    drawAllSymbols();
+
+    // publish whatever that work just drew (map overlays etc), then reclaim our own box in
+    // case any of it happened to land underneath the picker, and publish that too
+    tft.drawPR();
+    if (acc_redraw_fn)
+        acc_redraw_fn();
+
+    return false;
+}
+
+/* a few plot names run long enough to crowd a 2-column child row -- shorten just for that
+ * display, never the underlying label itself (which is also the persisted/API name used to
+ * match choices elsewhere, eg labelToChoice()).
+ */
+static const char *accordionAbbrev (const char *label)
+{
+    if (!strcmp (label, "Solar_Flux")) return "Sol_Flux";
+    if (!strcmp (label, "Solar_Wind")) return "Sol_Wind";
+    if (!strcmp (label, "Planetary_K")) return "Kp";
+    if (!strcmp (label, "Sunspot_N")) return "SSN";
+    if (!strcmp (label, "Disturbance")) return "Dst";     // Dst = the geomagnetic Disturbance
+                                                           // storm time index this plots, and
+                                                           // the name hams/space-wx sites use
+    if (!strcmp (label, "DX_Cluster")) return "DXClstr";       // "DX Cluster" ran past the
+                                                                // column edge; even "DXCluster"
+                                                                // was too close for comfort
+    if (!strcmp (label, "NOAA_SpcWx")) return "NOAA_Wx";       // "NOAA SpcWx" ran past its
+                                                                // column into the next one
+    if (!strcmp (label, "On_The_Air")) return "ONTA";
+    if (!strcmp (label, "VOACAP_DEDX")) return "VOACAP";
+    if (!strcmp (label, "DXPeditions")) return "DXPeditns";    // 2 letters shorter, still reads
+    if (!strcmp (label, "Live_Spots")) return "LiveSpots";     // one word -- the trailing "s"
+                                                                // was getting cut off
+    return label;
+}
+
+/* a handful of categories have a deliberately chosen display order rather than the default
+ * alphabetical one -- eg so a commonly-used item lands in a more convenient spot. Absent from
+ * this table, an item just keeps its normal (alphabetical) position. Add entries here as
+ * requested; the two-column layout fills column 0 top-to-bottom, then column 1.
+ */
+static int accordionOrderKey (const char *label)
+{
+    static const struct { const char *label; int key; } order[] = {
+        // DX & Contest, reordered from the default alphabetical layout
+        { "On_The_Air",  0 },
+        { "DXPeditions", 1 },
+        { "VOACAP_DEDX", 2 },
+        { "Live_Spots",  3 },
+        { "Contests",    4 },
+        { "VHF_Cond",    5 },
+        { "HF_Bands",    6 },
+    };
+    for (unsigned i = 0; i < NARRAY(order); i++)
+        if (!strcmp (label, order[i].label))
+            return (order[i].key);
+    return (-1);        // no override -- sort below keeps it in its natural position
+}
+
+/* move focus_row to whichever of the n_row_boxes entries is closest in the given arrow
+ * direction, same nearest-neighbor-in-that-direction technique menu.cpp's kbNavigation() uses
+ * for every other menu -- just scoped to this frame's row set instead of a MenuInfo's full
+ * item list, since row_boxes here is already exactly "this frame's active, navigable items"
+ * with no MENU_ACTIVE-style filtering needed. No-op for any other key. If focus_row is
+ * currently unfocused (-1) or points past the end of a shrunk row set, any arrow key just
+ * focuses the first row instead of searching from a stale/nonexistent position.
+ */
+static void accordionKbMove (const SBox *row_boxes, int n_row_boxes, int &focus_row, char kb_char)
+{
+    if (n_row_boxes == 0)
+        return;
+
+    if (focus_row < 0 || focus_row >= n_row_boxes) {
+        focus_row = 0;
+        return;
+    }
+
+    const SBox &pm = row_boxes[focus_row];
+    int mind = 100000;
+    int candidate = -1;
+
+    for (int i = 0; i < n_row_boxes; i++) {
+        if (i == focus_row)
+            continue;
+        const SBox &pi = row_boxes[i];
+        int d = abs((int)pi.x - (int)pm.x) + abs((int)pi.y - (int)pm.y);
+        bool dir_ok = false;
+        switch (kb_char) {
+        case CHAR_LEFT:  dir_ok = pi.x < pm.x; break;
+        case CHAR_RIGHT: dir_ok = pi.x > pm.x; break;
+        case CHAR_UP:    dir_ok = pi.y < pm.y; break;
+        case CHAR_DOWN:  dir_ok = pi.y > pm.y; break;
+        default: return;                       // not an arrow key -- leave focus alone
+        }
+        if (dir_ok && d < mind) {
+            candidate = i;
+            mind = d;
+        }
+    }
+    if (candidate >= 0)
+        focus_row = candidate;
+}
+
+static bool askPaneCategoryAccordion (PlotPane pp, SBox box, MenuItem *mitems, int n_mitems)
+{
+    // one header per non-empty category, in display order; cat_total[] doesn't change once
+    // the picker opens (membership is fixed), only how many of each are selected does
+    int cat_of_row[N_PANE_CATEGORIES];
+    int cat_total[N_PANE_CATEGORIES] = {0};
+    int n_cats = 0;
+    for (int i = 0; i < n_mitems; i++) {
+        PlotChoice pc = labelToChoice (mitems[i].label);
+        if (pc != PLOT_CH_NONE)
+            cat_total[categoryOfChoice(pc)]++;
+    }
+    for (int c = 0; c < (int)N_PANE_CATEGORIES; c++)
+        if (cat_total[c] > 0)
+            cat_of_row[n_cats++] = c;
+
+    // box width is fixed for the life of the picker -- the pane's own width, widened only if
+    // that's somehow not enough for Ok/Cancel once the side inset (below) is accounted for.
+    int ok_w = getTextWidth(acc_ok_label) + ACC_BDX*2;
+    int cancel_w = getTextWidth(acc_cancel_label) + ACC_BDX*2;
+    int btn_w = ACC_BB + ok_w + ACC_BB + cancel_w + ACC_BB;
+    if (box.w < btn_w + 2*ACC_SIDE_INSET)
+        box.w = btn_w + 2*ACC_SIDE_INSET;
+    if (box.x + box.w >= tft.width())
+        box.x = tft.width() - box.w - 1;
+
+    // budget_h is the real target: the pane's own height, so an expanded category's checklist
+    // -- via fitAccordionLayout()'s column/hide/truncate cascade -- stays within the pane
+    // instead of spilling down over the map. box.h on entry is the pane's own height; clamped
+    // against the bottom of the screen too, purely as a last-ditch safety net.
+    int budget_h = box.h;
+    if (box.y + budget_h >= tft.height())
+        budget_h = tft.height() - box.y - 2;
+    box.h = budget_h;
+
+    uint8_t *backing_store;
+    if (!tft.getBackingStore (backing_store, box.x, box.y, box.w, box.h))
+        fatalError ("failed to capture pixels beneath %d x %d pane accordion", box.w, box.h);
+
+    int expanded_cat = -1;             // -1 == every category collapsed
+    int last_h = 0;                    // box height actually drawn last frame, for erase-sizing
+    int focus_row = -1;                // resolved fresh every redraw from the identity below --
+                                        // never trusted across a redraw on its own, since row
+                                        // positions shift whenever a category expands/collapses
+    bool have_focus = false;           // false == no keyboard focus yet -- matches the rest of
+                                        // the app's convention of not showing a focus highlight
+                                        // until the person actually presses an arrow key
+    bool focus_is_header = false;      // which kind of thing focus_key identifies
+    int focus_key = -1;                // category index if focus_is_header, else mitems[] index
+                                        // -- an identity that survives a category expanding or
+                                        // collapsing, unlike a raw row position would
+    bool ok = false;
+
+    menu_open_for_pane = pp;            // let showRotatingBorder()/accordionServiceOtherPanes()
+                                         // know which pane to leave alone
+    for (;;) {
+
+        // children of whichever category is currently expanded, in mitems[] order, then
+        // reordered per accordionOrderKey() for any category that has a custom display order
+        int exp_children[64];
+        int n_exp = 0;
+        if (expanded_cat >= 0) {
+            for (int i = 0; i < n_mitems; i++) {
+                PlotChoice pc = labelToChoice (mitems[i].label);
+                if (pc != PLOT_CH_NONE && categoryOfChoice(pc) == expanded_cat)
+                    exp_children[n_exp++] = i;
+            }
+            std::stable_sort (exp_children, exp_children + n_exp, [mitems](int a, int b) {
+                int ka = accordionOrderKey (mitems[a].label);
+                int kb = accordionOrderKey (mitems[b].label);
+                if (ka < 0 && kb < 0)
+                    return false;              // neither overridden -- stable_sort keeps order
+                if (ka < 0)
+                    return false;              // unoverridden items sort after overridden ones
+                if (kb < 0)
+                    return true;
+                return ka < kb;
+            });
+        }
+
+        bool hide_siblings = false;
+        int n_ccols = 1;
+        int shown_children = n_exp;
+        int cur_h;
+        if (expanded_cat < 0)
+            cur_h = ACC_TBM + (n_cats + 2)*ACC_RH + ACC_TBM + ACC_BG;
+        else
+            fitAccordionLayout (n_cats, n_exp, budget_h, hide_siblings, n_ccols, shown_children, cur_h);
+        SBox cur_box = {box.x, box.y, box.w, (uint16_t)cur_h};        // full pane width -- what
+                                                                       // we fill/manage/restore
+                                                                       // every frame
+        SBox vis_box = {(uint16_t)(box.x + ACC_SIDE_INSET), box.y,
+                         (uint16_t)(box.w - 2*ACC_SIDE_INSET), (uint16_t)cur_h};   // where the
+                                                                       // actual border+content
+                                                                       // draws -- inset off the
+                                                                       // pane's true edges so our
+                                                                       // border doesn't sit on the
+                                                                       // exact column something
+                                                                       // else keeps redrawing
+
+        // header and leaf rows, and the Ok/Cancel buttons, as drawn this iteration -- read by
+        // the tap-handling code below once we return from waitForUser()
+        SBox row_boxes[128];
+        bool row_is_header[128];
+        int row_data[128];                     // category index if header, else mitems[] index
+        int n_row_boxes = 0;
+        SBox ok_b, cancel_b;
+        bool enable_ok = false;
+
+        // draws exactly this iteration's frame: headers (or just the expanded one), its
+        // children, the footer, and Ok/Cancel, then publishes if it overlaps the map. Safe to
+        // call more than once per iteration -- cur_h/hide_siblings/n_ccols/shown_children are
+        // fixed for the whole iteration, so a repeat call just repaints the same thing, which
+        // is exactly what's needed to reclaim pixels that background pane activity (see
+        // accordionServiceOtherPanes()) may have drawn over in the meantime.
+        auto redrawFrame = [&]() {
+
+            // if this frame is shrinking, put back the real pixels (map or whatever else was
+            // there) for the strip we're giving up -- not a plain fill, which would otherwise
+            // leave a dead black rectangle sitting on the map below the picker until something
+            // else happens to redraw over it
+            if (cur_h < last_h)
+                tft.restoreBackingRegion (backing_store, box.x, box.y, box.w, box.h, cur_h, last_h-cur_h);
+
+            // (re)paint just the currently visible extent
+            fillSBox (cur_box, ACC_BGC);
+            drawSBox (vis_box, ACC_FGC);
+            int erase_h = cur_h > last_h ? cur_h : last_h;    // for the map-publish check below
+            last_h = cur_h;
+
+            // draw headers -- all of them, or just the expanded one if siblings are hidden
+            // this frame -- and, immediately after the expanded one, as many of its children
+            // as fit
+            n_row_boxes = 0;
+            focus_row = -1;     // re-resolved below from focus_key/focus_is_header as rows are
+                                 // built -- stays -1 if the focused identity isn't visible this
+                                 // frame (eg its category just got collapsed by something else)
+            int row = 0;
+            int total_selected = 0;
+            for (int i = 0; i < n_mitems; i++)
+                if (mitems[i].set)
+                    total_selected++;
+            for (int r = 0; r < n_cats; r++) {
+                int c = cat_of_row[r];
+
+                if (hide_siblings && c != expanded_cat)
+                    continue;               // hidden this frame -- didn't all fit
+
+                int selected = 0;
+                for (int i = 0; i < n_mitems; i++) {
+                    PlotChoice pc = labelToChoice (mitems[i].label);
+                    if (pc != PLOT_CH_NONE && categoryOfChoice(pc) == c && mitems[i].set)
+                        selected++;
+                }
+                char label[64];
+                snprintf (label, sizeof(label), "%s (%d/%d)", pane_categories[c], selected, cat_total[c]);
+
+                MenuItem hmi;
+                hmi.type = MENU_1OFN;
+                hmi.submenu = true;            // draw with the folder-style triangle, not a radio dot
+                hmi.set = (c == expanded_cat);  // filled == open, outline == closed
+                hmi.indent = ACC_HEADER_INDENT;
+                hmi.group = 1;
+                hmi.label = label;
+
+                hmi.textf = NULL;
+
+                SBox hb = {(uint16_t)(vis_box.x + ACC_LM), (uint16_t)(vis_box.y + ACC_TBM + row*ACC_RH),
+                           (uint16_t)(vis_box.w - ACC_LM - ACC_RM), ACC_RH};
+                bool hdr_has_focus = have_focus && focus_is_header && focus_key == c;
+                if (hdr_has_focus)
+                    focus_row = n_row_boxes;
+                menuDrawItem (hmi, hb, true, hdr_has_focus);
+                row_boxes[n_row_boxes] = hb;
+                row_is_header[n_row_boxes] = true;
+                row_data[n_row_boxes] = c;
+                n_row_boxes++;
+                row++;
+
+                if (c == expanded_cat) {
+                    int rows_per_col = n_ccols > 1 ? (shown_children + n_ccols - 1)/n_ccols
+                                                    : shown_children;
+                    int col_w = (vis_box.w - ACC_LM - ACC_RM)/n_ccols;
+                    for (int j = 0; j < shown_children; j++) {
+                        MenuItem cmi = mitems[exp_children[j]];
+                        cmi.label = accordionAbbrev (cmi.label);
+                        cmi.indent = ACC_HEADER_INDENT + ACC_CHILD_INDENT;    // nested clear of
+                                                                               // the header above it
+                        int col = n_ccols > 1 ? j/rows_per_col : 0;
+                        int row_in_col = n_ccols > 1 ? j%rows_per_col : j;
+                        SBox cb = {(uint16_t)(vis_box.x + ACC_LM + col*col_w),
+                                   (uint16_t)(vis_box.y + ACC_TBM + (row+row_in_col)*ACC_RH),
+                                   (uint16_t)col_w, ACC_RH};
+                        bool child_has_focus = have_focus && !focus_is_header
+                                                    && focus_key == exp_children[j];
+                        if (child_has_focus)
+                            focus_row = n_row_boxes;
+                        menuDrawItem (cmi, cb, true, child_has_focus);
+                        row_boxes[n_row_boxes] = cb;
+                        row_is_header[n_row_boxes] = false;
+                        row_data[n_row_boxes] = exp_children[j];
+                        n_row_boxes++;
+                    }
+                    row += rows_per_col;
+                }
+            }
+
+            // footer: live running total, directly beneath whatever's currently visible
+            SBox footer_b = {(uint16_t)(vis_box.x + ACC_LM), (uint16_t)(vis_box.y + ACC_TBM + row*ACC_RH),
+                              (uint16_t)(vis_box.w - ACC_LM - ACC_RM), ACC_RH};
+            char footer[64];
+            snprintf (footer, sizeof(footer), "Total Selections (%d/%d)", total_selected, n_mitems);
+            selectFontStyle (LIGHT_FONT, FAST_FONT);
+            tft.setTextColor (ACC_FOOTC);
+            tft.setCursor (footer_b.x + 2, footer_b.y + ACC_BDROP);
+            tft.print (footer);
+            tft.setTextColor (ACC_FGC);
+            row++;
+
+            // Ok/Cancel row, also directly beneath whatever's currently visible
+            ok_b.w = ok_w;
+            ok_b.h = ACC_RH;
+            ok_b.x = vis_box.x + ACC_BB;
+            ok_b.y = vis_box.y + ACC_TBM + row*ACC_RH;
+            cancel_b.w = cancel_w;
+            cancel_b.h = ACC_RH;
+            cancel_b.x = vis_box.x + vis_box.w - cancel_w - ACC_BB;
+            cancel_b.y = ok_b.y;
+
+            enable_ok = total_selected > 0;
+            drawSBox (ok_b, enable_ok ? ACC_FGC : GRAY);
+            tft.setTextColor (enable_ok ? ACC_FGC : GRAY);
+            tft.setCursor (ok_b.x + ACC_BDX, ok_b.y + ACC_BDROP);
+            tft.print (acc_ok_label);
+            drawSBox (cancel_b, ACC_FGC);
+            tft.setTextColor (ACC_FGC);
+            tft.setCursor (cancel_b.x + ACC_BDX, cancel_b.y + ACC_BDROP);
+            tft.print (acc_cancel_label);
+
+            // publish immediately if anything we touched this frame -- newly drawn or newly
+            // restored -- overlaps the map, not just the currently visible box, so a shrinking
+            // frame's restored strip shows up right away too
+            SBox touched_b = {box.x, box.y, box.w, (uint16_t)erase_h};
+            if (boxesOverlap (touched_b, map_b))
+                tft.drawPR();
+        };
+
+        redrawFrame();
+        acc_redraw_fn = redrawFrame;   // let the periodic background tick re-assert us if needed
+
+        // wait for the next tap -- fp services every other pane's rotation/updates while we
+        // sit here, so this pane's picker being open doesn't stall the rest of the display
+        UserInput ui = {
+            box, accordionServiceOtherPanes, UF_UNUSED, MENU_TO, UF_CLOCKSOK,
+            {0, 0}, TT_NONE, '\0', false, false
+        };
+        if (!waitForUser (ui)) {
+            ok = false;                        // timed out
+            break;
+        }
+        if (ui.kb_char == CHAR_ESC) {
+            ok = false;
+            break;
+        }
+        if (ui.kb_char == CHAR_LEFT || ui.kb_char == CHAR_RIGHT
+                        || ui.kb_char == CHAR_UP || ui.kb_char == CHAR_DOWN) {
+            accordionKbMove (row_boxes, n_row_boxes, focus_row, ui.kb_char);
+            if (focus_row >= 0 && focus_row < n_row_boxes) {
+                // remember *what* is focused, not just where, so it's still correctly
+                // identified after the row layout changes (eg SPACE expands the very row
+                // that's focused) rather than a now-stale position pointing at the wrong row,
+                // or past the end of a shrunk one, when the next frame redraws
+                have_focus = true;
+                focus_is_header = row_is_header[focus_row];
+                focus_key = row_data[focus_row];
+            }
+            continue;
+        }
+        if (ui.kb_char == CHAR_CR || ui.kb_char == CHAR_NL) {
+            if (enable_ok) {
+                ok = true;
+                break;
+            }
+            menuMsg (cur_box, RA8875_RED, "Select an item");
+            continue;
+        }
+        if (ui.kb_char == CHAR_SPACE && focus_row >= 0 && focus_row < n_row_boxes) {
+            if (row_is_header[focus_row]) {
+                int tapped_cat = row_data[focus_row];
+                expanded_cat = (tapped_cat == expanded_cat) ? -1 : tapped_cat;
+            } else {
+                int mi_idx = row_data[focus_row];
+                mitems[mi_idx].set = !mitems[mi_idx].set;
+            }
+            continue;
+        }
+        if (ui.kb_char != CHAR_NONE)
+            continue;                          // ignore any other key
+
+        if (inBox (ui.tap, ok_b)) {
+            if (enable_ok) {
+                ok = true;
+                break;
+            }
+            menuMsg (cur_box, RA8875_RED, "Select an item");
+            continue;
+        }
+        if (inBox (ui.tap, cancel_b)) {
+            ok = false;
+            break;
+        }
+        if (!inBox (ui.tap, cur_box)) {
+            // tap outside the currently visible extent -- same as Cancel, there being only
+            // one Ok/Cancel for the whole picker now
+            ok = false;
+            break;
+        }
+
+        // find which visible row, if any, was tapped
+        int tapped_row = -1;
+        for (int i = 0; i < n_row_boxes; i++)
+            if (inBox (ui.tap, row_boxes[i])) {
+                tapped_row = i;
+                break;
+            }
+        if (tapped_row < 0)
+            continue;
+
+        if (row_is_header[tapped_row]) {
+            int tapped_cat = row_data[tapped_row];
+            expanded_cat = (tapped_cat == expanded_cat) ? -1 : tapped_cat;
+        } else {
+            int mi_idx = row_data[tapped_row];
+            mitems[mi_idx].set = !mitems[mi_idx].set;
+        }
+    }
+
+    menu_open_for_pane = PANE_NONE;
+    acc_redraw_fn = nullptr;
+    drainTouch();
+
+    if (!tft.setBackingStore (backing_store, box.x, box.y, box.w, box.h))
+        fatalError ("mem pixel restore failed %d x %d", box.w, box.h);
+    if (boxesOverlap (box, map_b))
+        tft.drawPR();
+
+    return (ok);
+}
+
 static PlotChoice askPaneChoice (PlotPane pp)
 {
     // not for use for PANE_0
@@ -199,7 +868,9 @@ static PlotChoice askPaneChoice (PlotPane pp)
     // set this temporarily to show all choices, just for testing worst-case layout
     #define ASKP_SHOWALL 0                      // RBF
 
-    // build items from all candidates suitable for this pane
+    // build items from all candidates suitable for this pane -- unchanged from before;
+    // categorization only affects how this list gets displayed/edited below, not what's
+    // tracked. mitems[].set is the running truth for the whole operation throughout.
     MenuItem *mitems = NULL;
     int n_mitems = 0;
     for (int i = 0; i < PLOT_CH_N; i++) {
@@ -215,7 +886,14 @@ static PlotChoice askPaneChoice (PlotPane pp)
             if (!mitems)
                 fatalError ("pane alloc: %d", n_mitems);
             MenuItem &mi = mitems[n_mitems++];
-            mi.type = MENU_AL1OFN;
+            // MENU_TOGGLE, not MENU_AL1OFN: renders identically (same checkbox fallthrough
+            // in menuDrawItem()) but isn't subject to menuStateOk()'s "Ok disabled if none
+            // set" rule. That rule made sense for the original single flat list (a pane needs
+            // >=1 choice overall) but once split into per-category sub-menus it was firing
+            // per category independently, blocking Ok whenever any one category was reduced
+            // to zero even with plenty selected elsewhere. The overall "at least one total"
+            // guarantee is now enforced once, explicitly, at the picker's finish point below.
+            mi.type = MENU_TOGGLE;
             mi.set = paneHasChoice (pp, pc) ? true : false;
             mi.label = plot_names[pc];
             mi.indent = 2;
@@ -226,16 +904,17 @@ static PlotChoice askPaneChoice (PlotPane pp)
     // nice sort by label
     qsort (mitems, n_mitems, sizeof(MenuItem), menuChoiceQS);
 
-    // run
-    SBox box = plot_b[pp];       // copy
-    SBox ok_b;
-    MenuInfo menu = {box, ok_b, UF_CLOCKSOK, M_CANCELOK, 2, n_mitems, mitems};
-    bool menu_ok = runMenu (menu);
+    // show the accordion category picker: headers always visible, tapping one expands its
+    // checklist in place (collapsing any other), letting the user touch items across several
+    // categories in one operation, all under the picker's single Ok/Cancel pair.
+    SBox box = plot_b[pp];       // copy -- pristine, never mutated; askPaneCategoryAccordion()
+                                  // takes its own copy to size/position, this one is untouched
+    bool proceed = askPaneCategoryAccordion (pp, box, mitems, n_mitems);
 
     // return current choice by default
     PlotChoice return_ch = plot_ch[pp];
 
-    if (menu_ok) {
+    if (proceed) {
 
         // build the complete 64-bit rotation set. Choices after the fixed NONE sentinel are
         // represented in the high word, so Sat Alerts can rotate with any other pane choice.
@@ -479,6 +1158,11 @@ bool checkPlotTouch (TouchType tt, const SCoord &s, PlotPane pp)
         break;
     case PLOT_CH_MOON:
         if (checkMoonTouch (s, box))
+            return (true);
+        in_top = true;
+        break;
+    case PLOT_CH_ECLIPSE:
+        if (checkEclipseTouch (s, box))
             return (true);
         in_top = true;
         break;
@@ -732,7 +1416,7 @@ void savePlotOps()
 /* flash plot and NCDXF_b borders that are nearly ready to change
  * unless rotating pretty fast.
  */
-void showRotatingBorder ()
+void showRotatingBorder (PlotPane skip_pp)
 {
     time_t t0 = myNow();
 
@@ -742,6 +1426,11 @@ void showRotatingBorder ()
 
     // check plot panes
     for (int pp = 0; pp < PANE_N; pp++) {
+        if (pp == skip_pp || pp == menu_open_for_pane)
+            continue;               // its own picker is up right now -- leave it alone. Most
+                                     // callers (eg updateClocks(), many times a second) have no
+                                     // idea a picker might be open and never pass skip_pp
+                                     // themselves, hence checking the global too, unconditionally.
         if (ROTHOLD_TST(plot_ch[pp])) {
             // mark when pane rotation is holding
             drawSBox (plot_b[pp], RA8875_RED);

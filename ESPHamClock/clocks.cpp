@@ -85,6 +85,10 @@ static bool time_is_stuck;                      // set if see time not changing 
 // TimeLib's now() stays at real UTC, but user can adjust time offset
 static int utc_offset;                          // nowWO() offset from UTC, secs
 
+// whether the main clocks-pane HMS/date shows DE-local time instead of UTC.
+// N.B. independent of utc_offset -- this only affects what's displayed, not what's stored/synced.
+static bool main_clock_local;
+
 // display 
 #define UTC_W           14                      // UTC button width in upper right corner of clock_b
 #define UTC_H           (HMS_H-1)               // UTC button height in upper right corner of clock_b
@@ -104,10 +108,17 @@ static void drawUTCButton()
     char msg[4];
 
     if (utc_offset == 0 && !time_running_bw && !time_is_stuck) {
-        // at UTC for sure
-        tft.fillRect (clock_b.x+clock_b.w-UTC_W, clock_b.y, UTC_W, UTC_H, HMS_C);
-        tft.setTextColor(RA8875_BLACK);
-        strcpy (msg, "UTC");
+        if (main_clock_local) {
+            // synced, but showing DE-local time instead of UTC
+            tft.fillRect (clock_b.x+clock_b.w-UTC_W, clock_b.y, UTC_W, UTC_H, RA8875_CYAN);
+            tft.setTextColor(RA8875_BLACK);
+            strcpy (msg, "LCL");
+        } else {
+            // at UTC for sure
+            tft.fillRect (clock_b.x+clock_b.w-UTC_W, clock_b.y, UTC_W, UTC_H, HMS_C);
+            tft.setTextColor(RA8875_BLACK);
+            strcpy (msg, "UTC");
+        }
     } else {
         // unknown or time is other than UTC
         bool toggle = (millis()%2000) > 1000;
@@ -128,10 +139,13 @@ static void drawUTCButton()
     // draw the MOTD mailbox icon to the left of the UTC button (or blank slot if no MOTD)
     drawMOTDIcon();
 
-    // defensively blank the entire icon column below the mailbox down to just above auxtime_b
-    // (the date line, whose top edge sits 48px below clock_b.y by experiment) -- guards against
-    // stale pixels left over from a previous build's differently-sized icons in this same spot.
-    tft.fillRect (motd_btn_b.x-3, motd_btn_b.y, motd_btn_b.w+6, 48, RA8875_BLACK);
+    // defensively blank the icon column *below* the mailbox down to just above auxtime_b (the
+    // date line, whose top edge sits 48px below clock_b.y by experiment) -- guards against stale
+    // pixels left over from a previous build's differently-sized icons in this same spot. N.B.
+    // must start below motd_btn_b's own bottom edge, not at its top -- starting at the top (as
+    // this used to) blanked the mailbox glyph drawMOTDIcon() had just painted, with nothing left
+    // to repaint it since ADS-B/Windy below only redraw their own icons.
+    tft.fillRect (motd_btn_b.x-3, motd_btn_b.y+motd_btn_b.h, motd_btn_b.w+6, 48-motd_btn_b.h, RA8875_BLACK);
 
     // draw the ADS-B airplane icon just below that -- always shown, opens adsb.lol when tapped
     drawADSBIcon();
@@ -943,6 +957,15 @@ void initTime()
         NVWriteInt32 (NV_UTC_OFFSET, utc_offset);
     }
 
+    // get whether main clock shows local time instead of UTC
+    uint8_t mcl;
+    if (NVReadUInt8 (NV_MAINCLOCK_LOCAL, &mcl))
+        main_clock_local = (mcl != 0);
+    else {
+        main_clock_local = false;
+        NVWriteUInt8 (NV_MAINCLOCK_LOCAL, 0);
+    }
+
     // get desired aux time format
     uint8_t at;
     if (!NVReadUInt8(NV_AUX_TIME, &at)) {
@@ -1084,8 +1107,13 @@ void updateClocks(bool all)
     // update status items under callsign (uptime, rotating message, version)
     updateCallsignStatus (all);
 
-    // get user's UTC time now, get out fast if still same second
-    time_t t_wo = nowWO();
+    // get user's UTC time now, get out fast if still same second.
+    // t_utc stays pure UTC (+ any manual utc_offset) for other code below (DE/DX panes) that
+    // applies its own timezone offset; t_wo is what actually gets displayed on the main clock,
+    // shifted to DE-local time here if that's what's selected. nowWO() itself is untouched since
+    // lots of other code (rise/set, satellites, etc) depends on it staying UTC-based.
+    time_t t_utc = nowWO();
+    time_t t_wo = main_clock_local ? t_utc + getTZ (de_tz) : t_utc;
     if ((t_wo%60) == prev_sc && !all)
         return;
 
@@ -1136,8 +1164,12 @@ void updateClocks(bool all)
 
             // just came back on, show and update state
             Serial.printf ("time: back ok\n");
-            drawUTCButton();
+            // N.B. erase the '?' mark *before* drawUTCButton(), not after -- this rect
+            // (x:187-212, y:65-112 for a typical clock_b) overlaps the MOTD/ADS-B/Windy
+            // icon column, so drawing the icons first and erasing second was wiping them
+            // out with nothing left to redraw them.
             tft.fillRect(clock_b.x+2*clock_b.w/3+34, clock_b.y, 25, HMS_H+4, RA8875_BLACK); // erase ?
+            drawUTCButton();
 
             time_was_bad = false;
         }
@@ -1213,7 +1245,7 @@ void updateClocks(bool all)
             break;
         case DETIME_ANALOG:     // fallthru
         case DETIME_ANALOG_DTTM:
-            drawAnalogClock (t_wo + getTZ (de_tz));
+            drawAnalogClock (t_utc + getTZ (de_tz));
             break;
         case DETIME_INFO:
             drawDECalTime(false);
@@ -1221,7 +1253,7 @@ void updateClocks(bool all)
             break;
         case DETIME_DIGITAL_12: // fallthru
         case DETIME_DIGITAL_24: // fallthru
-            drawDigitalClock (t_wo + getTZ (de_tz));
+            drawDigitalClock (t_utc + getTZ (de_tz));
             break;
         default:
             fatalError ("unknown de fmt %d", de_time_fmt);
@@ -1273,6 +1305,23 @@ void drawDXSunRiseSetInfo()
 
 }
 
+/* return whether s falls within b, expanded by pad pixels on every side.
+ * used to give small touch targets (like the icon column below) a bit of forgiveness so a
+ * near-miss tap lands on the intended control instead of falling through to a neighbor --
+ * in particular the version_b box sits only ~2px above motd_btn_b.
+ */
+static bool inPaddedBox (const SCoord &s, const SBox &b, uint16_t pad)
+{
+    SBox pb = b;
+    pb.x -= pad;
+    pb.y -= pad;
+    pb.w += 2*pad;
+    pb.h += 2*pad;
+    return inBox (s, pb);
+}
+
+#define ICON_HIT_PAD    3       // touch forgiveness, in pixels, around each small clock-area icon
+
 /* return whether touch event at s is in clock_b (OTHER THAN lkscrn_b and stopwatch_b which have already
  *   been checked) or auxtime_b.
  * if so, offer menus to change time or aux format.
@@ -1287,14 +1336,14 @@ bool checkClockTouch (SCoord &s)
     Serial.printf ("MOTD: checkClockTouch s=(%d,%d) motd_btn_b=(%d,%d %dx%d) present=%d\n",
                    s.x, s.y, motd_btn_b.x, motd_btn_b.y, motd_btn_b.w, motd_btn_b.h,
                    motdIsPresent());
-    if (motdIsPresent() && inBox (s, motd_btn_b)) {
+    if (motdIsPresent() && inPaddedBox (s, motd_btn_b, ICON_HIT_PAD)) {
         motdClicked();
         return (true);
     }
 
     // ADS-B airplane icon: always present, opens the user's PiAware receiver if configured in Setup,
     // else opens adsb.lol centered on DE's location
-    if (inBox (s, adsb_btn_b)) {
+    if (inPaddedBox (s, adsb_btn_b, ICON_HIT_PAD)) {
         char url[100];
         const char *piaware_host = getPiAwareHost();
         if (piaware_host[0])
@@ -1307,7 +1356,7 @@ bool checkClockTouch (SCoord &s)
     }
 
     // Windy wind icon: always present, opens windy.com centered on DE's location
-    if (inBox (s, windy_btn_b)) {
+    if (inPaddedBox (s, windy_btn_b, ICON_HIT_PAD)) {
         char url[100];
         snprintf (url, sizeof(url), "https://www.windy.com/?%.3f,%.3f,8",
                     de_ll.lat_d, de_ll.lng_d);
@@ -1338,16 +1387,27 @@ bool checkClockTouch (SCoord &s)
 
         // check a few special cases but mostly we put up a menu to allow editing time
 
+        // rightmost edge of the "safe" zone for the Change Time menu: stop a few pixels
+        // before the MOTD/ADS-B/Windy icon column so a near-miss tap on any of those icons
+        // doesn't fall through into the generic handler below and pop the menu on top of
+        // them. fall back to the old 7/8 fraction if for some reason the icon column hasn't
+        // been positioned yet (motd_btn_b.x == 0).
+        uint16_t safe_dx = motd_btn_b.x ? (motd_btn_b.x - clock_b.x - 3) : (7*clock_b.w/8);
+
         if (dx >= clock_b.w-UTC_W && dy <= UTC_H) {
 
-            // tapped UTC "button": return to UTC if not already
+            // tapped UTC "button": return to UTC if not already, else toggle main clock
+            // between showing UTC and DE-local time (this tap used to be a no-op in that case)
 
             if (utc_offset != 0 || !clockTimeOk()) {
                 utc_offset = 0;
                 startSyncProvider(true);
+            } else {
+                main_clock_local = !main_clock_local;
+                NVWriteUInt8 (NV_MAINCLOCK_LOCAL, main_clock_local ? 1 : 0);
             }
 
-        } else if (dx < 7*clock_b.w/8) {
+        } else if (dx < safe_dx) {
 
             // show and engage menu of time change choices
 
@@ -1510,6 +1570,7 @@ void changeTime (time_t t)
     scheduleNewPlot(PLOT_CH_MOON);
     scheduleNewPlot(PLOT_CH_SDO);
     scheduleNewPlot(PLOT_CH_BC);
+    scheduleNewPlot(PLOT_CH_ECLIPSE);
 }
 
 /* show menu of timezone offsets +- a few hours from nominal plus option for auto.
