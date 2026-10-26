@@ -22,6 +22,7 @@
 #include <signal.h>
 #include <dirent.h>
 #include <sys/file.h>
+#include <sys/stat.h>
 
 
 #include "ArduinoLib.h"
@@ -453,7 +454,8 @@ typedef enum {
     X(PLOT_CH_BANDACT,      "Band_Act")          \
     X(PLOT_CH_MARINE,       "Marine_Wx")         \
     X(PLOT_CH_FIREWX,       "Fire_Wx")           \
-    X(PLOT_CH_QUAKES,       "Quakes")
+    X(PLOT_CH_QUAKES,       "Quakes")            \
+    X(PLOT_CH_POTASCHED,    "POTA_Sked")
 
 #define PLOTNAMES PLOTNAMES_LOW PLOTNAMES_HIGH
 
@@ -648,7 +650,7 @@ extern SCircle satpass_c;               // satellite pass horizon
 
 extern uint8_t night_on;                // show night portion of map on/off
 extern uint8_t names_on;                // show place names when roving
-extern uint8_t borders_on;              // show country/state borders overlay on Clouds/Terrain
+extern uint8_t borders_on;              // show country/state borders overlay on Clouds/Terrain/Physical
 extern SBox borders_btn_b;              // on-map "Borders On/Off" badge, next to the View button
 extern bool bordersBadgeVisible(void);  // whether that badge should currently be shown
 
@@ -659,8 +661,8 @@ extern bool bordersBadgeVisible(void);  // whether that badge should currently b
  */
 
 extern uint8_t wefax_on;                // whether the viewer is currently open; runtime only, not NV
-extern SBox wefax_btn_b;                // on-map "WEFAX On/Off" badge, shares the Borders badge's slot
-extern bool wefaxBadgeVisible(void);    // whether that badge should currently be shown -- CM_WX only
+extern SBox wefax_btn_b;                // on-map "WEFAX" badge; slot floats right of Fires/Borders/View
+extern bool wefaxBadgeVisible(void);    // whether that badge should currently be shown -- CM_WX and CM_CLOUDS
 extern void drawWefaxButton(void);      // draw (or blank) the badge
 extern void initWefax(void);            // restore NV state at startup
 extern void runWefaxViewer(void);       // take over map_b showing the chart, until the user leaves
@@ -679,7 +681,7 @@ extern uint8_t fires_on;                // show active-fire hotspot overlay
 extern SBox fires_btn_b;                // on-map "Fires On/Off" badge; slot floats right of
                                          // whichever of View/Borders is currently rightmost
 extern bool firesBadgeVisible(void);    // whether that badge should currently be shown --
-                                         // Countries/Terrain/Clouds + Mercator only
+                                         // Countries/Terrain/Clouds/Weather + Mercator only
 extern void drawFiresButton(void);      // draw (or blank) the badge
 extern void initFires(void);            // restore NV state at startup
 extern void updateFires(void);          // fetch from OHB if due; call from updateWiFi()
@@ -687,13 +689,13 @@ extern void drawFiresOnMap(void);       // render flame glyphs; call from drawAl
 
 extern SBox adsbmap_btn_b;              // on-map "ADS-B" badge; slot floats right of whichever
                                          // of View/Borders/Fires is currently rightmost
-extern bool adsbBadgeVisible(void);     // whether that badge should currently be shown -- Clouds
-                                         // + Mercator/Robinson only
+extern bool adsbBadgeVisible(void);     // whether that badge should currently be shown -- always true, every map,
+                                         // any projection
 extern void drawADSBBadge(void);        // draw (or blank) the badge
 extern void adsbBadgeClicked(void);     // open ADS-B Exchange (or PiAware) centered on DE
 
-extern SBox windmap_btn_b;              // on-map "Wind" badge; slot floats right of WEFAX, or View
-extern bool windBadgeVisible(void);     // whether that badge should currently be shown -- CM_WX only
+extern SBox windmap_btn_b;              // on-map "Wind" badge; slot floats right of WEFAX/Fires/Borders/View
+extern bool windBadgeVisible(void);     // whether that badge should currently be shown -- CM_WX and CM_CLOUDS
 extern void drawWindButton(void);       // draw (or blank) the badge
 extern void windBadgeClicked(void);     // open Windy.com centered on DE
 
@@ -1482,6 +1484,7 @@ extern bool updateAPRSCluster (const SBox &box, bool fresh);
 extern void checkAPRSCluster (void);
 extern bool checkAPRSClusterTouch (const SCoord &s, const SBox &box);
 extern bool isAPRSClusterConnected (void);
+extern bool getAPRSClusterSpots (const APRSSpot **spp, int *nspotsp);
 
 #define LAUNCHES_INTERVAL (2)
 #define BALLOONS_INTERVAL (15)
@@ -2079,7 +2082,8 @@ typedef enum {
     X(CM_PMREL,     BC_INTERVAL,        "REL",       PROPBAND_NONE, false, false)       \
     X(CM_CLOUDS,    CLOUDS_INTERVAL,    "Clouds",    PROPBAND_NONE, false, false)       \
     X(CM_TROPO,     TROPO_INTERVAL,     "Tropo",     PROPBAND_NONE, false, false)       \
-    X(CM_USER,      CACHE_FOREVER,      "User",      PROPBAND_NONE, false, false)
+    X(CM_USER,      CACHE_FOREVER,      "User",      PROPBAND_NONE, false, false)       \
+    X(CM_PHYSICAL,  7*SECSPERDAY,       "Physical",  PROPBAND_NONE, false, false)
 
 #define X(a,b,c,d,e,f)  a,                      // expands COREMAPS to each enum followed by comma
 typedef enum {
@@ -2093,7 +2097,8 @@ typedef enum {
 // macro to test whether the given core map style is just a file (not an active query)
 #define CM_ISFILE(cm)     ((cm) == CM_COUNTRIES || (cm) == CM_TERRAIN || (cm) == CM_DRAP || \
                            (cm) == CM_AURORA    || (cm) == CM_WX      || (cm) == CM_MUF_RT || \
-                           (cm) == CM_CLOUDS    || (cm) == CM_TROPO   || (cm) == CM_USER)
+                           (cm) == CM_CLOUDS    || (cm) == CM_TROPO   || (cm) == CM_USER   || \
+                           (cm) == CM_PHYSICAL)
 
 typedef struct {
     int max_age;                                // refresh interval, secs
@@ -2251,6 +2256,26 @@ typedef struct {
                                  // that distinction -- its footer reports on a master array
                                  // living outside the running menu entirely, so it keeps
                                  // using a plain, caller-formatted string instead).
+    bool no_parent;             // false (default): runMenu() infers a parent/child relationship from
+                                 // item order and indent -- an indented active item has the nearest
+                                 // preceding active item with a smaller indent as its "parent", which
+                                 // is forced on whenever the child is picked. True: indent is purely
+                                 // visual in this menu, so never infer parents. Needed by multi-column
+                                 // grid menus (eg the DX Cluster and On-The-Air filters) where an item
+                                 // merely happens to follow a smaller-indented item in items[] order.
+                                 // Like footer_text above, callers that don't know about this field
+                                 // get false, ie unchanged behavior; set it after initialization.
+    const uint16_t *label_bgs;  // optional, NULL (default) means none. else an array parallel to items[]
+                                 // giving a background color to paint behind each item's label text,
+                                 // with the text color chosen for contrast; 0 means no background for
+                                 // that item. Used to tie a label to a same-colored thing elsewhere.
+                                 // Kept out of MenuItem so callers that fill MenuItems field by field
+                                 // can't pick up uninitialized garbage; set it after initialization.
+    bool fit_cols;              // false (default): every column is as wide as the widest label of ANY
+                                 // column, so n_cols columns need n_cols*widest pixels. true: each
+                                 // column is only as wide as its own widest label, so a short column
+                                 // (eg a lone checkbox) doesn't cost a full-width one. Ignored if
+                                 // n_cols > 8. Set it after initialization.
 } MenuInfo;
 
 extern bool runMenu (MenuInfo &menu);
@@ -2403,6 +2428,10 @@ extern void reportEESize (uint16_t &ee_used, uint16_t &ee_size);
 
 extern bool updateOnTheAir (const SBox &box, bool fresh);
 extern bool checkOnTheAirTouch (TouchType tt, const SCoord &s, const SBox &box);
+
+#define POTASCHED_INTERVAL (5)                  // pane update interval, secs
+extern bool updatePotaSched (const SBox &box, bool fresh);
+extern bool checkPotaSchedTouch (const SCoord &s, const SBox &box);
 
 /*********************************************************************************************
  *
@@ -2576,10 +2605,14 @@ extern PlotMask plot_rotset[PANE_N];       // each pane's PlotChoice rotation ch
                                  PLOTBIT(PLOT_CH_LAUNCHES) | PLOTBIT(PLOT_CH_SATACT) | \
                                  PLOTBIT(PLOT_CH_APRSCLUSTER) | \
                                  PLOTBIT(PLOT_CH_BALLOONS) | PLOTBIT(PLOT_CH_BANDACT) | \
-                                 PLOTBIT(PLOT_CH_MARINE) | PLOTBIT(PLOT_CH_FIREWX))
+                                 PLOTBIT(PLOT_CH_MARINE) | PLOTBIT(PLOT_CH_FIREWX) | \
+                                 PLOTBIT(PLOT_CH_POTASCHED))
                                  // N.B. Quakes deliberately excluded -- its layout (icons, wrapped
                                  // place-name text, severity bars) is sized for the wider PANE_1/2/3
                                  // panes and doesn't fit PANE_0's narrow 139x332 DE/DX overlay geometry.
+                                 // POTA_Sked's row 1 (call+ref+state, ~126px) fits PANE_0's ~137px
+                                 // usable width with a little margin; row 2 and the ref/state fields
+                                 // are all defensively width-guarded in potasched.cpp regardless.
 
 // compute number of bits set in PANE_0_CH_MASK at compile time :-)
 // https://stackoverflow.com/questions/109023/count-the-number-of-set-bits-in-a-32-bit-integer

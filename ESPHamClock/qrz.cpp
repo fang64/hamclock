@@ -66,8 +66,8 @@ void openQRZBio (const DXSpot &s)
  * window without linking an embeddable browser engine. Live Web is the one place a true in-page
  * embed (an <iframe>) is possible, since that already runs inside a real browser tab -- but
  * whether it actually renders depends entirely on the target site's own X-Frame-Options/CSP
- * frame-ancestors policy: some sites (confirmed: Windy.com) block being framed by another site
- * outright, others (confirmed: ADS-B Exchange's globe map) allow it. Since that's a per-site
+ * frame-ancestors policy: some sites (e.g. www.windy.com top-level) block being framed by another site
+ * outright, others (e.g. ADS-B Exchange's globe map, embed.windy.com widget) allow it. Since that's a per-site
  * fact, not something generic, plain openURLPopup() never tries to embed -- see
  * openURLPopupEmbed() for the variant used by callers who've confirmed their target allows it.
  */
@@ -109,11 +109,11 @@ void openURLPopup (const char *url)
         char *cmd = (char *) cmd_mem.getMem();
         if (pos_x >= 0)
             snprintf (cmd, cmd_mem.getSize(),
-                "%s --app=%s --window-size=%d,%d --window-position=%d,%d >/dev/null 2>&1 &",
+                "%s --app='%s' --window-size=%d,%d --window-position=%d,%d >/dev/null 2>&1 &",
                 chromium, url, popup_w, popup_h, pos_x, pos_y);
         else
             snprintf (cmd, cmd_mem.getSize(),
-                "%s --app=%s --window-size=%d,%d >/dev/null 2>&1 &", chromium, url, popup_w, popup_h);
+                "%s --app='%s' --window-size=%d,%d >/dev/null 2>&1 &", chromium, url, popup_w, popup_h);
 
         if ((system (cmd) >> 8) != 0)
             Serial.printf ("URL popup: fail: %s\n", cmd);
@@ -136,9 +136,8 @@ void openURLPopup (const char *url)
 }
 
 /* same as openURLPopup(), except a Live Web touch gets the in-page <iframe> overlay instead of a
- * plain new tab -- only call this for a target confirmed to allow being framed (see the N.B. on
- * openURLPopup() above; ADS-B Exchange's globe map is confirmed to allow it, Windy.com is
- * confirmed NOT to, which is why windbadge.cpp uses openURLPopup() instead of this).
+ * plain new tab -- only call this for a target confirmed to allow being framed (e.g., ADS-B
+ * Exchange's globe map, Windy's embed widget at embed.windy.com/embed2.html).
  * on the X11 desktop build, local (non-Live-Web) touches still get the Chromium popup, same as
  * openURLPopup() -- that path was never affected by framing headers either way, since it opens a
  * genuine top-level window, not a frame.
@@ -172,9 +171,9 @@ void openURL (const char *url)
         StackMalloc cmd_mem(strlen(url) + 50);
         char *cmd = (char *) cmd_mem.getMem();
         #if defined (_IS_APPLE)
-            snprintf (cmd, cmd_mem.getSize(), "open %s &", url);
+            snprintf (cmd, cmd_mem.getSize(), "open '%s' &", url);
         #else
-            snprintf (cmd, cmd_mem.getSize(), "xdg-open %s &", url);
+            snprintf (cmd, cmd_mem.getSize(), "xdg-open '%s' &", url);
         #endif
         if ((system (cmd) >> 8) != 0)
             Serial.printf ("URL local: fail: %s\n", cmd);

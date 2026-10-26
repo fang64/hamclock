@@ -237,8 +237,11 @@ static DXSpot *ontawl_spots;                            // filtered malloced lis
 static ScrollState onta_ss;                             // scrolling state
 static uint8_t onta_sortby;                             // one of ONTASort
 static bool onta_showbio;                               // whether click shows bio
-static uint32_t spots_hash, hash_atscroll;              // hash of onta_spots, value when scrolled away
-#define NEW_SPOTS()     (spots_hash != hash_atscroll)       // handy test for new spots pending
+static bool onta_showstate = true;                           // whether rows show state/country; else callsign gets the room
+static uint32_t spots_hash;                             // hash of onta_spots as last fully loaded
+static uint32_t onta_loaded_sig;                        // content signature of source files when last fully loaded
+static uint32_t onta_peek_sig;                          // latest signature seen while refresh is deferred
+#define NEW_SPOTS()     (onta_peek_sig != onta_loaded_sig)  // handy test for new spots pending
 
 /* return a simple hash of the given spots array
  */
@@ -390,6 +393,13 @@ static void loadONTASettings (void)
         NVWriteUInt32 (NV_ONTA_BANDS, onta_bands);
     }
 
+    uint8_t showst;
+    if (!NVReadUInt8 (NV_ONTA_SHOWSTATE, &showst)) {
+        showst = 1;                                     // as before this setting existed
+        NVWriteUInt8 (NV_ONTA_SHOWSTATE, showst);
+    }
+    onta_showstate = (showst != 0);
+
     // determine onta_showbio
     uint8_t bio = 0;
     if (getQRZId() != QRZ_NONE) {
@@ -409,6 +419,7 @@ static void saveONTASettings (void)
     NVWriteUInt8 (NV_ONTABIO, onta_showbio);
     NVWriteUInt8 (NV_ONTA_MODES, onta_modes);
     NVWriteUInt32 (NV_ONTA_BANDS, onta_bands);
+    NVWriteUInt8 (NV_ONTA_SHOWSTATE, onta_showstate);
 }
 
 /* fill out[3] with the 2-letter state/province for the given reference if we have
@@ -443,6 +454,18 @@ static void ontaStateOrCountry (const char *ref, char out[3])
 #define ONTA_PX_FREQ_LEN  6
 #define ONTA_PX_CALL_LEN  5
 #define ONTA_PX_ID_LEN    9
+#define ONTA_P0_CALL_NOST_LEN  5                // call len when state column is hidden: gets its 2 chars
+#define ONTA_PX_CALL_NOST_LEN  8                // call len when state column is hidden: gets its 2 chars + 1 blank
+
+/* return number of chars for the callsign field, wider when the state column is hidden
+ */
+static int ontaCallLen (const SBox &box)
+{
+    if (BOX_IS_PANE_0(box))
+        return (onta_showstate ? ONTA_P0_CALL_LEN : ONTA_P0_CALL_NOST_LEN);
+    else
+        return (onta_showstate ? ONTA_PX_CALL_LEN : ONTA_PX_CALL_NOST_LEN);
+}
 
 /* create a line of text for the given spot that fits within the box known to be for PANE_0 or PANE_123.
  * pass back n chars assigned to frequency.
@@ -452,60 +475,62 @@ static void formatONTASpot (const DXSpot &spot, const SBox &box, char *line, siz
     const char *id = spot.rx_call;                      // repurposed
     int age = myNow() - spot.spotted;                   // seconds old
 
-    char st[3];
-    ontaStateOrCountry (id, st);
+    // state/country column, empty when hidden -- its room then goes to the callsign instead
+    char st[3] = "";
+    if (onta_showstate)
+        ontaStateOrCountry (id, st);
+
+    int call_len = ontaCallLen (box);
 
     if (BOX_IS_PANE_0(box)) {
 
         // box is 22 wide: freq(5) call(3) " " id(9) " " state(2) age(1)
         // callsign is the field trimmed to make room for state/country (park
         // reference kept full-length); tap directly on the callsign to see it
-        // in full via a tooltip, see checkOnTheAirTouch().
+        // in full via a tooltip, see checkOnTheAirTouch(). With state hidden
+        // the callsign is 5 instead, ie, freq(5) call(5) " " id(9) " " age(1)
 
         freq_len     = ONTA_P0_FREQ_LEN;
-        int call_len = ONTA_P0_CALL_LEN;
-                    // 1 blank
         int id_len   = ONTA_P0_ID_LEN;
-                    // 1 blank
-                    // 2 state/country
-                    // 1 age code
 
         // 5 chars for freq requires MHz when > 99999
+        size_t ns;
         if (spot.kHz > 99999) {
-            size_t ns = snprintf (line, l_len, "%4.0fM%*.*s %*.*s %2.2s",
+            ns = snprintf (line, l_len, "%4.0fM%*.*s %*.*s %s",
                     spot.kHz * 1e-3,
                     call_len, call_len, spot.tx_call,
                     id_len, id_len, id,
                     st);
-            formatAge (age, line+ns, l_len-ns, 1);
         } else {
-            size_t ns = snprintf (line, l_len, "%*.0f%*.*s %*.*s %2.2s",
+            ns = snprintf (line, l_len, "%*.0f%*.*s %*.*s %s",
                     freq_len, spot.kHz,
                     call_len, call_len, spot.tx_call,
                     id_len, id_len, id,
                     st);
-            formatAge (age, line+ns, l_len-ns, 1);
         }
+        formatAge (age, line+ns, l_len-ns, 1);
 
     } else {
 
         // box is 26 wide: freq(6) call(5) " " id(9) " " state(2) " " age(1)
-        // same trade-off as above
+        // same trade-off as above; with state hidden the callsign is 8 instead,
+        // ie, freq(6) call(8) " " id(9) " " age(1)
 
         freq_len     = ONTA_PX_FREQ_LEN;
-        int call_len = ONTA_PX_CALL_LEN;
-                    // 1 blank
         int id_len   = ONTA_PX_ID_LEN;
-                    // 1 blank
-                    // 2 state/country
-                    // 1 blank
-                    // 1 age mark
 
-        size_t ns = snprintf (line, l_len, "%*.0f%*.*s %*.*s %2.2s ",
-                freq_len, spot.kHz,
-                call_len, call_len, spot.tx_call,
-                id_len, id_len, id,
-                st);
+        size_t ns;
+        if (onta_showstate)
+            ns = snprintf (line, l_len, "%*.0f%*.*s %*.*s %2.2s ",
+                    freq_len, spot.kHz,
+                    call_len, call_len, spot.tx_call,
+                    id_len, id_len, id,
+                    st);
+        else
+            ns = snprintf (line, l_len, "%*.0f%*.*s %*.*s ",
+                    freq_len, spot.kHz,
+                    call_len, call_len, spot.tx_call,
+                    id_len, id_len, id);
 
         formatAge (age, line+ns, l_len-ns, 1);
     }
@@ -674,7 +699,7 @@ static void drawONTAVisSpots (const SBox &box)
                 // already ignores spotted state.
                 bool spotted = ontaWasSpottedByMe (spot);
                 uint16_t rem_color = spotted ? RA8875_GREEN : RA8875_WHITE;
-                int call_len = BOX_IS_PANE_0(box) ? ONTA_P0_CALL_LEN : ONTA_PX_CALL_LEN;
+                int call_len = ontaCallLen (box);
                 int id_len   = BOX_IS_PANE_0(box) ? ONTA_P0_ID_LEN   : ONTA_PX_ID_LEN;
 
                 // call field + 1 trailing blank, plain
@@ -804,15 +829,45 @@ static void drawONTAPane (const SBox &box)
     drawONTAVisSpots (box);
 }
 
+/* ONTA's "home" view, ie, where the list sits when freshly (re)built and nothing has been scrolled.
+ * For the Age sort that is the newest spot (end of the array). For Band/Call/Org it is the
+ * BEGINNING of the array (see rebuildONTAWatchList()). ScrollState::atNewest() only knows about
+ * the end of the array, so using it for the non-Age sorts meant that paging down to the last
+ * page looked like "back at newest", which triggered a full rebuild that snapped the view
+ * back to the first page. These two helpers keep "at home" and "scroll to home" consistent
+ * with each other for every sort order.
+ */
+static void ontaScrollToHome (void)
+{
+    if (onta_sortby == ONTAS_AGE)
+        onta_ss.scrollToNewest();
+    else
+        onta_ss.scrollToOldest();
+}
+
+static bool ontaAtHome (void)
+{
+    if (onta_sortby == ONTAS_AGE)
+        return (onta_ss.atNewest());
+
+    // same clamping as ScrollState::scrollToOldest()
+    int home = onta_ss.max_vis - 1;
+    if (home > onta_ss.n_data - 1)
+        home = onta_ss.n_data - 1;
+    if (home < 0)
+        home = 0;
+    return (onta_ss.top_vis == home);
+}
+
 /* handy check whether New Spot symbol needs changing on/off
  */
-static void checkONTANewSpotSymbol (bool was_at_newest)
+static void checkONTANewSpotSymbol (bool was_at_home)
 {
-    if (was_at_newest && !onta_ss.atNewest()) {
-        // record hash when scrolling away and hold rotation
-        hash_atscroll = spotsHash (onta_spots, n_ontaspots);
+    if (was_at_home && !ontaAtHome()) {
+        // hold rotation while scrolled away. refreshing is deferred meanwhile, see updateOnTheAir()
+        onta_peek_sig = onta_loaded_sig;                // nothing new yet as of now
         ROTHOLD_SET(PLOT_CH_ONTA);
-    } else if (!was_at_newest && onta_ss.atNewest()) {
+    } else if (!was_at_home && ontaAtHome()) {
         // fresh view from the beginning and release rotation hold
         scheduleNewPlot (PLOT_CH_ONTA);
         ROTHOLD_CLR(PLOT_CH_ONTA);
@@ -824,24 +879,24 @@ static void checkONTANewSpotSymbol (bool was_at_newest)
  */
 static void scrollONTAUp (const SBox &box)
 {
-    bool was_at_newest = onta_ss.atNewest();
+    bool was_at_home = ontaAtHome();
     if (onta_ss.okToScrollUp ()) {
         onta_ss.scrollUp ();
         drawONTAVisSpots (box);
     }
-    checkONTANewSpotSymbol (was_at_newest);
+    checkONTANewSpotSymbol (was_at_home);
 }
 
 /* scroll down, if appropriate to do so now.
  */
 static void scrollONTADown (const SBox &box)
 {
-    bool was_at_newest = onta_ss.atNewest();
+    bool was_at_home = ontaAtHome();
     if (onta_ss.okToScrollDown()) {
         onta_ss.scrollDown ();
         drawONTAVisSpots (box);
     }
-    checkONTANewSpotSymbol (was_at_newest);
+    checkONTANewSpotSymbol (was_at_home);
 }
 
 /* set bio, radio and new DX from given spot
@@ -1063,13 +1118,9 @@ static void rebuildONTAWatchList(void)
     // Age is the one genuinely chronological sort, so "catch up to the newest spot" is the
     // sensible initial view there. Band/Call/Org are ascending, non-chronological orderings
     // (eg 14094 before 14300) -- for those, start the view at the beginning of the array
-    // (lowest frequency, first call/org alphabetically) rather than jumping to whichever end
-    // scrollToNewest() happens to land on, so scrolling further only ever reveals higher
-    // values, matching what the up/down arrows visually suggest.
-    if (onta_sortby == ONTAS_AGE)
-        onta_ss.scrollToNewest();
-    else
-        onta_ss.scrollToOldest();
+    // (lowest frequency, first call/org alphabetically). ontaScrollToHome() does the right one
+    // for the current sort, and ontaAtHome() recognizes the same position afterwards.
+    ontaScrollToHome();
 }
 
 
@@ -1217,6 +1268,7 @@ static void runONTASortMenu (const SBox &box)
         #define ONTAMENU_NARROW_N   NARRAY(mitems)
 
         MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 2, ONTAMENU_NARROW_N, mitems};
+        menu.no_parent = true;          // indent here is layout only, see MenuInfo.no_parent
         ok = runMenu (menu);
         if (ok) {
             onta_showbio = mitems[11].set;
@@ -1299,6 +1351,7 @@ static void runONTASortMenu (const SBox &box)
         #define ONTAMENU_N   NARRAY(mitems)
 
         MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 3, ONTAMENU_N, mitems};
+        menu.no_parent = true;          // indent here is layout only, see MenuInfo.no_parent
         ok = runMenu (menu);
         if (ok) {
             onta_showbio = mitems[10].set;
@@ -1359,7 +1412,7 @@ static void runONTASortMenu (const SBox &box)
         saveONTASettings();
 
         // full refresh
-        onta_ss.scrollToNewest();
+        ontaScrollToHome();
         scheduleNewPlot (PLOT_CH_ONTA);
     }
 
@@ -1386,33 +1439,47 @@ static void runONTAOrgMenu (const SBox &box)
 
     SBox menu_b = box;                          // copy, not ref!
     menu_b.y = box.y + 2;                        // open near the top of the pane
-    menu_b.x = box.x + 5;
-    menu_b.w = box.w - 10;
+    menu_b.x = box.x + 1;                        // nearly the full pane width: org labels + State? are tight
+    menu_b.w = box.w - 2;
     SBox ok_b;
 
-    // header and per-org labels need persistent (not stack-transient) storage for the
-    // duration of runMenu() below, since MenuItem.label is just a pointer, not a copy
-    char header_label[32];
-    snprintf (header_label, sizeof(header_label), "Show orgs:%s",
-                                                    modeband_filtered ? " (filtered)" : "");
+    // per-org labels need persistent (not stack-transient) storage for the duration of
+    // runMenu() below, since MenuItem.label is just a pointer, not a copy
     char org_labels[N_ONTAORGINFO][24];
 
-    MenuItem mitems[1 + N_ONTAORGINFO];
-    mitems[0] = {MENU_LABEL, false, 0, 2, header_label, NULL};
+    // two columns, filled top to bottom: header + one row per org on the left, then the
+    // "State?" checkbox on the first org's row in the right column, padded with blanks to the
+    // same height so it lands there. The header is split across the two top cells -- "Show
+    // orgs:" on the left, "(filtered)" (if applicable) on the right -- because runMenu() sizes
+    // every column to the widest label, so one long header would make the whole 2-column
+    // dialog about twice as wide as the pane. Each org label gets that org's own marker color as its
+    // background, the same color its park/summit field has in the spot list, so the op can
+    // see at a glance which listed rows each checkbox controls.
+    #define ONTAORGMENU_COL     (1 + N_ONTAORGINFO)                 // items per column
+    #define ONTAORGMENU_N       (2 * ONTAORGMENU_COL)
+    MenuItem mitems[ONTAORGMENU_N];
+    uint16_t label_bgs[ONTAORGMENU_N];
+    memset (label_bgs, 0, sizeof(label_bgs));
+
+    mitems[0] = {MENU_LABEL, false, 0, 2, "Show orgs:", NULL};
     for (size_t i = 0; i < N_ONTAORGINFO; i++) {
         snprintf (org_labels[i], sizeof(org_labels[i]), "%s (%u)",
                                                     onta_org_info[i].org, (unsigned)counts[i]);
-        mitems[1+i].type    = MENU_AL1OFN;
-        mitems[1+i].set     = (onta_orgmask & onta_org_info[i].bit) != 0;
-        mitems[1+i].group   = 1;
-        mitems[1+i].indent  = 12;
-        mitems[1+i].label   = org_labels[i];
-        mitems[1+i].textf   = NULL;
-        mitems[1+i].submenu = false;
+        mitems[1+i] = {MENU_AL1OFN, (onta_orgmask & onta_org_info[i].bit) != 0, 1, 12,
+                                                    org_labels[i], NULL, false};
+        label_bgs[1+i] = onta_org_info[i].color;
     }
-    #define ONTAORGMENU_N   NARRAY(mitems)
+    #define ONTAORGMENU_STATE_I (ONTAORGMENU_COL + 1)
+    for (size_t i = ONTAORGMENU_COL; i < ONTAORGMENU_N; i++)
+        mitems[i] = {MENU_BLANK, false, 0, 0, NULL, NULL, false};
+    if (modeband_filtered)
+        mitems[ONTAORGMENU_COL] = {MENU_LABEL, false, 0, 2, "(filtered)", NULL, false};
+    mitems[ONTAORGMENU_STATE_I] = {MENU_TOGGLE, onta_showstate, 2, 2, "State?", NULL, false};
 
-    MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 1, ONTAORGMENU_N, mitems};
+    MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 2, ONTAORGMENU_N, mitems};
+    menu.no_parent = true;                      // indents are visual only, State? is not a child of anything
+    menu.label_bgs = label_bgs;
+    menu.fit_cols = true;                       // State? column only as wide as it needs, never overlaps long counts
     if (runMenu (menu)) {
         uint32_t new_mask = 0;
         for (size_t i = 0; i < N_ONTAORGINFO; i++)
@@ -1421,11 +1488,12 @@ static void runONTAOrgMenu (const SBox &box)
         // MENU_AL1OFN guarantees at least 1 stays checked, but fall back to All defensively
         // rather than ever persist a mask that would hide every spot
         onta_orgmask = new_mask ? new_mask : ONTA_ORGMASK_ALL;
+        onta_showstate = mitems[ONTAORGMENU_STATE_I].set;
 
         saveONTASettings();
 
         // full refresh, same as runONTASortMenu does on Ok
-        onta_ss.scrollToNewest();
+        ontaScrollToHome();
         scheduleNewPlot (PLOT_CH_ONTA);
     }
 }
@@ -1574,6 +1642,28 @@ static bool retrieveONTASource (const ONTASource &src)
     return (ok);
 }
 
+/* return a cheap signature of the current content of every ONTA source file, without parsing
+ * anything or touching onta_spots. used to notice that new data has arrived while a refresh is
+ * being deferred because the op has scrolled away from the home view. openCachedFile() still
+ * enforces ONTA_INTERVAL so this only downloads when a fetch is actually due.
+ */
+static uint32_t ontaSourcesSig (void)
+{
+    uint32_t hash = 5381;
+    for (size_t i = 0; i < N_ONTASOURCES; i++) {
+        FILE *fp = openCachedFile (onta_sources[i].file, onta_sources[i].page, ONTA_INTERVAL, 0);
+        if (!fp)
+            continue;
+        unsigned char buf[512];
+        size_t n;
+        while ((n = fread (buf, 1, sizeof(buf), fp)) > 0)
+            for (size_t j = 0; j < n; j++)
+                hash = (hash << 5) + hash + buf[j];
+        fclose (fp);
+    }
+    return (hash);
+}
+
 /* download all spots from every onta.txt-schema source (onta.txt itself, plus IOTA's
  * separate iota_spots.txt) into the one onta_spots array.
  * return whether io ok, even if no data -- true so long as at least one source loaded ok,
@@ -1596,6 +1686,9 @@ static bool retrieveONTA (void)
     // refresh the park->state lookup too -- independent of the outcome above
     retrieveONTAParks();
 
+    // note what we just loaded so a later deferred check can tell if anything newer has arrived
+    onta_loaded_sig = onta_peek_sig = ontaSourcesSig();
+
     // result
     return (any_ok);
 }
@@ -1612,11 +1705,22 @@ bool updateOnTheAir (const SBox &box, bool fresh)
         loadONTASettings();
     }
 
+    // if scrolled away from home, defer the full download/parse/rebuild so the list under the op's
+    // finger neither blocks nor changes. just check cheaply for newer data and light the "New"
+    // symbol if there is some; tapping New scrolls home and schedules a normal full refresh through
+    // here, which re-applies every filter via rebuildONTAWatchList().
+    if (!fresh && !ontaAtHome()) {
+        onta_peek_sig = ontaSourcesSig();
+        onta_ss.drawNewSpotsSymbol (NEW_SPOTS(), false);
+        ROTHOLD_SET(PLOT_CH_ONTA);
+        return (true);
+    }
+
     uint32_t prev_hash = spots_hash;
     bool ok = retrieveONTA();
     if (ok) {
         spots_hash = spotsHash (onta_spots, n_ontaspots);
-        if (onta_ss.atNewest()) {
+        if (ontaAtHome()) {
             // N.B. org rotation retired -- see isONTARotating()'s comment -- checkbox
             // multi-select via onta_orgmask always shows the full union of checked orgs
             // now, so there's no longer a "next org" to advance to here.
@@ -1627,13 +1731,10 @@ bool updateOnTheAir (const SBox &box, bool fresh)
             if (findPaneForChoice(PLOT_CH_ONTA) != PANE_NONE
                     && (fresh || spots_hash != prev_hash))
                 scheduleMapRedraw();
-        } else {
-            onta_ss.drawNewSpotsSymbol (NEW_SPOTS(), false);            // on if different
-            ROTHOLD_SET(PLOT_CH_ONTA);                                  // hold rotation
         }
     } else {
         onta_ss.drawNewSpotsSymbol (false, false);                      // insure off either way
-        onta_ss.scrollToNewest();
+        ontaScrollToHome();
         ROTHOLD_CLR(PLOT_CH_ONTA);                                      // release any rotation hold
         plotMessage (box, RA8875_RED, "ONTA download error");
     }
@@ -1663,10 +1764,10 @@ bool checkOnTheAirTouch (TouchType tt, const SCoord &s, const SBox &box)
         }
 
         if (onta_ss.checkNewSpotsTouch (s, box)) {
-            if (!onta_ss.atNewest() && NEW_SPOTS()) {
-                // scroll to newest, let updateOnTheAir() do the rest
+            if (!ontaAtHome() && NEW_SPOTS()) {
+                // scroll to home, let updateOnTheAir() do the rest
                 onta_ss.drawNewSpotsSymbol (true, true);                // immediate feedback 
-                onta_ss.scrollToNewest();
+                ontaScrollToHome();
                 scheduleNewPlot (PLOT_CH_ONTA);
             }
             return (true);                      // claim our even if not showing
@@ -1701,7 +1802,7 @@ bool checkOnTheAirTouch (TouchType tt, const SCoord &s, const SBox &box)
         if (tt == TT_TAP_BX) {
             runONTASpotMenu (box, sp);
         } else {
-            int call_len = BOX_IS_PANE_0(box) ? ONTA_P0_CALL_LEN : ONTA_PX_CALL_LEN;
+            int call_len = ontaCallLen (box);
             bool shown = false;
             if ((int)strlen(sp.tx_call) > call_len) {
                 int freq_len = BOX_IS_PANE_0(box) ? ONTA_P0_FREQ_LEN : ONTA_PX_FREQ_LEN;
