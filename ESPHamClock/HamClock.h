@@ -663,6 +663,7 @@ typedef enum {
     MAPGRID_TROPICS,
     MAPGRID_LATLNG,
     MAPGRID_MAID,
+    MAPGRID_MAID4,                      // Maidenhead fields + 4-char squares
     MAPGRID_AZIM,
     MAPGRID_CQZONES,
     MAPGRID_ITUZONES,
@@ -676,6 +677,13 @@ extern SBox satname_b;                  // satellite name pick
 extern SBox de_info_b;                  // de info pane
 extern SBox map_b;                      // main map 
 extern SBox view_btn_b;                 // map view menu button
+extern SBox motd_btn_b;                 // MOTD mailbox icon (next to UTC button)
+
+// MOTD (Message of the Day) functions
+extern void checkMOTD (void);
+extern bool motdIsPresent (void);
+extern void drawMOTDIcon (void);
+extern void motdClicked (void);
 extern SBox dx_maid_b;                  // dx maidenhead pick
 extern SBox de_maid_b;                  // de maidenhead pick
 extern SBox lkscrn_b;                   // screen lock icon button
@@ -1484,6 +1492,8 @@ extern bool segmentSpanOkRaw (const SCoord &s0, const SCoord &s1, uint16_t borde
 extern bool desiredBearing (const LatLong &ll, float &bear);
 extern void checkBGMap(void);
 extern void normalizePanZoom (PanZoom &pz);
+extern bool panZoomToLocation (const LatLong &ll, uint8_t zoom);
+extern void restorePanZoom (const PanZoom &pz);
 
 
 
@@ -1677,6 +1687,7 @@ extern float nearestKD3Dist2Miles(float d);
  */
 
 extern const char antennas_html[];
+extern const char dashboard_html[];
 
 
 
@@ -1771,6 +1782,7 @@ typedef enum {
     X(CM_PMTOA,     BC_INTERVAL,        "TOA",       PROPBAND_NONE, false, false)       \
     X(CM_PMREL,     BC_INTERVAL,        "REL",       PROPBAND_NONE, false, false)       \
     X(CM_CLOUDS,    CLOUDS_INTERVAL,    "Clouds",    PROPBAND_NONE, false, false)       \
+    X(CM_TROPO,     TROPO_INTERVAL,     "Tropo",     PROPBAND_NONE, false, false)       \
     X(CM_USER,      CACHE_FOREVER,      "User",      PROPBAND_NONE, false, false)
 
 #define X(a,b,c,d,e,f)  a,                      // expands COREMAPS to each enum followed by comma
@@ -1785,7 +1797,7 @@ typedef enum {
 // macro to test whether the given core map style is just a file (not an active query)
 #define CM_ISFILE(cm)     ((cm) == CM_COUNTRIES || (cm) == CM_TERRAIN || (cm) == CM_DRAP || \
                            (cm) == CM_AURORA    || (cm) == CM_WX      || (cm) == CM_MUF_RT || \
-                           (cm) == CM_CLOUDS    || (cm) == CM_USER)
+                           (cm) == CM_CLOUDS    || (cm) == CM_TROPO   || (cm) == CM_USER)
 
 typedef struct {
     int max_age;                                // refresh interval, secs
@@ -2359,7 +2371,9 @@ extern const uint16_t runner[HC_RUNNER_W*HC_RUNNER_H] PROGMEM;
 
 extern void drawSanta(void);
 extern void drawFireworks(void);
+extern void drawEnterprise(void);
 extern SBox santa_b;
+extern SBox ent_b;
 
 /*
  * lightning.cpp
@@ -2384,6 +2398,8 @@ extern bool updateStorms (const SBox &box, bool fresh);
 extern void drawStormsOnMap (void);
 extern bool checkStormsTouch (const SCoord &s, const SBox &box);
 extern const char *getStormHoverLabel (const LatLong &ll);
+extern bool getStormPaneHover (const SCoord &ms, LatLong *ll, char *label, size_t label_len);
+extern bool stormsActive (void);
 extern bool getStormMapMenuInfo (const LatLong &ll, char *line1, size_t line1_len,
         char *line2, size_t line2_len, char *line3, size_t line3_len);
 extern uint16_t stormCategoryColor (uint8_t cat, uint16_t wind_kt);
@@ -3218,6 +3234,7 @@ extern bool bypass_pw;
 // core map update intervals
 #define DRAPMAP_INTERVAL        (300)                   // polling interval, secs
 #define MUF_RT_INTERVAL         (900)                   // polling interval, secs
+#define TROPO_INTERVAL          (6*3600)		// polling interval, secs
 #define DEWX_INTERVAL           (1700)                  // polling interval, secs
 #define DXWX_INTERVAL           (1600)                  // polling interval, secs
 #define BC_INTERVAL             (3400)                  // polling interval, secs

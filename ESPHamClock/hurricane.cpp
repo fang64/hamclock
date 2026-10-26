@@ -25,11 +25,14 @@
 #define STORM_NAMELEN       12          // max name length including EOS
 #define STORM_IDLEN         12          // advisory or storm id length including EOS
 #define STORM_TITLE_Y0      PANETITLE_H  // pane title baseline
-#define STORM_ENTRY_H       22          // height of each storm entry in pane
-#define STORM_START_DY      40          // y offset for first storm entry
-#define STORM_TITLE_RSV     24          // reserve room at right for scroll arrow
-#define STORM_CONE_COLOR    RGB565(80,80,80)      // no-alpha uncertainty outline
-
+#define STORM_ENTRY_H       22          // line spacing for the "no storms" message
+#define STORM_START_DY      40          // y offset (from box top) to first storm row
+#define STORM_ROW_H         50          // total height of one storm row (name + 2 detail lines)
+#define STORM_NAME_DY       24          // baseline of large name line within a row (SMALL_FONT)
+#define STORM_CAT_DY        28          // top of category/wind line within a row (FAST_FONT)
+#define STORM_COORD_DY      40          // top of basin/coords line within a row (FAST_FONT)
+#define STORM_TITLE_RSV     28          // reserve at right so title clears the scroll-arrow control
+#define STORM_RESET_W       18          // size of the reset-view button on the centered storm's row
 static const char storm_page[] = "/storms/storms.txt";
 static const char storm_fn[]   = "storms.txt";
 
@@ -71,6 +74,11 @@ typedef struct {
 
 static Storm  storms[STORM_MAXSTORMS];
 static int    n_storms = 0;
+
+// map-centering state for the "reset view" button (feature: tap storm centers map, button restores)
+static int      storm_centered_idx = -1;        // data index of storm the map is centered on, else -1
+static bool     storm_pz_saved = false;         // whether storm_saved_pz holds a pre-focus map view
+static PanZoom  storm_saved_pz;                 // map view to restore when the reset button is tapped
 static ScrollState storm_ss;
 
 // ---------------------------------------------------------------------------
@@ -192,10 +200,11 @@ static bool parseStormsFile (FILE *fp)
         }
     }
 
-    // sort storms by peak wind speed descending (most intense first)
+    // Sort by peak wind ascending (weakest first). The ScrollState DIR_TOPDOWN model puts the
+    // highest array index on the top display row, so ascending order shows the strongest storm on top.
     for (int i = 0; i < n_storms-1; i++) {
         for (int j = i+1; j < n_storms; j++) {
-            if (storms[j].peak_wind > storms[i].peak_wind) {
+            if (storms[j].peak_wind < storms[i].peak_wind) {
                 Storm tmp = storms[i];
                 storms[i] = storms[j];
                 storms[j] = tmp;
@@ -204,6 +213,7 @@ static bool parseStormsFile (FILE *fp)
     }
 
     storm_ss.n_data = n_storms;
+    storm_ss.scrollToNewest();          // position list so the first full window is shown from the top
     Serial.printf ("STORM: parsed %d storms\n", n_storms);
     return true;
 }
@@ -212,18 +222,59 @@ static bool parseStormsFile (FILE *fp)
 // Pane drawing
 // ---------------------------------------------------------------------------
 
+/* geometry of the reset-view button within a storm row whose top is at row_y */
+static SBox stormResetBox (const SBox &box, uint16_t row_y)
+{
+    SBox b;
+    b.w = STORM_RESET_W;
+    b.h = STORM_RESET_W;
+    b.x = box.x + box.w - STORM_RESET_W - 3;
+    b.y = row_y + 3;
+    return b;
+}
+
+/* draw a small "restore previous map view" button (refresh-style icon) */
+static void drawStormResetButton (const SBox &b)
+{
+    tft.fillRect (b.x, b.y, b.w, b.h, RA8875_BLACK);
+    tft.drawRect (b.x, b.y, b.w, b.h, GRAY);
+
+    uint16_t cx = b.x + b.w/2;
+    uint16_t cy = b.y + b.h/2;
+    int rr = b.w/2 - 4;
+    if (rr < 2)
+        rr = 2;
+    tft.drawCircle (cx, cy, rr, RA8875_WHITE);                  // ring
+    tft.fillRect (cx+rr-1, cy-1, 3, 3, RA8875_BLACK);           // gap in the ring
+    tft.fillTriangle (cx+rr-2, cy-rr+1, cx+rr+2, cy-rr+1,
+                      cx+rr,   cy-rr+4, RA8875_WHITE);           // arrowhead -> refresh/reset
+}
+
 static void drawStormsPane (const SBox &box)
 {
     prepPlotBox (box);
 
-    // title
+    // title -- centered, but kept clear of the scroll-arrow control in the top-right corner.
+    // That control always erases a band at the right edge (even when the arrows are inactive),
+    // so if a full-width centered title would reach under it, shift the title left to clear it.
     selectFontStyle (LIGHT_FONT, SMALL_FONT);
     tft.setTextColor (STORM_COLOR_TITLE);
     const char *title = "Tropical Wx";
     uint16_t tw = getTextWidth (title);
-    uint16_t title_w = box.w > STORM_TITLE_RSV ? box.w - STORM_TITLE_RSV : box.w;
-    tft.setCursor (box.x + (title_w > tw ? (title_w - tw)/2 : 2), box.y + STORM_TITLE_Y0);
+    uint16_t avail_r = box.w > STORM_TITLE_RSV ? box.w - STORM_TITLE_RSV : box.w;  // right limit
+    uint16_t tx = box.w > tw ? (box.w - tw)/2 : 2;                                 // ideal centered x
+    if (tx + tw > avail_r)                                                         // would hit arrows
+        tx = avail_r > tw ? avail_r - tw : 2;                                      // shift left to clear
+    tft.setCursor (box.x + tx, box.y + STORM_TITLE_Y0);
     tft.print (title);
+
+    // how many storm rows actually fit below the title; keep scroll state in sync so the
+    // scroll arrows and getVisDataIndices() reflect the real visible count (not STORM_MAXSTORMS)
+    int max_vis = (int)(box.h - STORM_START_DY) / STORM_ROW_H;
+    if (max_vis < 1)
+        max_vis = 1;
+    storm_ss.max_vis = max_vis;
+    storm_ss.n_data  = n_storms;
 
     // scroll arrows -- title is centered in the space left of this control
     storm_ss.drawScrollUpControl (box, STORM_COLOR_TITLE, STORM_COLOR_TITLE);
@@ -253,35 +304,45 @@ static void drawStormsPane (const SBox &box)
         for (int i = min_i; i <= max_i; i++) {
             const Storm &st = storms[i];
             int r = storm_ss.getDisplayRow (i);
-            uint16_t y = y0 + r * STORM_ENTRY_H * 2;
+            uint16_t y = y0 + r * STORM_ROW_H;          // top of this row
             uint16_t color = stormCategoryColor (st.peak_cat, st.peak_wind);
 
-            // highlight row background
-            tft.fillRect (box.x+1, y-2, box.w-2, STORM_ENTRY_H*2, RA8875_BLACK);
-            tft.drawLine (box.x+1, y + STORM_ENTRY_H*2 - 2,
-                          box.x + box.w-2, y + STORM_ENTRY_H*2 - 2, 1, GRAY);
+            // clear row and draw separator beneath it
+            tft.fillRect (box.x+1, y, box.w-2, STORM_ROW_H, RA8875_BLACK);
+            tft.drawLine (box.x+1, y + STORM_ROW_H - 1,
+                          box.x + box.w-2, y + STORM_ROW_H - 1, 1, GRAY);
 
-            // row 1: name + category + wind
+            // line 1: storm name, large for legibility (SMALL_FONT baseline)
+            selectFontStyle (LIGHT_FONT, SMALL_FONT);
             tft.setTextColor (color);
-            char row1[30];
-            snprintf (row1, sizeof(row1), "%s %s %dkt",
-                      st.name,
+            uint16_t nw = getTextWidth (st.name);
+            tft.setCursor (box.x + (box.w > nw ? (box.w-nw)/2 : 1), y + STORM_NAME_DY);
+            tft.print (st.name);
+
+            // line 2: category + peak wind (FAST_FONT top-left)
+            selectFontStyle (LIGHT_FONT, FAST_FONT);
+            char line2[24];
+            snprintf (line2, sizeof(line2), "%s  %d kt",
                       stormCategoryLabel (st.peak_cat, st.peak_wind, st.pts[0].type),
                       st.peak_wind);
-            uint16_t w1 = getTextWidth (row1);
-            tft.setCursor (box.x + (box.w-w1)/2, y);
-            tft.print (row1);
+            uint16_t w2 = getTextWidth (line2);
+            tft.setCursor (box.x + (box.w > w2 ? (box.w-w2)/2 : 1), y + STORM_CAT_DY);
+            tft.print (line2);
 
-            // row 2: basin + current coords
+            // line 3: basin + current coordinates (FAST_FONT top-left)
             tft.setTextColor (GRAY);
-            char row2[30];
-            snprintf (row2, sizeof(row2), "%s %.1f%c %.1f%c",
+            char line3[28];
+            snprintf (line3, sizeof(line3), "%s %.1f%c %.1f%c",
                       st.basin,
                       fabsf(st.cur_ll.lat_d), st.cur_ll.lat_d >= 0 ? 'N' : 'S',
                       fabsf(st.cur_ll.lng_d), st.cur_ll.lng_d >= 0 ? 'E' : 'W');
-            uint16_t w2 = getTextWidth (row2);
-            tft.setCursor (box.x + (box.w-w2)/2, y + STORM_ENTRY_H);
-            tft.print (row2);
+            uint16_t w3 = getTextWidth (line3);
+            tft.setCursor (box.x + (box.w > w3 ? (box.w-w3)/2 : 1), y + STORM_COORD_DY);
+            tft.print (line3);
+
+            // reset-view button on the storm the map is currently centered on
+            if (storm_pz_saved && i == storm_centered_idx)
+                drawStormResetButton (stormResetBox (box, y));
         }
     }
 }
@@ -290,65 +351,29 @@ static void drawStormsPane (const SBox &box)
 // Map drawing
 // ---------------------------------------------------------------------------
 
+/* Common size unit for all storm map markers, in raw (framebuffer) pixels.
+ * Scales with display resolution (SCALESZ) and grows modestly with map zoom so the
+ * storm stays easy to see when zoomed in (e.g. after tapping a storm zooms to MAX_ZOOM).
+ */
+static int stormSizeUnit()
+{
+    int scale = std::max (1, (int)tft.SCALESZ);
+    return scale * (5 + 2 * (int)pan_zoom.zoom);    // zoom 1->7, 2->9, 3->11, 4->13 per SCALESZ
+}
+
 static int stormTrackWidth()
 {
-    return std::max (2, 2 * (int)tft.SCALESZ);
+    return std::max (2, stormSizeUnit() / 3);
 }
 
-static int stormPointRadius (uint16_t fcst_hour)
+/* radius of the small category-colored dot drawn at each track position */
+static int stormDotRadius()
 {
-    int scale = std::max (1, (int)tft.SCALESZ);
-    if (fcst_hour == 0)
-        return 3 * scale;
-    return std::max (2, (3 * scale) - (int)(fcst_hour / 72));
+    return std::max (2, stormSizeUnit() / 2);
 }
 
-/* Approximate forecast uncertainty from forecast hour only.
- * This is intentionally just an outline because HamClock drawing has no alpha;
- * a filled cone would obscure too much of the map.
- */
-static int stormConeRadius (uint16_t fcst_hour)
-{
-    int scale = std::max (1, (int)tft.SCALESZ);
-    int r = (2 + (int)(fcst_hour / 12)) * scale;
-    int max_r = 18 * scale;
-    if (r < 2 * scale)
-        r = 2 * scale;
-    if (r > max_r)
-        r = max_r;
-    return r;
-}
-
-/* draw an outlined uncertainty cone by connecting forecast-hour error envelopes */
-static void drawStormConeSegment (const SCoord &s0, uint16_t fcst0, const SCoord &s1, uint16_t fcst1)
-{
-    float dx = s1.x - s0.x;
-    float dy = s1.y - s0.y;
-    float d = sqrtf (dx*dx + dy*dy);
-    if (d < 1)
-        return;
-
-    float nx = -dy/d;
-    float ny =  dx/d;
-    int r0 = stormConeRadius (fcst0);
-    int r1 = stormConeRadius (fcst1);
-
-    int x0a = (int)roundf (s0.x + nx*r0);
-    int y0a = (int)roundf (s0.y + ny*r0);
-    int x1a = (int)roundf (s1.x + nx*r1);
-    int y1a = (int)roundf (s1.y + ny*r1);
-    int x0b = (int)roundf (s0.x - nx*r0);
-    int y0b = (int)roundf (s0.y - ny*r0);
-    int x1b = (int)roundf (s1.x - nx*r1);
-    int y1b = (int)roundf (s1.y - ny*r1);
-
-    tft.drawLineRaw (x0a, y0a, x1a, y1a, 1, STORM_CONE_COLOR);
-    tft.drawLineRaw (x0b, y0b, x1b, y1b, 1, STORM_CONE_COLOR);
-    tft.drawCircleRaw (s1.x, s1.y, r1, STORM_CONE_COLOR);
-}
-
-/* draw a storm bullseye at the current position */
-static void drawStormBullseye (const LatLong &ll, uint16_t color)
+/* draw a small category-colored dot at a track position; current==true marks the live position */
+static void drawStormDot (const LatLong &ll, uint16_t color, bool current)
 {
     SCoord s;
     ll2s (ll, s, 1);
@@ -356,25 +381,11 @@ static void drawStormBullseye (const LatLong &ll, uint16_t color)
         return;
 
     ll2sRaw (ll, s, 1);
-    int r1 = 4 * tft.SCALESZ;
-    int r2 = std::max (1, 2 * (int)tft.SCALESZ);
-
-    tft.drawCircleRaw  (s.x, s.y, r1, color);
-    tft.fillCircleRaw  (s.x, s.y, r2, color);
-    tft.drawPixelRaw   (s.x, s.y, RA8875_WHITE);
-}
-
-/* draw a small circle at a forecast track point */
-static void drawStormFcstPoint (const LatLong &ll, uint16_t color, int radius)
-{
-    SCoord s;
-    ll2s (ll, s, 1);
-    if (!overMap(s))
-        return;
-
-    ll2sRaw (ll, s, 1);
-    tft.drawCircleRaw (s.x, s.y, radius, color);
-    tft.fillCircleRaw (s.x, s.y, std::max (1, radius/2), color);
+    int r = stormDotRadius();
+    tft.fillCircleRaw (s.x, s.y, r, color);
+    tft.drawCircleRaw (s.x, s.y, r, RA8875_BLACK);      // thin edge for contrast over the map
+    if (current)
+        tft.drawPixelRaw (s.x, s.y, RA8875_WHITE);      // mark the storm's current position
 }
 
 /* draw all active storm tracks on the map.
@@ -395,7 +406,7 @@ void drawStormsOnMap (void)
         if (st.n_pts == 0)
             continue;
 
-        // draw forecast uncertainty outline first, underneath the track
+        // 1. forecast track center line, category-colored
         for (int j = 1; j < st.n_pts; j++) {
             const StormPoint &p0 = st.pts[j-1];
             const StormPoint &p1 = st.pts[j];
@@ -404,51 +415,26 @@ void drawStormsOnMap (void)
             ll0.lat_d = p0.lat;  ll0.lng_d = p0.lon;
             ll1.lat_d = p1.lat;  ll1.lng_d = p1.lon;
 
-            SCoord s0, s1;
-            ll2sRaw (ll0, s0, 1);
-            ll2sRaw (ll1, s1, 1);
-
-            if (!overMap(s0) || !overMap(s1))
+            SCoord a, b;
+            ll2s (ll0, a, 1);
+            ll2s (ll1, b, 1);
+            if (!overMap(a) || !overMap(b))
                 continue;
 
-            drawStormConeSegment (s0, p0.fcst_hour, s1, p1.fcst_hour);
-        }
-
-        // draw forecast track lines on top of the cone
-        for (int j = 1; j < st.n_pts; j++) {
-            const StormPoint &p0 = st.pts[j-1];
-            const StormPoint &p1 = st.pts[j];
-
-            LatLong ll0, ll1;
-            ll0.lat_d = p0.lat;  ll0.lng_d = p0.lon;
-            ll1.lat_d = p1.lat;  ll1.lng_d = p1.lon;
-
-            SCoord s0, s1;
-            ll2sRaw (ll0, s0, 1);
-            ll2sRaw (ll1, s1, 1);
-
-            if (!overMap(s0) || !overMap(s1))
-                continue;
-
+            ll2sRaw (ll0, a, 1);
+            ll2sRaw (ll1, b, 1);
             uint16_t color = stormCategoryColor (p0.category, p0.wind_kt);
-            tft.drawLineRaw (s0.x, s0.y, s1.x, s1.y, stormTrackWidth(), color);
+            tft.drawLineRaw (a.x, a.y, b.x, b.y, stormTrackWidth(), color);
         }
 
-        // draw forecast track circles
-        for (int j = 1; j < st.n_pts; j++) {
+        // 2. category-colored dot at each position; the current position is flagged
+        for (int j = 0; j < st.n_pts; j++) {
             const StormPoint &pt = st.pts[j];
             LatLong ll;
             ll.lat_d = pt.lat;
             ll.lng_d = pt.lon;
             uint16_t color = stormCategoryColor (pt.category, pt.wind_kt);
-            int r = stormPointRadius (pt.fcst_hour);
-            drawStormFcstPoint (ll, color, r);
-        }
-
-        // draw current position bullseye on top
-        if (st.n_pts > 0 && st.pts[0].fcst_hour == 0) {
-            uint16_t color = stormCategoryColor (st.pts[0].category, st.pts[0].wind_kt);
-            drawStormBullseye (st.cur_ll, color);
+            drawStormDot (ll, color, pt.fcst_hour == 0);
         }
     }
 }
@@ -503,6 +489,41 @@ const char *getStormHoverLabel (const LatLong &ll)
               stormCategoryLabel (st->peak_cat, st->peak_wind, st->pts[0].type),
               st->peak_wind);
     return buf;
+}
+
+/* true if there is at least one active storm (used to skip an empty pane in rotation) */
+bool stormsActive (void)
+{
+    return n_storms > 0;
+}
+
+/* If ms is hovering over a storm row in the Storms pane, return that storm's current position in
+ * *ll plus a short label, and return true. Lets infobox highlight the storm on the map the same
+ * way it does when hovering over a station listing.
+ */
+bool getStormPaneHover (const SCoord &ms, LatLong *ll, char *label, size_t label_len)
+{
+    if (n_storms == 0)
+        return false;
+
+    PlotPane pp = findPaneChoiceNow (PLOT_CH_STORMS);
+    if (pp == PANE_NONE)
+        return false;
+    const SBox &box = plot_b[pp];
+    if (!inBox (ms, box) || ms.y < box.y + STORM_START_DY)      // not over the storm-rows region
+        return false;
+
+    int item = (ms.y - box.y - STORM_START_DY) / STORM_ROW_H;
+    int index;
+    if (!storm_ss.findDataIndex (item, index) || index < 0 || index >= n_storms)
+        return false;
+
+    const Storm &st = storms[index];
+    *ll = st.cur_ll;
+    const StormPoint &cur = st.pts[0];
+    snprintf (label, label_len, "%s  %s  %d kt", st.name,
+              stormCategoryLabel (cur.category, cur.wind_kt, cur.type), cur.wind_kt);
+    return true;
 }
 
 
@@ -654,18 +675,40 @@ bool checkStormsTouch (const SCoord &s, const SBox &box)
 
     } else {
 
-        // tapped a storm entry -- set DX to that storm's current position
-        int item = (s.y - box.y - STORM_START_DY) / (STORM_ENTRY_H * 2);
-        int min_i, max_i;
-        storm_ss.getVisDataIndices (min_i, max_i);
-        int index = min_i + item;
+        // tapped a storm row -- map the display row to the right storm
+        int item = (s.y - box.y - STORM_START_DY) / STORM_ROW_H;
+        int index;
+        if (storm_ss.findDataIndex (item, index) && index >= 0 && index < n_storms) {
 
-        if (index >= 0 && index < n_storms) {
+            // if this is the centered storm and the tap is on its reset button, restore the prior view
+            if (storm_pz_saved && index == storm_centered_idx) {
+                uint16_t row_y = (box.y + STORM_START_DY) + item * STORM_ROW_H;
+                if (inBox (s, stormResetBox (box, row_y))) {
+                    restorePanZoom (storm_saved_pz);
+                    storm_pz_saved = false;
+                    storm_centered_idx = -1;
+                    drawStormsPane (box);
+                    Serial.printf ("STORM: restored previous map view\n");
+                    return true;
+                }
+            }
+
+            // otherwise center & max-zoom the map on this storm
             const Storm &st = storms[index];
             LatLong ll = st.cur_ll;
-            newDX (ll, NULL, NULL);
-            Serial.printf ("STORM: set DX to %s at %.2f,%.2f\n",
-                           st.name, ll.lat_d, ll.lng_d);
+            PanZoom before = pan_zoom;
+            if (panZoomToLocation (ll, MAX_ZOOM)) {
+                if (!storm_pz_saved) {              // remember the view we had before focusing any storm
+                    storm_saved_pz = before;
+                    storm_pz_saved = true;
+                }
+                storm_centered_idx = index;
+            } else {
+                Serial.printf ("STORM: %s tapped; map pan/zoom unavailable in this projection\n",
+                               st.name);
+            }
+            drawStormsPane (box);                  // redraw so the reset button appears on this row
+            Serial.printf ("STORM: panned to %s at %.2f,%.2f\n", st.name, ll.lat_d, ll.lng_d);
             return true;
         }
     }

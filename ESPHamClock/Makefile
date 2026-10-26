@@ -107,6 +107,7 @@ OBJS = \
 	cfg_info.o \
 	contests.o \
 	cputemp.o \
+	dashboard-html.o \
 	debug.o \
 	drawextra.o \
 	dxcluster.o \
@@ -132,6 +133,7 @@ OBJS = \
 	menu.o \
 	moon_imgs.o \
 	moonpane.o \
+	motd.o \
 	ncdxf.o \
 	nmea.o \
 	nvram.o \
