@@ -816,6 +816,7 @@ void initScreen()
     initWiFiRetry();
     drawUptime(true);
     drawScreenLock();
+    drawMOTDIcon();
     drawDemoRunner();
 
     // always close so it will restart if open in any pane
@@ -970,7 +971,8 @@ static void checkTouch()
             if (askOTAupdate (new_version, true, false) && askPasswd ("upgrade", false))
                 doOTAupdate(new_version);
         } else {
-            (void) askOTAupdate (new_version, false, false);
+            if (askOTAupdate (new_version, false, false) && askPasswd ("upgrade", false))
+                doOTAupdate(new_version);
         }
         initScreen();
 #endif // NO_UPGRADE
@@ -1712,6 +1714,8 @@ void drawAllSymbols()
     drawADIFSpotsOnMap();
     drawDXPedsOnMap();
     drawStormsOnMap();
+    drawLaunchesOnMap();
+    drawActiveNetsOnMap();
     drawDEMarker(false);
     drawDXMarker(false);
     drawFarthestPSKSpots();

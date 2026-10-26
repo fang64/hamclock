@@ -1366,6 +1366,55 @@ static bool getWiFiSatellite (WiFiClient &client, char *line, size_t ll)
     snprintf (line, ll, "1.3GHzDoppler %.6f kHz\n", -sn.rate*1.3e6/3e8);   client.print(line);
     snprintf (line, ll, "10GHzDoppler  %.6f kHz\n", -sn.rate*1e7/3e8);     client.print(line);
 
+    // real-frequency Doppler for the current satellite's active transmitters, if known.
+    // RX = where to tune to hear the downlink; TX = where to transmit so the bird receives
+    // its nominal uplink. Based on the live range rate (sn.rate, + = receding).
+    {
+        SatFreq *fl = NULL;
+        int nfl = getSatFreqs (sn.norad, &fl);
+        const double dop = sn.rate / 2.99792458e8;      // fractional Doppler, + = receding
+        int shown = 0;
+        for (int i = 0; i < nfl; i++) {
+            SatFreq *sf = &fl[i];
+            if (strcmp (sf->status, "active") != 0)     // operate active transmitters only
+                continue;
+            int t = ++shown;
+            char key[24];
+
+            snprintf (key, sizeof(key), "Tx%dMode", t);
+            snprintf (line, ll, "%-14s%s\n", key, sf->mode[0] ? sf->mode : "-");
+            client.print (line);
+
+            // downlink: observed lower when receding
+            if (sf->dl_lo > 0) {
+                if (sf->dl_hi > 0 && sf->dl_hi != sf->dl_lo) {
+                    snprintf (key, sizeof(key), "Tx%dRXloMHz", t);
+                    snprintf (line, ll, "%-14s%.6f\n", key, sf->dl_lo*(1-dop)/1e6); client.print (line);
+                    snprintf (key, sizeof(key), "Tx%dRXhiMHz", t);
+                    snprintf (line, ll, "%-14s%.6f\n", key, sf->dl_hi*(1-dop)/1e6); client.print (line);
+                } else {
+                    snprintf (key, sizeof(key), "Tx%dRXMHz", t);
+                    snprintf (line, ll, "%-14s%.6f\n", key, sf->dl_lo*(1-dop)/1e6); client.print (line);
+                }
+            }
+
+            // uplink: transmit higher when receding
+            if (sf->ul_lo > 0) {
+                if (sf->ul_hi > 0 && sf->ul_hi != sf->ul_lo) {
+                    snprintf (key, sizeof(key), "Tx%dTXloMHz", t);
+                    snprintf (line, ll, "%-14s%.6f\n", key, sf->ul_lo*(1+dop)/1e6); client.print (line);
+                    snprintf (key, sizeof(key), "Tx%dTXhiMHz", t);
+                    snprintf (line, ll, "%-14s%.6f\n", key, sf->ul_hi*(1+dop)/1e6); client.print (line);
+                } else {
+                    snprintf (key, sizeof(key), "Tx%dTXMHz", t);
+                    snprintf (line, ll, "%-14s%.6f\n", key, sf->ul_lo*(1+dop)/1e6); client.print (line);
+                }
+            }
+        }
+        if (fl)
+            free (fl);
+    }
+
     // add table of next several events, if any
     time_t *rises, *sets;
     float *razs, *sazs;
@@ -1709,7 +1758,7 @@ static bool getWiFiVOACAP (WiFiClient &client, char *line, size_t line_len)
     int hr_now = bc_utc_tl ? utc_hour_now : de_hour_now;
 
     // display matrix -- rotated with same layout as plotBandConditions()
-    char buf[100];
+    char buf[128];
     int buf_l = 0;
     for (int p_row = 0; p_row < BMTRX_COLS; p_row++) {  // print 1 row for each matrix column
         int m_col = BMTRX_COLS - 1 - p_row;             // convert to bm col with 10 (last col) on top
@@ -1726,7 +1775,7 @@ static bool getWiFiVOACAP (WiFiClient &client, char *line, size_t line_len)
             // bc_matrix is a matrix of 24 rows of UTC 0 .. 23, 8 columns of bands 80-40-30-20-17-15-12-10.
             uint8_t rel = bc_matrix.m[m_row][m_col];
 
-            buf_l += snprintf (buf+buf_l, sizeof(buf)-buf_l, "%3d", rel);
+            buf_l += snprintf (buf+buf_l, sizeof(buf)-buf_l, "%4d", rel);
         }
 
         // finish with band freq
@@ -1743,9 +1792,9 @@ static bool getWiFiVOACAP (WiFiClient &client, char *line, size_t line_len)
     for (int p_col = 0; p_col < BMTRX_ROWS; p_col++) {
         int hr = (hr_now + p_col) % 24;
         if ((hr%4) != 0)
-            buf_l += snprintf (buf+buf_l, sizeof(buf)-buf_l, "   ");
+            buf_l += snprintf (buf+buf_l, sizeof(buf)-buf_l, "    ");
         else
-            buf_l += snprintf (buf+buf_l, sizeof(buf)-buf_l, "%3d", hr);
+            buf_l += snprintf (buf+buf_l, sizeof(buf)-buf_l, "%4d", hr);
     }
     client.println (buf);
 

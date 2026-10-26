@@ -877,7 +877,7 @@ static bool retrieveBandConditions (char *config)
     snprintf (cache_fn, sizeof(cache_fn), "bc-%010u.txt", stringHash(query)); // N.B. see cleanCache() above
 
     // open cache or get fresh
-    FILE *fp = openCachedFile (cache_fn, query, 12*3600L, 100);
+    FILE *fp = openCachedFile (cache_fn, query, 12*3600L, 100, VOACAP_TIMEOUT_MS);
     if (fp) {
 
         char buf[100];
@@ -2201,8 +2201,10 @@ void updateWiFi(void)
             if (pc == PLOT_CH_ADIF)      fresh_redraw[PLOT_CH_ADIF] = true;
             if (pc == PLOT_CH_ONTA)      fresh_redraw[PLOT_CH_ONTA] = true;
             if (pc == PLOT_CH_CONTESTS)  fresh_redraw[PLOT_CH_CONTESTS] = true;
+            if (pc == PLOT_CH_ACTIVENETS) fresh_redraw[PLOT_CH_ACTIVENETS] = true;
             if (pc == PLOT_CH_DXPEDS)    fresh_redraw[PLOT_CH_DXPEDS] = true;
             if (pc == PLOT_CH_STORMS)    fresh_redraw[PLOT_CH_STORMS] = true;
+            if (pc == PLOT_CH_LAUNCHES)  fresh_redraw[PLOT_CH_LAUNCHES] = true;
 
             // go now
             next_update[pp] = 0;
@@ -2361,6 +2363,16 @@ void updateWiFi(void)
             }
             break;
 
+        case PLOT_CH_ACTIVENETS:
+            if (t0 >= next_update[pp]) {
+                if (updateActiveNets(box, fresh_redraw[pc])) {
+                    next_update[pp] = nextPaneUpdate (pc, ACTIVENETS_INTERVAL);
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
         case PLOT_CH_PSK:
             if (t0 >= next_update[pp]) {
                 if (updatePSKReporter(box, fresh_redraw[pc])) {
@@ -2407,6 +2419,24 @@ void updateWiFi(void)
             }
             break;
 
+        case PLOT_CH_HFCOND:
+            if (t0 >= next_update[pp]) {
+                if (updateHFConditions(box))
+                    next_update[pp] = nextPaneUpdate (pc, HQ_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_VHFCOND:
+            if (t0 >= next_update[pp]) {
+                if (updateVHFConditions(box))
+                    next_update[pp] = nextPaneUpdate (pc, HQ_INTERVAL);
+                else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
         case PLOT_CH_DXPEDS:
             if (t0 >= next_update[pp]) {
                 if (updateDXPeds(box, fresh_redraw[pc])) {
@@ -2421,6 +2451,16 @@ void updateWiFi(void)
             if (t0 >= next_update[pp]) {
                 if (updateStorms(box, fresh_redraw[pc])) {
                     next_update[pp] = nextPaneUpdate (pc, STORM_INTERVAL);
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+	case PLOT_CH_LAUNCHES:
+            if (t0 >= next_update[pp]) {
+                if (updateLaunches(box, fresh_redraw[pc])) {
+                    next_update[pp] = nextPaneUpdate (pc, LAUNCHES_INTERVAL);
                     fresh_redraw[pc] = false;
                 } else
                     next_update[pp] = nextWiFiRetry(pc);

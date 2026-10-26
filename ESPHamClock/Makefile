@@ -89,6 +89,7 @@ OBJS = \
 	P13.o \
 	adif.o \
 	adif_parser.o \
+	activenets.o \
     antenna_lookup.o \
 	antennas.o \
 	antennas-html.o \
@@ -113,6 +114,7 @@ OBJS = \
 	dxcluster.o \
 	dxpeds.o \
 	dxpeds_hide.o \
+	hamqsl.o \
 	hurricane.o \
 	earthmap.o \
 	earthsat.o \
@@ -123,6 +125,7 @@ OBJS = \
 	gpsd.o \
 	grayline.o \
 	kd3tree.o \
+	launches.o \
 	lightning.o \
 	infobox.o \
 	liveweb.o \

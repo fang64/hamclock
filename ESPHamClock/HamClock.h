@@ -413,8 +413,12 @@ typedef enum {
     X(PLOT_CH_ADIF,         "ADIF")             \
     X(PLOT_CH_AURORA,       "Aurora")           \
     X(PLOT_CH_DXPEDS,       "DXPeditions")      \
-    X(PLOT_CH_DST,          "Disturbance")       \
-    X(PLOT_CH_STORMS,       "Storms")
+    X(PLOT_CH_DST,          "Disturbance")      \
+    X(PLOT_CH_STORMS,       "Storms")           \
+    X(PLOT_CH_ACTIVENETS,   "Nets")             \
+    X(PLOT_CH_LAUNCHES,     "Launches")         \
+    X(PLOT_CH_HFCOND,       "HF_Bands")         \
+    X(PLOT_CH_VHFCOND,      "VHF_Cond")
 
 #define X(a,b)  a,              // expands PLOTNAMES to each enum and comma
 typedef enum {
@@ -1112,8 +1116,9 @@ extern void doNCDXFBoxTouch (TouchType tt, const SCoord &s);
 // special cleanCache ages
 #define CACHE_FOREVER 0                         // never remove matching files
 #define CACHE_NONE    1                         // remove all files older than 1 second
+#define VOACAP_TIMEOUT_MS 15000                 // timeout for VOACAP and band conditions endpoints
 
-extern FILE *openCachedFile (const char *fn, const char *url, int max_age, int min_size);
+extern FILE *openCachedFile (const char *fn, const char *url, int max_age, int min_size, int to_ms = 0);
 extern bool cleanCache (const char *contains, int max_age);
 
 
@@ -1237,6 +1242,31 @@ extern bool updateContests (const SBox &box, bool fresh);
 extern bool checkContestsTouch (const SCoord &s, const SBox &box);
 extern int getContests (char **&titles, char **&dates);
 
+/*********************************************************************************************
+ *
+ * activenets.cpp
+ *
+ */
+
+#define ACTIVENETS_INTERVAL     (60)            // pane update interval, secs
+extern bool updateActiveNets (const SBox &box, bool fresh);
+extern bool checkActiveNetsTouch (const SCoord &s, const SBox &box);
+
+// active net map plotting + hover info
+typedef struct {
+    char name[NV_TITLE_LEN];            // full, untruncated net name (for hover banner)
+    char ncs[MAX_SPOTCALL_LEN];         // Net Control callsign
+    char grid[MAX_SPOTGRID_LEN];        // NCS grid, may be ""
+    char mode[MAX_SPOTMODE_LEN];        // operating mode
+    char chk[8];                        // check-in count as text
+    float kHz;                          // frequency
+    LatLong ll;                         // NCS location
+} ActiveNetInfo;
+extern void drawActiveNetsOnMap (void);
+extern bool getClosestActiveNet (LatLong &from_ll, LatLong *mark_ll, ActiveNetInfo *info);
+extern bool getActiveNetsPaneInfo (const SCoord &ms, LatLong *mark_ll, ActiveNetInfo *info);
+
+#define LAUNCHES_INTERVAL (2)
 
 
 
@@ -1512,15 +1542,30 @@ extern void restorePanZoom (const PanZoom &pz);
 
 typedef struct _sat_now {
     char name[NV_SATNAME_LEN];          // name
+    int norad;                          // NORAD catalog id, 0 if unknown
     float az, el;                       // az, el degs
     float range, rate;                  // km, m/s + receding
     float raz, saz;                     // rise and set az, degs; either may be SAT_NOAZ
     float rdt, sdt;                     // next rise and set, hrs from now; rdt < 0 if up now
-    _sat_now() { name[0] = '\0'; }      // constructor to insure name properly empty
+    _sat_now() { name[0] = '\0'; norad = 0; }   // constructor to insure name empty and norad clear
 } SatNow;
 #define SAT_NOAZ        (-999)          // error flag for raz or saz
 #define SAT_MIN_EL      -0.4F           // min elevation, rough approx for refraction
 #define TLE_LINEL       70              // TLE line length, including EOS
+
+// one satellite transmitter's frequency/mode info, from the server esats-freq.txt file
+typedef struct {
+    char status[12];                    // active / inactive / future
+    char type[20];                      // Transmitter / Transceiver / Transponder
+    char mode[24];                      // FM, AFSK, LSB, ...
+    char ctcss[12];                     // FM access tone in Hz from backend (e.g. "67.0"), "" if none
+    char desc[64];                      // free-text description
+    long ul_lo, ul_hi;                  // uplink Hz; ul_hi 0 unless a passband
+    long dl_lo, dl_hi;                  // downlink Hz; dl_hi 0 unless a passband
+    float baud;                         // baud, 0 if not applicable
+    bool invert;                        // inverting transponder
+} SatFreq;
+extern int getSatFreqs (int norad, SatFreq **fpp);      // caller must free *fpp if return > 0
 
 extern void updateSatPath(void);
 extern void drawSatPathAndFoot(void);
@@ -2118,6 +2163,10 @@ typedef struct {
 
 extern bool installBMPBox (GenReader &gr, const SBox &box, ImageRefit fit, Message &ynot);
 extern void plotBandConditions (const SBox &box, int busy, const BandCdtnMatrix *bmp, char *config_str);
+extern void plotHFConditions (const SBox &box);         // hamqsl.cpp
+extern void plotVHFConditions (const SBox &box);        // hamqsl.cpp
+extern bool updateHFConditions (const SBox &box);       // hamqsl.cpp
+extern bool updateVHFConditions (const SBox &box);      // hamqsl.cpp
 extern bool plotXY (const SBox &box, float x[], float y[], int nxy, const char *xlabel,
         const char *ylabel, uint16_t color, float y_min, float y_max, float big_value);
 extern bool plotXYstr (const SBox &box, float x[], float y[], int nxy, const char *xlabel,
@@ -2168,7 +2217,7 @@ extern uint32_t plot_rotset[PANE_N];       // bitmask of each pane's PlotChoice 
 
 // bit mask of plot choices suitable for PANE_0
 #define PANE_0_CH_MASK          ((1<<PLOT_CH_DXCLUSTER) | (1<<PLOT_CH_CONTESTS) | (1<<PLOT_CH_ADIF) \
-                                 | (1<<PLOT_CH_ONTA) | (1<<PLOT_CH_DXPEDS))
+                                 | (1<<PLOT_CH_ONTA) | (1<<PLOT_CH_DXPEDS) | (1<<PLOT_CH_ACTIVENETS) | (1<<PLOT_CH_LAUNCHES))
 
 // compute number of bits set in PANE_0_CH_MASK at compile time :-)
 // https://stackoverflow.com/questions/109023/count-the-number-of-set-bits-in-a-32-bit-integer
@@ -2391,7 +2440,7 @@ extern uint16_t ltg_radius_km;          // search radius when not worldwide
  * hurricane.cpp
  */
 
-#define STORM_INTERVAL      (3600*6)    // update interval, secs (6 hours = NHC cadence)
+#define STORM_INTERVAL      (2) 
 
 extern void initStorms (void);
 extern bool updateStorms (const SBox &box, bool fresh);
@@ -2404,7 +2453,17 @@ extern bool getStormMapMenuInfo (const LatLong &ll, char *line1, size_t line1_le
         char *line2, size_t line2_len, char *line3, size_t line3_len);
 extern uint16_t stormCategoryColor (uint8_t cat, uint16_t wind_kt);
 
+/* 
+ * launches.cpp
+ */
 
+extern bool updateLaunches     (const SBox &box, bool fresh);
+extern bool checkLaunchesTouch (const SCoord &s, const SBox &box);
+extern void drawLaunchesOnMap  (void);
+extern const char *getLaunchHoverLabel (const LatLong &ll);
+extern bool getLaunchPaneHover (const SCoord &ms, LatLong *ll, char *label, size_t label_len);
+extern bool getLaunchMapMenuInfo (const LatLong &ll, char *l1, size_t l1n, char *l2, size_t l2n,
+        char *l3, size_t l3n, const char **wiki_url);
 
 
 
@@ -2820,6 +2879,7 @@ extern void drawDigit (const SBox &b, int digit, uint16_t lt, uint16_t bg, uint1
 
 // aurora info
 #define AURORA_INTERVAL         (1700)                  // interval, seconds
+#define HQ_INTERVAL             (60)                    // HamQSL HF/VHF pane refresh, secs
 #define AURORA_COLOR            RGB565(100,200,150)     // plot color
 #define AURORA_MAXPTS           (48)                    // every 30 minutes for 24 hours
 #define AURORA_MAXAGE           (24.0F)                 // max age to plot, hours

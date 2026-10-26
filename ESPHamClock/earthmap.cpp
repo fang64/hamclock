@@ -394,13 +394,32 @@ static void drawMapPopup(void)
     bool have_storm = getStormMapMenuInfo (map_popup.ll,
                     storm_l1, sizeof(storm_l1), storm_l2, sizeof(storm_l2), storm_l3, sizeof(storm_l3));
 
-    MenuItem mitems[14];
+    // launch-site POI info, if the tap landed near a launch pad
+    char launch_l1[52], launch_l2[52], launch_l3[36];
+    const char *launch_wiki = NULL;
+    bool have_launch = getLaunchMapMenuInfo (map_popup.ll,
+                    launch_l1, sizeof(launch_l1), launch_l2, sizeof(launch_l2),
+                    launch_l3, sizeof(launch_l3), &launch_wiki);
+
+    MenuItem mitems[20];
     int n_menu = 0;
+    int mi_wiki = -1;                                           // set below iff a Wikipedia item is added
 
     if (have_storm) {
         mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, storm_l1, 0};
         mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, storm_l2, 0};
         mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, storm_l3, 0};
+        mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, "-------------", 0};
+    }
+
+    if (have_launch) {
+        mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, launch_l1, 0};
+        mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, launch_l2, 0};
+        mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, launch_l3, 0};
+        if (launch_wiki) {
+            mi_wiki = n_menu;
+            mitems[n_menu++] = {MENU_TOGGLE, false, 3, ZINDENT, "Open Launch Complex Wikipedia", 0};
+        }
         mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, "-------------", 0};
     }
 
@@ -437,6 +456,10 @@ static void drawMapPopup(void)
             newDX (map_popup.ll, NULL, NULL);
         if (mitems[mi_setde].set)
             newDE (map_popup.ll, NULL);
+
+        // open the launch site's Wikipedia page if requested
+        if (mi_wiki >= 0 && mitems[mi_wiki].set && launch_wiki)
+            openURL (launch_wiki);
 
         // reset else other stuff
         if (mitems[mi_rst].set) {
@@ -610,31 +633,21 @@ static void drawTropicsGrid()
     if (lw == 0)
         return;
 
-    if (map_proj != MAPP_MERCATOR) {
-
-        // just 2 lines at lat +- 23.5
-        SCoord s00, s01, s10, s11;
-        ll2sRaw (deg2rad(-23.5F), deg2rad(-180), s00, lw);
-        ll2sRaw (deg2rad(23.5F), deg2rad(-180), s10, lw);
-        for (float lng = -180; lng <= 180; lng += FINESTEP_GRID) {
-            ll2sRaw (deg2rad(-23.5), deg2rad(lng), s01, lw);
-            ll2sRaw (deg2rad(23.5), deg2rad(lng), s11, lw);
-            if (segmentSpanOkRaw (s00, s01, lw))
-                tft.drawLineRaw (s00.x, s00.y, s01.x, s01.y, lw, EARTH_GRIDC);
-            s00 = s01;
-            if (segmentSpanOkRaw (s10, s11, lw))
-                tft.drawLineRaw (s10.x, s10.y, s11.x, s11.y, lw, EARTH_GRIDC);
-            s10 = s11;
-        }
-
-    } else {
-
-        // easy! just 2 straight lines
-        uint16_t y = map_b.y + map_b.h/2 - 23.5F*map_b.h/180;
-        tft.drawLine (map_b.x, y, map_b.x+map_b.w-1, y, lw, EARTH_GRIDC);
-        y = map_b.y + map_b.h/2 + 23.5F*map_b.h/180;
-        tft.drawLine (map_b.x, y, map_b.x+map_b.w-1, y, lw, EARTH_GRIDC);
-
+    // draw 2 lines at lat +- 23.5.
+    // use loop for all projections to correctly handle pan and zoom.
+    // N.B. drawLineRaw avoids double-scaling the line width.
+    SCoord s00, s01, s10, s11;
+    ll2sRaw (deg2rad(-23.5F), deg2rad(-180), s00, lw);
+    ll2sRaw (deg2rad(23.5F), deg2rad(-180), s10, lw);
+    for (float lng = -180; lng <= 180; lng += FINESTEP_GRID) {
+        ll2sRaw (deg2rad(-23.5), deg2rad(lng), s01, lw);
+        ll2sRaw (deg2rad(23.5), deg2rad(lng), s11, lw);
+        if (segmentSpanOkRaw (s00, s01, lw))
+            tft.drawLineRaw (s00.x, s00.y, s01.x, s01.y, lw, EARTH_GRIDC);
+        s00 = s01;
+        if (segmentSpanOkRaw (s10, s11, lw))
+            tft.drawLineRaw (s10.x, s10.y, s11.x, s11.y, lw, EARTH_GRIDC);
+        s10 = s11;
     }
 }
 
