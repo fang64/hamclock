@@ -281,6 +281,9 @@ void setup()
     tft.PWM1config(true, RA8875_PWM_CLK_DIV1024); // PWM output for backlight
     initBrightness();
 
+    // initialize Antennas
+    initAntennas();
+
 // #define _GFX_COORD_TEST                              // RBF
 #if defined(_GFX_COORD_TEST)
 
@@ -602,6 +605,7 @@ void setup()
     rss_bnr_b.w = map_b.w;
     rss_bnr_b.h = 68;
     NVReadUInt8 (NV_RSS_ON, &rss_on);
+    initLightning();
     if (!NVReadUInt8 (NV_RSS_INTERVAL, &rss_interval) || rss_interval < RSS_MIN_INT) {
         rss_interval = RSS_DEF_INT;
         NVWriteUInt8 (NV_RSS_INTERVAL, rss_interval);
@@ -1097,8 +1101,11 @@ void newDE (LatLong &ll, const char grid[MAID_CHARLEN])
     char de_grid[MAID_CHARLEN];
     getNVMaidenhead (NV_DE_GRID, de_grid);
     Serial.printf ("New DE: %g %g %s\n", de_ll.lat_d, de_ll.lng_d, de_grid);
+
+    // lightning data was relative to old DE — force immediate refetch
+    resetLightning();
 }
- 
+
 /* find long- or short-path angular distance and east-of-north bearing from_ll to_ll given helper
  * values for sin and cos of from lat. all values in radians in range 0..2pi.
  */
@@ -1321,7 +1328,8 @@ static void drawVersion (bool draw)
         uint16_t vw = getTextWidth (ver);
         tft.setTextColor (col);
         tft.setCursor (version_b.x+version_b.w-vw, version_b.y+1);      // right justify
-        fillSBox (version_b, RA8875_BLACK);
+        // clear a bit beyond box.h to catch descenders from prior strings
+        tft.fillRect (version_b.x, version_b.y, version_b.w, version_b.h+2, RA8875_BLACK);
         // drawSBox (version_b, RA8875_GREEN);         // RBF
         tft.print (ver);
     }
@@ -1482,7 +1490,8 @@ static void drawRotatingMessage()
     selectFontStyle (LIGHT_FONT, FAST_FONT);
     tft.setTextColor (show_red ? RA8875_RED : GRAY);
     uint16_t sw = getTextWidth(str);
-    fillSBox (wifi_b, RA8875_BLACK);
+    // clear a bit beyond box.h to catch descenders (p, g, q, y) from prior strings
+    tft.fillRect (wifi_b.x, wifi_b.y, wifi_b.w, wifi_b.h+2, RA8875_BLACK);
     tft.setCursor (wifi_b.x+(wifi_b.w-sw)/2, wifi_b.y+1);
     tft.print(str);
 }
@@ -1497,7 +1506,8 @@ static void prepUptime()
     const uint16_t y = cs_info.box.y+cs_info.box.h+CSINFO_DROP;
     const uint16_t w = uptime_b.w - UPTIME_INDENT;
 
-    tft.fillRect (x, y, w, CSINFO_H, RA8875_BLACK);             // Skip "Up"
+    // clear a bit beyond CSINFO_H to catch descenders from prior strings
+    tft.fillRect (x, y, w, CSINFO_H+2, RA8875_BLACK);             // Skip "Up"
     // drawSBox (uptime_b, RA8875_GREEN);                       // RBF
 
     selectFontStyle (LIGHT_FONT, FAST_FONT);
@@ -1701,6 +1711,7 @@ void drawAllSymbols()
     drawDEMarker(false);
     drawDXMarker(false);
     drawFarthestPSKSpots();
+    drawLightningOnMap();
     drawSanta ();
 
     updateClocks(false);

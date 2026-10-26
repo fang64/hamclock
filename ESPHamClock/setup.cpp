@@ -3984,6 +3984,19 @@ static void initDXCMD (NV_Name old_e, NV_Name new_e, int cmds_i)
  */
 static void initSetup()
 {
+    // report any active env var overrides regardless of -o flag
+    struct { const char *name; const char *val; } env_vars[] = {
+        { "HAMCLOCK_DX_HOST",        getenv("HAMCLOCK_DX_HOST")        },
+        { "HAMCLOCK_DX_PORT",        getenv("HAMCLOCK_DX_PORT")        },
+        { "HAMCLOCK_X11_FULLSCREEN", getenv("HAMCLOCK_X11_FULLSCREEN") },
+        { "HAMCLOCK_OPT_IN",         getenv("HAMCLOCK_OPT_IN")         },
+        { "HAMCLOCK_AUTO_UPDATE",    getenv("HAMCLOCK_AUTO_UPDATE")    },
+    };
+    for (unsigned i = 0; i < NARRAY(env_vars); i++) {
+        if (env_vars[i].val)
+            ::printf ("Setup: env override: %s=%s\n", env_vars[i].name, env_vars[i].val);
+    }
+
     // init wifi, accept OLD PW if valid
 
     // see if we have a known WPA format
@@ -4193,6 +4206,14 @@ static void initSetup()
         memset (dx_host, 0, sizeof(dx_host));
         NVWriteString(NV_DXHOST, dx_host);
     }
+    // env var overrides NV but does not persist to NV
+    {
+        const char *env_host = getenv ("HAMCLOCK_DX_HOST");
+        if (env_host) {
+            strncpy (dx_host, env_host, sizeof(dx_host)-1);
+            dx_host[sizeof(dx_host)-1] = '\0';
+        }
+    }
     if (!NVReadString(NV_DXLOGIN, dx_login) || !clusterLoginOk()) {
         setClusterLogin();
         NVWriteString(NV_DXLOGIN, dx_login);
@@ -4200,6 +4221,12 @@ static void initSetup()
     if (!NVReadUInt16(NV_DXPORT, &dx_port)) {
         dx_port = 0;
         NVWriteUInt16(NV_DXPORT, dx_port);
+    }
+    // env var overrides NV but does not persist to NV
+    {
+        const char *env_port = getenv ("HAMCLOCK_DX_PORT");
+        if (env_port)
+            dx_port = (uint16_t)atoi(env_port);
     }
 
     if (!NVReadString(NV_DXWLIST, dx_wlist)) {
@@ -4410,6 +4437,11 @@ static void initSetup()
             tft.X11OptionsEngageNow(getX11FullScreen());
         }
     }
+    // env var overrides NV but does not persist
+    if (getenv ("HAMCLOCK_X11_FULLSCREEN")) {
+        bool_pr[X11_FULLSCRN_BPR].state = true;
+        tft.X11OptionsEngageNow(getX11FullScreen());
+    }
 
     // init and validate daily on-off times
 
@@ -4455,6 +4487,9 @@ static void initSetup()
         logok = 0;
         NVWriteUInt8 (NV_LOGUSAGE, logok);
     }
+    // env var overrides NV but does not persist
+    if (getenv ("HAMCLOCK_OPT_IN"))
+        logok = 1;
     bool_pr[LOGUSAGE_BPR].state = (logok != 0);
 
     uint8_t units;
@@ -4637,6 +4672,13 @@ static void initSetup()
     if (!NVReadInt8 (NV_AUTOUPGRADE, &aup_hr)) {
         aup_hr = autoup_tbl[AUP_OFF].local_hour;
         NVWriteInt8 (NV_AUTOUPGRADE, aup_hr);
+    }
+    // env var overrides NV but does not persist — picks randomly from the
+    // three upgrade times so not all installs hit the server simultaneously
+    if (getenv ("HAMCLOCK_AUTO_UPDATE")) {
+        static const AUTOUP_ID aup_choices[] = { AUP_P1, AUP_P2, AUP_P3 };
+        AUTOUP_ID aup_choice = aup_choices[(unsigned)time(NULL) % 3];
+        aup_hr = autoup_tbl[aup_choice].local_hour;
     }
     for (int i = 0; i < AUP_N; i++) {
         if (aup_hr == autoup_tbl[i].local_hour) {

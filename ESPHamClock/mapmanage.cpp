@@ -256,7 +256,7 @@ const float MHz, char query[], char dfn[], char nfn[], size_t qdn_len)
         snprintf (query, qdn_len, qfmt,
                     yr, mo, hr, de_ll.lat_d, de_ll.lng_d, show_lp, bc_power, ZOOM_W, ZOOM_H,
                     MHz, bc_toa, bc_modevalue, bc_toa);
-
+		antenna_addargs(query+strlen(query), qdn_len-strlen(query));   // add antenna selection arguments to query
         // by storing the entire query in the file name we easily know if a new download is needed.
         snprintf (dfn, qdn_len, "map-D-%s-%s-%010u.bmp", style, page, stringHash(query));
         snprintf (nfn, qdn_len, "map-N-%s-%s-%010u.bmp", style, page, stringHash(query));
@@ -333,6 +333,18 @@ long max_age)
             // download new twin voacap maps
             Serial.printf ("%s: downloading fresh D and N files\n", style);
             updateClocks(false);
+
+            // belt-and-braces: honor VOACAP rate limit before any network I/O
+            time_t now = myNow();
+            if (voacapThrottled(now)) {
+                long since = (long)(now - lastVOACAPAttempt());
+                Serial.printf ("VOACAP: %s throttled in installQueryMaps (%ld s since last)\n",
+                               style, since);
+                mapMsg (3000, "Server Busy Please Wait");
+                return false;          // caller will schedule via nextVOACAPRetry()
+            }
+            noteVOACAPAttempt(now);
+
             WiFiClient client;
             if (client.connect(backend_host, backend_port)) {
                 mapMsg (0, "%s", msg);

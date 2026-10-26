@@ -3,12 +3,12 @@
 
 #include "HamClock.h"
 
-
+#define DEFAULT_HOST "clearskyinstitute.com"
 // host name and port of backend server
-const char *backend_host = "clearskyinstitute.com";
+const char *backend_host = DEFAULT_HOST;
 int backend_port = 80;
 // host name of software server
-const char *software_host = "clearskyinstitute.com";
+const char *software_host = DEFAULT_HOST;
 // IP where server thinks we came from
 char remote_addr[16];                           // INET_ADDRSTRLEN
 
@@ -147,6 +147,76 @@ time_t nextWiFiRetry (const char *str)
 time_t nextWiFiRetry (PlotChoice pc)
 {
     return (nextWiFiRetry (plot_names[pc]));
+}
+
+// ---------------------------------------------------------------------------
+// VOACAP-specific exponential-backoff-with-jitter and per-fleet click throttle.
+// Independent of nextWiFiRetry() so other backends (DEWX, MUF-RT, RSS, ...)
+// keep their existing behavior. Reset on success via resetVOACAPRetry().
+// ---------------------------------------------------------------------------
+
+static time_t voacap_backoff = VOACAP_RETRY_BASE;       // current delay, secs
+static time_t last_voacap_attempt;                      // wall time of last fetch attempt
+
+bool isVOACAPMap (CoreMaps cm)
+{
+    return (cm == CM_MUF_V || cm == CM_PMTOA || cm == CM_PMREL);
+}
+
+bool voacapThrottled (time_t now)
+{
+    // only throttle while in an active failure-backoff cycle.
+    // After a successful fetch, voacap_backoff is reset to VOACAP_RETRY_BASE,
+    // so clicks pass through normally until the next failure.
+    if (voacap_backoff <= VOACAP_RETRY_BASE)
+        return false;
+    return (last_voacap_attempt > 0
+         && (now - last_voacap_attempt) < VOACAP_MIN_INTERVAL);
+}
+
+void noteVOACAPAttempt (time_t now)
+{
+    last_voacap_attempt = now;
+}
+
+time_t lastVOACAPAttempt (void)
+{
+    return last_voacap_attempt;
+}
+
+void resetVOACAPRetry (void)
+{
+    if (voacap_backoff != VOACAP_RETRY_BASE)
+        Serial.printf ("VOACAP: backoff reset (was %ld s, base %d s)\n",
+                       (long)voacap_backoff, VOACAP_RETRY_BASE);
+    voacap_backoff = VOACAP_RETRY_BASE;
+}
+
+/* schedule the next VOACAP retry after a failed fetch.
+ * Doubles backoff up to VOACAP_RETRY_MAX, with +/-25% jitter to avoid
+ * a synchronized fleet hammering the backend. Logs each scheduling.
+ */
+time_t nextVOACAPRetry (const char *str)
+{
+    time_t now = myNow();
+
+    // +/-25% jitter so a herd of HamClocks doesn't sync up
+    long jitter = (long)voacap_backoff / 4;
+    long delay  = (long)voacap_backoff + (random(2*jitter+1) - jitter);
+    if (delay < VOACAP_RETRY_BASE)
+        delay = VOACAP_RETRY_BASE;
+
+    time_t next_try = now + delay;
+
+    Serial.printf ("VOACAP: %s failed; backing off %ld s (cur=%ld, max=%d), next at +%ld\n",
+                   str, delay, (long)voacap_backoff, VOACAP_RETRY_MAX, delay);
+
+    // double for next time, cap at max
+    voacap_backoff *= VOACAP_RETRY_MULT;
+    if (voacap_backoff > VOACAP_RETRY_MAX)
+        voacap_backoff = VOACAP_RETRY_MAX;
+
+    return (next_try);
 }
 
 /* given a plot choice return time of its next update.
@@ -729,12 +799,18 @@ void checkBGMap(void)
             else
                 next_map = nextMapUpdate(OTHER_MAPS_INTERVAL);
 
+            if (isVOACAPMap(core_map))
+                resetVOACAPRetry();
+
             // fresh
             map_time = nowWO();                                         // map is now current
             initEarthMap();                                             // restart fresh
 
         } else {
-            next_map = nextWiFiRetry (cm_info[core_map].name);          // schedule retry
+            if (isVOACAPMap(core_map))
+                next_map = nextVOACAPRetry (cm_info[core_map].name);
+            else
+                next_map = nextWiFiRetry (cm_info[core_map].name);      // schedule retry
             if (bc_map)
                 map_time = bc_time;                                     // match bc to avoid immediate retry
             else
@@ -794,6 +870,7 @@ static bool retrieveBandConditions (char *config)
         "%s?YEAR=%d&MONTH=%d&RXLAT=%.3f&RXLNG=%.3f&TXLAT=%.3f&TXLNG=%.3f&UTC=%d&PATH=%d&POW=%d&MODE=%d&TOA=%.1f",
         bc_page, year(t), month(t), dx_ll.lat_d, dx_ll.lng_d, de_ll.lat_d, de_ll.lng_d,
         hour(t), show_lp, bc_power, bc_modevalue, bc_toa);
+    antenna_addargs(query+strlen(query), sizeof(query)-strlen(query));   // add antenna selection arguments to query
 
     // build local cache file name
     char cache_fn[100];
@@ -1767,16 +1844,29 @@ static bool updateBandConditions(const SBox &box, bool force)
     bool io_ok = true;
     if (update_bc) {
 
-        // fresh download
-        if (retrieveBandConditions (config))
-            bc_matrix.next_update = nextRetrieval (PLOT_CH_BC, BC_INTERVAL);
-        else {
-            bc_matrix.next_update = nextWiFiRetry(PLOT_CH_BC);
+        // honor VOACAP rate limit (silent for auto-retry path)
+        time_t now = myNow();
+        if (voacapThrottled(now)) {
+            Serial.printf ("VOACAP: BC throttled, %ld s since last attempt (min %d s)\n",
+                           (long)(now - lastVOACAPAttempt()), VOACAP_MIN_INTERVAL);
+            bc_matrix.next_update = now + VOACAP_MIN_INTERVAL;
+            bc_time = nowWO();          // count as an attempt for map-coordination tdiffs
             io_ok = false;
-        }
+        } else {
+            noteVOACAPAttempt(now);
 
-        // note time of attemp to coordinate with maps
-        bc_time = nowWO();
+            // fresh download
+            if (retrieveBandConditions (config)) {
+                bc_matrix.next_update = nextRetrieval (PLOT_CH_BC, BC_INTERVAL);
+                resetVOACAPRetry();
+            } else {
+                bc_matrix.next_update = nextVOACAPRetry("BC");
+                io_ok = false;
+            }
+
+            // note time of attemp to coordinate with maps
+            bc_time = nowWO();
+        }
     }
 
     // plot
@@ -2126,7 +2216,7 @@ void updateWiFi(void)
                     next_update[pp] = nextPaneUpdate (pc, BC_INTERVAL);
                     fresh_redraw[pc] = false;
                 } else
-                    next_update[pp] = nextWiFiRetry (PLOT_CH_BC);
+                    next_update[pp] = bc_matrix.next_update;     // use schedule set by updateBandConditions
             }
             break;
 
@@ -2347,6 +2437,9 @@ void updateWiFi(void)
     // freshen RSS
     checkRSS();
 
+    // update lightning overlay if due
+    updateLightning();
+
     // maps are checked after each full earth draw -- see drawMoreEarth()
 
     // check for server commands
@@ -2479,7 +2572,22 @@ void scheduleNewCoreMap (CoreMaps cm)
 
     // update and signal go
     DO_CMROT(cm);
-    next_map = 0;
+
+    // VOACAP-derived maps: rate-limit forced fetches so user clicks can't
+    // bypass the backoff and pound the backend.
+    time_t now = myNow();
+    if (isVOACAPMap(cm) && voacapThrottled(now)) {
+        long since = (long)(now - lastVOACAPAttempt());
+        long wait  = (long)VOACAP_MIN_INTERVAL - since;
+        Serial.printf ("VOACAP: click for %s throttled (%ld s since last, wait %ld s)\n",
+                       cm_info[cm].name, since, wait);
+        mapMsg (3000, "Server Busy Please Wait");
+        // schedule first fetch attempt for end of throttle window so the new
+        // map will retrieve as soon as the rate limit allows
+        next_map = lastVOACAPAttempt() + VOACAP_MIN_INTERVAL;
+    } else {
+        next_map = 0;
+    }
 
     // persist
     saveCoreMaps();
@@ -2489,6 +2597,17 @@ void scheduleNewCoreMap (CoreMaps cm)
  */
 void scheduleFreshMap (void)
 {
+    time_t now = myNow();
+    if (isVOACAPMap(core_map) && voacapThrottled(now)) {
+        long since = (long)(now - lastVOACAPAttempt());
+        long wait  = (long)VOACAP_MIN_INTERVAL - since;
+        Serial.printf ("VOACAP: refresh of %s throttled (%ld s since last, wait %ld s)\n",
+                       cm_info[core_map].name, since, wait);
+        mapMsg (3000, "Server Busy Please Wait");
+        // schedule first fetch attempt for end of throttle window
+        next_map = lastVOACAPAttempt() + VOACAP_MIN_INTERVAL;
+        return;
+    }
     next_map = 0;
 }
 

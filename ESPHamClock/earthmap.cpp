@@ -718,6 +718,7 @@ static void drawMapMenu()
         MI_RSS_YES,
         MI_NON_YES,
         MI_CTY_YES,
+        MI_LTG_YES,
         MI_N
     };
     #define PRI_INDENT 2
@@ -751,6 +752,7 @@ static void drawMapMenu()
         {MENU_TOGGLE, false, 4, PRI_INDENT, "RSS", 0},
         {MENU_TOGGLE, false, 5, PRI_INDENT, "Night", 0},
         {MENU_TOGGLE, false, 6, PRI_INDENT, "Cities", 0},
+        {MENU_TOGGLE, false, 7, PRI_INDENT, "Lightning", 0},
     };
 
     // init selections with current states
@@ -792,6 +794,7 @@ static void drawMapMenu()
     mitems[MI_RSS_YES].set = rss_on;
     mitems[MI_NON_YES].set = night_on;
     mitems[MI_CTY_YES].set = names_on;
+    mitems[MI_LTG_YES].set = lightning_on;
 
     // create a box for the menu
     SBox menu_b;
@@ -897,6 +900,13 @@ static void drawMapMenu()
         if (mitems[MI_RSS_YES].set != rss_on) {
             rss_on = mitems[MI_RSS_YES].set;
             NVWriteUInt8 (NV_RSS_ON, rss_on);
+        }
+
+        // check for change of lightning option
+        if (mitems[MI_LTG_YES].set != lightning_on) {
+            lightning_on = mitems[MI_LTG_YES].set;
+            NVWriteUInt8 (NV_LIGHTNING_ON, lightning_on);
+            resetLightning();
         }
 
         // engage change
