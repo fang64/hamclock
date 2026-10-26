@@ -1741,7 +1741,7 @@ static bool updateXRay(const SBox &box)
         } else {
             // overlay short over long with fixed y axis
             char level_str[10];
-            plotXYstr (box, xray.x, xray.l, XRAY_NV, "Hours", "GOES 16 X-Ray", XRAY_LCOLOR, -9, -2, NULL)
+            plotXYstr (box, xray.x, xray.l, XRAY_NV, "Hours", "GOES-18 X-Ray", XRAY_LCOLOR, -9, -2, NULL)
                  && plotXYstr (box, xray.x, xray.s, XRAY_NV, NULL, NULL, XRAY_SCOLOR, -9, -2,
                                 xrayLevel(level_str, space_wx[SPCWX_XRAY]));
         }
@@ -2276,6 +2276,7 @@ void updateWiFi(PlotPane skip_pp)
 
             // if a choice needs fresh_redraw when newly exposed set it here
             if (pc == PLOT_CH_DXCLUSTER) fresh_redraw[PLOT_CH_DXCLUSTER] = true;
+            if (pc == PLOT_CH_HAMALERT)  fresh_redraw[PLOT_CH_HAMALERT] = true;
             if (pc == PLOT_CH_ADIF)      fresh_redraw[PLOT_CH_ADIF] = true;
             if (pc == PLOT_CH_ONTA)      fresh_redraw[PLOT_CH_ONTA] = true;
             if (pc == PLOT_CH_CONTESTS)  fresh_redraw[PLOT_CH_CONTESTS] = true;
@@ -2283,6 +2284,8 @@ void updateWiFi(PlotPane skip_pp)
             if (pc == PLOT_CH_DXPEDS)    fresh_redraw[PLOT_CH_DXPEDS] = true;
             if (pc == PLOT_CH_STORMS)    fresh_redraw[PLOT_CH_STORMS] = true;
             if (pc == PLOT_CH_LAUNCHES)  fresh_redraw[PLOT_CH_LAUNCHES] = true;
+            if (pc == PLOT_CH_BALLOONS)  fresh_redraw[PLOT_CH_BALLOONS] = true;
+            if (pc == PLOT_CH_APRSCLUSTER) fresh_redraw[PLOT_CH_APRSCLUSTER] = true;
 
             // go now
             next_update[pp] = 0;
@@ -2317,6 +2320,26 @@ void updateWiFi(PlotPane skip_pp)
                     fresh_redraw[pc] = false;
                 } else
                     next_update[pp] = nextWiFiRetry (PLOT_CH_DXCLUSTER);
+            }
+            break;
+
+        case PLOT_CH_HAMALERT:
+            if (t0 >= next_update[pp]) {
+                if (updateHamAlert (box, fresh_redraw[pc])) {
+                    next_update[pp] = myNow() + DXC_INTERVAL;   // same fast cadence as DX Cluster
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry (PLOT_CH_HAMALERT);
+            }
+            break;
+
+        case PLOT_CH_APRSCLUSTER:
+            if (t0 >= next_update[pp]) {
+                if (updateAPRSCluster (box, fresh_redraw[pc])) {
+                    next_update[pp] = myNow() + 2;              // very fast, live feed
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry (PLOT_CH_APRSCLUSTER);
             }
             break;
 
@@ -2487,6 +2510,16 @@ void updateWiFi(PlotPane skip_pp)
             }
             break;
 
+        case PLOT_CH_BANDACT:
+            if (t0 >= next_update[pp]) {
+                if (updateBandActivity(box, fresh_redraw[pc])) {
+                    next_update[pp] = nextPaneUpdate (pc, BANDACT_INTERVAL);
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
         case PLOT_CH_SATACT:
             if (t0 >= next_update[pp]) {
                 if (updateHamsat(box, fresh_redraw[pc])) {
@@ -2566,6 +2599,16 @@ void updateWiFi(PlotPane skip_pp)
             if (t0 >= next_update[pp]) {
                 if (updateLaunches(box, fresh_redraw[pc])) {
                     next_update[pp] = nextPaneUpdate (pc, LAUNCHES_INTERVAL);
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_BALLOONS:
+            if (t0 >= next_update[pp]) {
+                if (updateBalloons(box, fresh_redraw[pc])) {
+                    next_update[pp] = nextPaneUpdate (pc, BALLOONS_INTERVAL);
                     fresh_redraw[pc] = false;
                 } else
                     next_update[pp] = nextWiFiRetry(pc);
@@ -2812,6 +2855,7 @@ void forcePaneRotationPrev (PlotPane pp)
 
     // same fresh_redraw bookkeeping as the forward path in updateWiFi()
     if (pc == PLOT_CH_DXCLUSTER)  fresh_redraw[PLOT_CH_DXCLUSTER] = true;
+    if (pc == PLOT_CH_HAMALERT)   fresh_redraw[PLOT_CH_HAMALERT] = true;
     if (pc == PLOT_CH_ADIF)       fresh_redraw[PLOT_CH_ADIF] = true;
     if (pc == PLOT_CH_ONTA)       fresh_redraw[PLOT_CH_ONTA] = true;
     if (pc == PLOT_CH_CONTESTS)   fresh_redraw[PLOT_CH_CONTESTS] = true;
@@ -2819,6 +2863,7 @@ void forcePaneRotationPrev (PlotPane pp)
     if (pc == PLOT_CH_DXPEDS)     fresh_redraw[PLOT_CH_DXPEDS] = true;
     if (pc == PLOT_CH_STORMS)     fresh_redraw[PLOT_CH_STORMS] = true;
     if (pc == PLOT_CH_LAUNCHES)   fresh_redraw[PLOT_CH_LAUNCHES] = true;
+    if (pc == PLOT_CH_BALLOONS)   fresh_redraw[PLOT_CH_BALLOONS] = true;
 
     // go now
     next_update[pp] = 0;

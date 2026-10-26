@@ -417,6 +417,15 @@ static const uint8_t nv_sizes[NV_N] = {
     1,                          // NV_DXC_HIDEIOTA
     1,                          // NV_DXC_MODES
     4,                          // NV_DXC_BANDS
+    1,                          // NV_APRSON
+    NV_APRSHOST_LEN,            // NV_APRSHOST
+    2,                          // NV_APRSPORT
+    2,                          // NV_APRSRADIUS
+    2,                          // NV_APRSCATFILTER
+
+    // 264
+    NV_HAMALERT_PASSWD_LEN,     // NV_HAMALERT_PASSWD
+    NV_HAMALERT_LOGIN_LEN,      // NV_HAMALERT_LOGIN
 
 };
 

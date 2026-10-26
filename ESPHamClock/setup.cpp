@@ -51,10 +51,18 @@ static char dx_login[NV_DXLOGIN_LEN];
 static char hamsat_key[NV_HAMSATKEY_LEN];
 static char mesh_watchlist[NV_MESHWATCHLIST_LEN];    // comma-separated Meshtastic node IDs
 static char dx_host[NV_DXHOST_LEN];
+static char aprs_host[NV_APRSHOST_LEN];
+static uint16_t aprs_port;
+static uint16_t aprs_radius_mi;                 // canonical storage unit is statute miles
+#define APRS_RADIUS_DEFAULT     10               // default search radius, miles
+#define APRS_RADIUS_MIN         1
+#define APRS_RADIUS_MAX         500
 static char rot_host[NV_ROTHOST_LEN];
 static char rig_host[NV_RIGHOST_LEN];
 static char flrig_host[NV_FLRIGHOST_LEN];
 static char piaware_host[NV_PIAWAREHOST_LEN];  // optional PiAware ADS-B receiver host/IP; blank == unused
+static char hamalert_login[NV_HAMALERT_LOGIN_LEN];    // HamAlert.org telnet login; blank == use station call
+static char hamalert_passwd[NV_HAMALERT_PASSWD_LEN];  // HamAlert.org telnet password; blank == unused
 static char gpsd_host[NV_GPSDHOST_LEN];
 static char nmea_file[NV_NMEAFILE_LEN];
 static char ntp_host[NV_NTPHOST_LEN];
@@ -102,6 +110,10 @@ static char i2c_fn[NV_I2CFN_LEN];
 #define CURSOR_DROP     2                       // pixels to drop cursor
 #define NVMS_MKMSK      0x3                     // NV_LBLSTYLE mark mask -- legacy prior to 4.10
 #define R2Y(r)          ((r)*(PR_H+1))          // macro given row index from 0 return screen y
+// Page 3 (rotctld/rigctld/flrig/ADIF/APRS) uses all 8 rows (0-7), and R2Y(7) alone runs the
+// row into the keyboard below. There's no free row to shift into, so this page uses a
+// slightly tighter, gapless row pitch instead -- just enough to clear the keyboard.
+#define R2Y3(r)         ((r)*PR_H)              // tight row spacing, Page 3 only
 #define ERRDWELL_MS     2000                    // err message dwell time, ms
 #define BTNDWELL_MS     200                     // button feedback dwell time, ms
 
@@ -308,7 +320,7 @@ static const char *lbl_styles[LBL_N] = {
 #undef X
 
 // tooltip usage
-static const char tt_reminder[] = "Use control-click, Command-click or middle button to show a tooltip for most fields";
+static const char tt_reminder[] = "Tap a label, right-click, control-click or middle button to show a tooltip for most fields";
 
 // define a string prompt
 typedef struct {
@@ -321,6 +333,8 @@ typedef struct {
     uint8_t v_ci;                               // v_str index of cursor: insert here, delete char before
     uint8_t v_wi;                               // v_str index of first character at left end of window
     const char *tt;                             // tooltip text, if any
+    uint16_t p_color;                           // 0 == use default PR_C, else this exact RGB565 color
+    bool masked;                                // true to display v_str as asterisks (eg passwords)
 } StringPrompt;
 
 
@@ -390,6 +404,9 @@ typedef enum {
     ADIFFN_SPR,
     ADIFWL_SPR,
     ONTAWL_SPR,
+    APRSPORT_SPR,
+    APRSHOST_SPR,
+    APRSRADIUS_SPR,
 
     // page "4"
     HAMSATKEY_SPR,
@@ -409,6 +426,11 @@ typedef enum {
     CSELRED_SPR,
     CSELGRN_SPR,
     CSELBLU_SPR,
+
+    // page "7" -- HamAlert's own dedicated page (index HAMALERT_PAGE), so it never has to
+    // compete for space with anything else again
+    HAMALERTUSER_SPR,
+    HAMALERTPASSWD_SPR,
 
 
     N_SPR
@@ -473,31 +495,38 @@ static StringPrompt string_pr[N_SPR] = {
 
     // "page 3" -- index 2
 
-    {2, {160, R2Y(0), 60, PR_H}, {220, R2Y(0),  90, PR_H}, "port:", NULL, 0, 0, 0,
+    {2, {160, R2Y3(0), 60, PR_H}, {220, R2Y3(0),  90, PR_H}, "port:", NULL, 0, 0, 0,
                 "Enter the network port number for connecting to rotctld"},                       // shadowed
-    {2, {310, R2Y(0), 60, PR_H}, {360, R2Y(0), 300, PR_H}, "host:", rot_host, NV_ROTHOST_LEN, 0, 0,
+    {2, {310, R2Y3(0), 60, PR_H}, {360, R2Y3(0), 300, PR_H}, "host:", rot_host, NV_ROTHOST_LEN, 0, 0,
                 "Enter the IP address or DNS host name for connecting to rotctld"},
-    {2, {160, R2Y(1), 60, PR_H}, {220, R2Y(1),  90, PR_H}, "port:", NULL, 0, 0, 0,
+    {2, {160, R2Y3(1), 60, PR_H}, {220, R2Y3(1),  90, PR_H}, "port:", NULL, 0, 0, 0,
                 "Enter the network port number for connecting to rigctld"},                       // shadowed
-    {2, {310, R2Y(1), 60, PR_H}, {360, R2Y(1), 300, PR_H}, "host:", rig_host, NV_RIGHOST_LEN, 0, 0,
+    {2, {310, R2Y3(1), 60, PR_H}, {360, R2Y3(1), 300, PR_H}, "host:", rig_host, NV_RIGHOST_LEN, 0, 0,
                 "Enter the IP address or DNS host name for connecting to rigctld"},
-    {2, {160, R2Y(2), 60, PR_H}, {220, R2Y(2),  90, PR_H}, "port:", NULL, 0, 0, 0,
+    {2, {160, R2Y3(2), 60, PR_H}, {220, R2Y3(2),  90, PR_H}, "port:", NULL, 0, 0, 0,
                 "Enter the network port number for connecting to flrig"},                         // shadowed
-    {2, {310, R2Y(2), 60, PR_H}, {360, R2Y(2), 300, PR_H}, "host:", flrig_host, NV_FLRIGHOST_LEN, 0, 0,
+    {2, {310, R2Y3(2), 60, PR_H}, {360, R2Y3(2), 300, PR_H}, "host:", flrig_host, NV_FLRIGHOST_LEN, 0, 0,
                 "Enter the IP address or DNS host name for connecting to flrig"},
 
-    {2, {310, R2Y(3), 130, PR_H}, {452, R2Y(3), 208, PR_H}, "PiAware host:", piaware_host, NV_PIAWAREHOST_LEN, 0, 0,
+    {2, {310, R2Y3(3), 130, PR_H}, {452, R2Y3(3), 208, PR_H}, "PiAware host:", piaware_host, NV_PIAWAREHOST_LEN, 0, 0,
                 "Enter the IP address or DNS host name of a local PiAware ADS-B receiver to use for the "
                 "ADS-B airplane icon instead of adsb.lol; leave blank to use adsb.lol"},
 
-    {2, {100, R2Y(4), 60, PR_H}, {160, R2Y(4), 580, PR_H}, "file:", adif_fn, NV_ADIFFN_LEN, 0, 0,
+    {2, {100, R2Y3(4), 60, PR_H}, {160, R2Y3(4), 580, PR_H}, "file:", adif_fn, NV_ADIFFN_LEN, 0, 0,
                 "Enter the path name to the ADIF file; "
                 "you may use environment variables or ~ to refer to your home directory"},
 
-    {2, {215, R2Y(5),  0, PR_H}, {215, R2Y(5), 580, PR_H}, NULL, adif_wlist, NV_ADIFWLIST_LEN, 0, 0,
+    {2, {215, R2Y3(5),  0, PR_H}, {215, R2Y3(5), 580, PR_H}, NULL, adif_wlist, NV_ADIFWLIST_LEN, 0, 0,
                 "Enter ADIF file watch list description; may only be empty if Off"},
-    {2, {215, R2Y(6),  0, PR_H}, {215, R2Y(6), 580, PR_H}, NULL, onta_wlist, NV_ONTAWLIST_LEN, 0, 0,
+    {2, {215, R2Y3(6),  0, PR_H}, {215, R2Y3(6), 580, PR_H}, NULL, onta_wlist, NV_ONTAWLIST_LEN, 0, 0,
                 "Enter OnTheAir watch list description; may only be empty if Off"},
+
+    {2, {160, R2Y3(7), 60, PR_H}, {220, R2Y3(7),  90, PR_H}, "port:", NULL, 0, 0, 0,
+                "Enter APRS-IS server connection port number, typically 14580"},              // shadowed
+    {2, {310, R2Y3(7), 50, PR_H}, {360, R2Y3(7), 260, PR_H}, "host:", aprs_host, NV_APRSHOST_LEN, 0, 0,
+                "Enter APRS-IS server IP address or DNS host name, eg rotate.aprs2.net"},
+    {2, {630, R2Y3(7), 70, PR_H}, {700, R2Y3(7),  90, PR_H}, "radius:", NULL, 0, 0, 0,
+                "Enter search radius for nearby APRS stations, in your Setup distance units"},// shadowed
 
 
     // "page 4" -- index 3
@@ -547,9 +576,24 @@ static StringPrompt string_pr[N_SPR] = {
     {5, {CSEL_VX, CSEL_VYB, 0, PR_H}, {CSEL_VX, CSEL_VYB, 80, PR_H}, NULL, NULL, 0, 0, 0,
                 "Enter magnitude of blue on a scale of 0-255"},                                   // shadowed
 
-    // "page 7" -- index 6
+    // "page 7" -- index 6 -- HAMALERT_PAGE, entirely dedicated to HamAlert. Plenty of clean,
+    // empty space here, so both fields get generous width with room to spare -- no cramming,
+    // no sharing a row with anything else, nowhere near the keyboard's top edge (KB_Y0). Left
+    // an extra blank row between them (row 3 instead of row 2) since the tight, code-standard
+    // 1px gap between adjacent rows leaves effectively no margin for touch-coordinate error.
+    {6, {10, R2Y(1), 115, PR_H}, {135, R2Y(1), 400, PR_H}, "HamAlert User:", hamalert_login,
+                NV_HAMALERT_LOGIN_LEN, 0, 0,
+                "Enter your hamalert.org call sign or, per HamAlert's account system, sometimes an "
+                "email address, to log in with (see Settings on the HamAlert web site); "
+                "leave blank to use your station call sign", RA8875_CYAN},
 
-    // on/off table
+    {6, {10, R2Y(3), 155, PR_H}, {175, R2Y(3), 400, PR_H}, "HamAlert Password:", hamalert_passwd,
+                NV_HAMALERT_PASSWD_LEN, 0, 0,
+                "Enter your hamalert.org telnet password (Settings on the HamAlert web site -- "
+                "this is NOT your HamAlert web login password); leave blank to disable the HamAlert pane",
+                RA8875_CYAN, true},
+
+    // "page 8" -- index 7 -- on/off table (ONOFF_PAGE); no string_pr entries, custom-drawn
 
 };
 
@@ -600,6 +644,7 @@ typedef enum {
     ADIFWLISTB_BPR,
     ONTAWLISTA_BPR,
     ONTAWLISTB_BPR,
+    APRSON_BPR,
 
     // page "4"
     GPIOOK_BPR,
@@ -779,35 +824,38 @@ static BoolPrompt bool_pr[N_BPR] = {
     // "page 3" -- index 2
 
 
-    {2, {10,  R2Y(0),  90, PR_H},  {100, R2Y(0),  60, PR_H}, false, "rotctld?", "No", "Yes", NOMATE,
+    {2, {10,  R2Y3(0),  90, PR_H},  {100, R2Y3(0),  60, PR_H}, false, "rotctld?", "No", "Yes", NOMATE,
                 "Whether to control a rotator using rotctld"},
-    {2, {10,  R2Y(1),  90, PR_H},  {100, R2Y(1),  60, PR_H}, false, "rigctld?", "No", "Yes", NOMATE,
+    {2, {10,  R2Y3(1),  90, PR_H},  {100, R2Y3(1),  60, PR_H}, false, "rigctld?", "No", "Yes", NOMATE,
                 "Whether to control a radio using rigctld"},
-    {2, {10,  R2Y(2),  90, PR_H},  {100, R2Y(2),  60, PR_H}, false, "flrig?",   "No", "Yes", NOMATE,
+    {2, {10,  R2Y3(2),  90, PR_H},  {100, R2Y3(2),  60, PR_H}, false, "flrig?",   "No", "Yes", NOMATE,
                 "Whether to control a radio using flrig"},
 
-    {2, {10,  R2Y(3),  90, PR_H},  {100, R2Y(3), 150, PR_H}, false, "Radio:", "Monitor PTT","Control",NOMATE,
+    {2, {10,  R2Y3(3),  90, PR_H},  {100, R2Y3(3), 150, PR_H}, false, "Radio:", "Monitor PTT","Control",NOMATE,
                 "Whether to allow HamClock to control a radio or just passively monitor PTT"},
 
 
-    {2, {10,  R2Y(4),  90, PR_H},  {100, R2Y(4), 300, PR_H}, false, "ADIF?", "No", NULL, NOMATE,
+    {2, {10,  R2Y3(4),  90, PR_H},  {100, R2Y3(4), 300, PR_H}, false, "ADIF?", "No", NULL, NOMATE,
                 "Whether to open and monitor an ADIF log file"},
 
 
 
-    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  55, PR_H}, false, "ADIF watch:",
+    {2, {10,  R2Y3(5), 150, PR_H},  {160, R2Y3(5),  55, PR_H}, false, "ADIF watch:",
                                                     wla_name[WLA_OFF], wla_name[WLA_NOT], ADIFWLISTB_BPR,
                 "Define the style and filter for an ADIF file watch list"},
-    {2, {10,  R2Y(5), 150, PR_H},  {160, R2Y(5),  55, PR_H}, false, NULL,
+    {2, {10,  R2Y3(5), 150, PR_H},  {160, R2Y3(5),  55, PR_H}, false, NULL,
                                                     wla_name[WLA_FLAG], wla_name[WLA_ONLY], ADIFWLISTA_BPR,0},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
 
-    {2, {10,  R2Y(6), 150, PR_H},  {160, R2Y(6),  55, PR_H}, false, "ONTA watch:",
+    {2, {10,  R2Y3(6), 150, PR_H},  {160, R2Y3(6),  55, PR_H}, false, "ONTA watch:",
                                                     wla_name[WLA_OFF], wla_name[WLA_NOT], ONTAWLISTB_BPR,
                 "Define the style and filter for OnTheAir watch list"},
-    {2, {10,  R2Y(6), 150, PR_H},  {160, R2Y(6),  55, PR_H}, false, NULL,
+    {2, {10,  R2Y3(6), 150, PR_H},  {160, R2Y3(6),  55, PR_H}, false, NULL,
                                                     wla_name[WLA_FLAG], wla_name[WLA_ONLY], ONTAWLISTA_BPR,0},
                                                 // 4x entangled: FF -> TF -> FT -> TT -> ...
+
+    {2, {10,  R2Y3(7),  90, PR_H},  {100, R2Y3(7),  60, PR_H}, false, "APRS?", "No", "Yes", NOMATE,
+                "Whether to connect to an APRS-IS server to show nearby stations"},
 
 
     // "page 4" -- index 3
@@ -1021,10 +1069,14 @@ typedef struct {
 #define SPIDER_PAGE     1                       // 0-based counting
 #define ALLBOOLS_PAGE   4                       // 0-based counting
 #define COLOR_PAGE      5                       // 0-based counting
-#define ONOFF_PAGE      6                       // 0-based counting
+#define HAMALERT_PAGE   6                       // 0-based counting -- its own dedicated page
+#define ONOFF_PAGE      7                       // 0-based counting
 #define KBPAGE_FIRST    0                       // first in a series of pages that need a keyboard
-#define KBPAGE_LAST     3                       // last in a series of pages that need a keyboard
-#define MAX_PAGES       7                       // max number of possible pages
+#define KBPAGE_LAST     3                       // last in a *contiguous* series needing a keyboard;
+                                                 // HAMALERT_PAGE also needs one but sits after the
+                                                 // non-keyboard ALLBOOLS/COLOR pages, so it's handled
+                                                 // as an explicit special case everywhere this is checked
+#define MAX_PAGES       8                       // max number of possible pages
 #define N_PAGES         (HAVE_ONOFF() ? MAX_PAGES : (MAX_PAGES-1))      // last page only if on/off
 
 static Focus cur_focus[MAX_PAGES];              // retain focus for each page
@@ -1534,6 +1586,12 @@ static void initShadowedParams()
                                 "%u", rot_port);
     snprintf (string_pr[FLRIGPORT_SPR].v_str = (char*)malloc(8), string_pr[FLRIGPORT_SPR].v_len = 8,
                                 "%u", flrig_port);
+    snprintf (string_pr[APRSPORT_SPR].v_str = (char*)malloc(8), string_pr[APRSPORT_SPR].v_len = 8,
+                                "%u", aprs_port);
+    snprintf (string_pr[APRSRADIUS_SPR].v_str = (char*)malloc(8), string_pr[APRSRADIUS_SPR].v_len = 8,
+                                "%u", showDistKm()
+                                    ? (unsigned)roundf(aprs_radius_mi * KM_PER_MI)
+                                    : (unsigned)aprs_radius_mi);
     snprintf (string_pr[BME76DT_SPR].v_str = (char*)malloc(8), string_pr[BME76DT_SPR].v_len = 8,
                                 "%.2f", temp_corr[BME_76]);
     snprintf (string_pr[BME76DP_SPR].v_str = (char*)malloc(8), string_pr[BME76DP_SPR].v_len = 8,
@@ -1569,6 +1627,8 @@ static void freeShadowedParams()
 
     free (string_pr[ROTPORT_SPR].v_str);
     free (string_pr[FLRIGPORT_SPR].v_str);
+    free (string_pr[APRSPORT_SPR].v_str);
+    free (string_pr[APRSRADIUS_SPR].v_str);
     free (string_pr[BME76DT_SPR].v_str);
     free (string_pr[BME76DP_SPR].v_str);
     free (string_pr[BME77DT_SPR].v_str);
@@ -2139,7 +2199,7 @@ static void eraseCursor()
 static void drawSPPrompt (StringPrompt *sp)
 {
     if (sp->p_str) {
-        tft.setTextColor (PR_C);
+        tft.setTextColor (sp->p_color ? sp->p_color : PR_C);
         tft.setCursor (sp->p_box.x, sp->p_box.y+sp->p_box.h-PR_D);
         tft.print(sp->p_str);
     }
@@ -2198,7 +2258,17 @@ static void drawSPValue (StringPrompt *sp)
     }
 
     // print and free
-    tft.print (w_dup);
+    if (sp->masked) {
+        // print asterisks matching the visible substring length, never the real characters
+        size_t mask_l = strlen (w_dup);
+        char *mask_str = (char *) malloc (mask_l+1);
+        memset (mask_str, '*', mask_l);
+        mask_str[mask_l] = '\0';
+        tft.print (mask_str);
+        free (mask_str);
+    } else {
+        tft.print (w_dup);
+    }
     free (w_dup);
 
     // printf ("'%-*s' c= %2d w= %2d\n", sp->v_len, sp->v_str, sp->v_ci, sp->v_wi);
@@ -2461,8 +2531,10 @@ static bool s2char (SCoord &s, char &kbchar)
             return (false);
     }
 
-    // check main qwerty
-    if (cur_page >= KBPAGE_FIRST && cur_page <= KBPAGE_LAST) {
+    // check main qwerty -- includes HAMALERT_PAGE, which needs a keyboard too despite sitting
+    // after the non-keyboard ALLBOOLS/COLOR pages, so it can't just extend the KBPAGE range
+    if ((cur_page >= KBPAGE_FIRST && cur_page <= KBPAGE_LAST) || cur_page == HAMALERT_PAGE) {
+
         if (s.y >= KB_Y0) {
             uint16_t kb_y = s.y - KB_Y0;
             uint8_t row = kb_y/KB_CHAR_H;
@@ -2675,6 +2747,28 @@ static void drawNTPPrompts (void)
  */
 static void drawCurrentPageFields()
 {
+    {
+        // "HamAlert User:" (row 1) and "HamAlert Password:" (row 2) on their own dedicated page
+        // (HAMALERT_PAGE), left-aligned at x=10. Nothing else is ever on this page, so the value
+        // boxes extend generously toward the right edge rather than being squeezed. x/w are still
+        // computed from the font's real measured label width so nothing is hand-guessed.
+        StringPrompt &su = string_pr[HAMALERTUSER_SPR];
+        su.p_box.x = 10;
+        uint16_t su_lbl_w = getTextWidth (su.p_str);
+        su.p_box.w = su_lbl_w;
+        uint16_t su_vx = 10 + su_lbl_w + 10;
+        su.v_box.x = su_vx;
+        su.v_box.w = su_vx + 30 < tft.width() ? tft.width() - su_vx - 5 : 30;
+
+        StringPrompt &sw = string_pr[HAMALERTPASSWD_SPR];
+        sw.p_box.x = 10;
+        uint16_t sw_lbl_w = getTextWidth (sw.p_str);
+        sw.p_box.w = sw_lbl_w;
+        uint16_t sw_vx = 10 + sw_lbl_w + 10;
+        sw.v_box.x = sw_vx;
+        sw.v_box.w = sw_vx + 30 < tft.width() ? tft.width() - sw_vx - 5 : 30;
+    }
+
     // draw relevant string prompts on this page
     for (int i = 0; i < N_SPR; i++) {
         StringPrompt *sp = &string_pr[i];
@@ -3547,7 +3641,7 @@ static void changePage (int new_page)
         setInitialFocus ();
 
     } else {
-        if (prev_page >= KBPAGE_FIRST && prev_page <= KBPAGE_LAST) {
+        if ((prev_page >= KBPAGE_FIRST && prev_page <= KBPAGE_LAST) || prev_page == HAMALERT_PAGE) {
             // just refresh top portion, keyboard already ok
             tft.fillRect (0, 0, tft.width(), KB_Y0-1, BG_C);
             drawPageButton();
@@ -3747,6 +3841,27 @@ static bool validateStringPrompts (bool show_errors)
         }
     }
 
+    // check APRS cluster info if used
+    if (bool_pr[APRSON_BPR].state) {
+        if (!hostOK (aprs_host, NV_APRSHOST_LEN))
+            badsids[n_badsids++] = APRSHOST_SPR;
+        if (!portOK (string_pr[APRSPORT_SPR].v_str, 1, &aprs_port))
+            badsids[n_badsids++] = APRSPORT_SPR;
+        unsigned radius_entered;
+        if (sscanf (string_pr[APRSRADIUS_SPR].v_str, "%u", &radius_entered) != 1 || radius_entered < 1) {
+            badsids[n_badsids++] = APRSRADIUS_SPR;
+        } else {
+            // stored canonically in miles regardless of display units
+            unsigned radius_mi = showDistKm()
+                                ? (unsigned)roundf (radius_entered / KM_PER_MI) : radius_entered;
+            if (radius_mi < APRS_RADIUS_MIN)
+                radius_mi = APRS_RADIUS_MIN;
+            else if (radius_mi > APRS_RADIUS_MAX)
+                radius_mi = APRS_RADIUS_MAX;
+            aprs_radius_mi = (uint16_t) radius_mi;
+        }
+    }
+
     // ONTA watch list must compile successfully if being used
     if (getWatchListState (WLID_ONTA, NULL) != WLA_OFF) {
         strTrimAll (onta_wlist);
@@ -3793,6 +3908,15 @@ static bool validateStringPrompts (bool show_errors)
     if (strlen (string_pr[PIAWAREHOST_SPR].v_str) > 0) {
         if (!hostOK(string_pr[PIAWAREHOST_SPR].v_str, NV_PIAWAREHOST_LEN))
             badsids[n_badsids++] = PIAWAREHOST_SPR;
+    }
+
+    // HamAlert password is optional -- blank just means the pane is unused. if a password has been
+    // entered, we need a callsign to log in with: either the explicit HamAlert User field or, failing
+    // that, the main station call sign.
+    if (strlen (string_pr[HAMALERTPASSWD_SPR].v_str) > 0
+                        && strlen (string_pr[HAMALERTUSER_SPR].v_str) == 0 && !callsignOk (cs_info.call)) {
+        err_msg = "HamAlert requires a call sign, either HamAlert User or the station call sign";
+        badsids[n_badsids++] = err_sid = HAMALERTUSER_SPR;
     }
 
     // check for plausible temperature and pressure corrections and file name if used
@@ -3955,7 +4079,7 @@ static bool getWPACreds()
     }
 
     // look for ssid and psk
-    char buf[100], wpa_ssid[100], wpa_psk[100];
+    char buf[100], wpa_ssid[101], wpa_psk[101];
     bool found_ssid = false, found_psk = false;
     while (fgets (buf, sizeof(buf), wpa_fp)) {
         if (sscanf (buf, " ssid=\"%100[^\"]\"", wpa_ssid) == 1)
@@ -4254,6 +4378,18 @@ static void initSetup()
         NVWriteString (NV_PIAWAREHOST, piaware_host);
     }
 
+    // init optional HamAlert telnet login and password; blank login falls back to station call sign,
+    // blank password means the pane is not configured for use at all.
+
+    if (!NVReadString (NV_HAMALERT_LOGIN, hamalert_login)) {
+        hamalert_login[0] = '\0';
+        NVWriteString (NV_HAMALERT_LOGIN, hamalert_login);
+    }
+    if (!NVReadString (NV_HAMALERT_PASSWD, hamalert_passwd)) {
+        hamalert_passwd[0] = '\0';
+        NVWriteString (NV_HAMALERT_PASSWD, hamalert_passwd);
+    }
+
 
 
     // init whether to command radio
@@ -4284,6 +4420,30 @@ static void initSetup()
         setClusterLogin();
         NVWriteString(NV_DXLOGIN, dx_login);
     }
+    // init APRS cluster info
+
+    uint8_t aprs_on;
+    if (!NVReadUInt8 (NV_APRSON, &aprs_on)) {
+        aprs_on = 0;
+        NVWriteUInt8 (NV_APRSON, aprs_on);
+    }
+    bool_pr[APRSON_BPR].state = (aprs_on != 0);
+
+    if (!NVReadString(NV_APRSHOST, aprs_host)) {
+        strncpy (aprs_host, "rotate.aprs2.net", sizeof(aprs_host)-1);
+        aprs_host[sizeof(aprs_host)-1] = '\0';
+        NVWriteString(NV_APRSHOST, aprs_host);
+    }
+    if (!NVReadUInt16(NV_APRSPORT, &aprs_port)) {
+        aprs_port = 14580;                                      // standard APRS-IS full-feed port
+        NVWriteUInt16(NV_APRSPORT, aprs_port);
+    }
+    if (!NVReadUInt16(NV_APRSRADIUS, &aprs_radius_mi) ||
+                aprs_radius_mi < APRS_RADIUS_MIN || aprs_radius_mi > APRS_RADIUS_MAX) {
+        aprs_radius_mi = APRS_RADIUS_DEFAULT;
+        NVWriteUInt16(NV_APRSRADIUS, aprs_radius_mi);
+    }
+
     if (!NVReadString(NV_HAMSATKEY, hamsat_key)) {
         memset (hamsat_key, 0, sizeof(hamsat_key));
         NVWriteString(NV_HAMSATKEY, hamsat_key);
@@ -5154,8 +5314,8 @@ static void runSetup()
             if (!bp || !boolIsRelevant(bp))
                 continue;
 
-            // check for tooltip
-            if (bp->tt && ui.tt == TT_TAP_BX) {
+            // check for tooltip: secondary tap OR tapping directly on the prompt label
+            if (bp->tt && (ui.tt == TT_TAP_BX || (bp->p_str && inBox (ui.tap, bp->p_box)))) {
                 tooltip (ui.tap, bp->tt);
                 continue;
             }
@@ -5384,8 +5544,8 @@ static void runSetup()
 
         } else if (tappedStringPrompt (ui.tap, &sp) && stringIsRelevant (sp)) {
 
-            // check for tooltip
-            if (sp->tt && ui.tt == TT_TAP_BX) {
+            // check for tooltip: secondary tap OR tapping directly on the prompt label
+            if (sp->tt && (ui.tt == TT_TAP_BX || (sp->p_str && inBox (ui.tap, sp->p_box)))) {
                 tooltip (ui.tap, sp->tt);
                 continue;
             }
@@ -5461,6 +5621,11 @@ static void saveParams2NV()
     NVWriteString (NV_ONTAWLIST, onta_wlist);
     NVWriteUInt8 (NV_ONTAWLISTMASK, bool_pr[ONTAWLISTA_BPR].state | (bool_pr[ONTAWLISTB_BPR].state << 1));
 
+    NVWriteUInt8 (NV_APRSON, bool_pr[APRSON_BPR].state);
+    NVWriteString (NV_APRSHOST, aprs_host);
+    NVWriteUInt16 (NV_APRSPORT, aprs_port);
+    NVWriteUInt16 (NV_APRSRADIUS, aprs_radius_mi);
+
     // N.B. these are NOT contiguous so can not loop through N_DXCLCMDS
     NVWriteString (NV_DXCMD0, dxcl_cmds[0]);
     NVWriteString (NV_DXCMD1, dxcl_cmds[1]);
@@ -5514,6 +5679,8 @@ static void saveParams2NV()
     NVWriteString (NV_FLRIGHOST, flrig_host);
     NVWriteUInt16 (NV_FLRIGPORT, flrig_port);
     NVWriteString (NV_PIAWAREHOST, piaware_host);
+    NVWriteString (NV_HAMALERT_LOGIN, hamalert_login);
+    NVWriteString (NV_HAMALERT_PASSWD, hamalert_passwd);
     NVWriteUInt8 (NV_SETRADIO, bool_pr[SETRADIO_BPR].state);
     NVWriteUInt8 (NV_SCROLLDIR, bool_pr[SCROLLDIR_BPR].state);
     NVWriteUInt8 (NV_NEWDXDEWX, bool_pr[NEWDXDEWX_BPR].state);
@@ -5760,6 +5927,33 @@ const char *getPiAwareHost()
     return (piaware_host);
 }
 
+/* return pointer to static storage containing the HamAlert.org telnet login call sign,
+ * falling back to the station call sign if not explicitly set.
+ * N.B. only sensible if useHamAlert() is true
+ */
+const char *getHamAlertLogin()
+{
+    return (hamalert_login[0] != '\0' ? hamalert_login : cs_info.call);
+}
+
+/* return pointer to static storage containing the HamAlert.org telnet password,
+ * or an empty string if not configured.
+ * N.B. only sensible if useHamAlert() is true
+ */
+const char *getHamAlertPasswd()
+{
+    return (hamalert_passwd);
+}
+
+/* return whether the HamAlert pane is configured for use, ie, a telnet password has been entered
+ * and we have some callsign, explicit or from the station, to log in with.
+ */
+bool useHamAlert()
+{
+    return (hamalert_passwd[0] != '\0'
+                        && (hamalert_login[0] != '\0' || callsignOk (cs_info.call)));
+}
+
 /* return pointer to static storage containing the NMEA host
  * N.B. only sensible if useNMEATime() and/or useNMEALoc() is true
  */
@@ -5791,6 +5985,37 @@ bool useDXCluster()
     return (bool_pr[CLUSTER_BPR].state);
 }
 
+/* return pointer to static storage containing the APRS-IS server host
+ * N.B. only sensible if useAPRSCluster() is true
+ */
+const char *getAPRSClusterHost()
+{
+    return (aprs_host);
+}
+
+/* return APRS-IS server port
+ * N.B. only sensible if useAPRSCluster() is true
+ */
+int getAPRSClusterPort()
+{
+    return (aprs_port);
+}
+
+/* return nearby-station search radius in statute miles, regardless of display units
+ */
+int getAPRSClusterRadiusMiles()
+{
+    return (aprs_radius_mi);
+}
+
+/* return whether we should be allowing the APRS cluster pane, ie the user has turned it on
+ * in Setup and given it a host to connect to.
+ */
+bool useAPRSCluster()
+{
+    return (bool_pr[APRSON_BPR].state && aprs_host[0] != '\0');
+}
+
 /* return whether week starts on Monday, else Sunday
  */
 bool weekStartsOnMonday()
@@ -5810,6 +6035,8 @@ bool useMagBearing()
  */
 int getRawPathWidth (ColorSelection id)
 {
+    if (id == BAND630_CSPR)
+        return (RAWTHINPATHSZ);            // always on, always thin -- no editable on/off state
     ColSelPrompt &csp = csel_pr[id];
     return (csp.o_state ? (csp.t_state ? RAWTHINPATHSZ : RAWWIDEPATHSZ) : 0);
 }
@@ -5820,6 +6047,8 @@ int getRawPathWidth (ColorSelection id)
  */
 int getRawSpotRadius (ColorSelection id)
 {
+    if (id == BAND630_CSPR)
+        return (2*RAWTHINPATHSZ);          // matches the ColSelPrompt-overload's own formula, thin
     ColSelPrompt &csp = csel_pr[id];
     return (getRawSpotRadius (csp));
 }
@@ -6129,10 +6358,19 @@ bool setDXCluster (char *host, char *port_str, Message &ynot)
     return(true);
 }
 
+// hardcoded 630m color, since it has no editable Setup page slot -- see the BAND630_CSPR
+// comment in HamClock.h for why. Used by every getMapColor()/getRawPathWidth()/etc accessor
+// below, all of which must check for this id BEFORE indexing csel_pr[], since BAND630_CSPR's
+// enum value is N_CSPR (one past the end of that array).
+#define BAND630_HARDCODED_COLOR RGB565(120,80,220)      // dark violet -- distinct from all 12
+                                                          // other band colors and from borders/states
+
 /* return current rgb565 color for the given ColorSelection
  */
 uint16_t getMapColor (ColorSelection id)
 {
+    if (id == BAND630_CSPR)
+        return (BAND630_HARDCODED_COLOR);
     uint16_t c;
     if (id >= 0 && id < N_CSPR) {
         ColSelPrompt &p = csel_pr[id];
@@ -6148,6 +6386,8 @@ uint16_t getMapColor (ColorSelection id)
  */
 bool getMapColorThin (ColorSelection id)
 {
+    if (id == BAND630_CSPR)
+        return (true);                                   // always drawn thin, matches most bands' default
     return (id >= 0 && id < N_CSPR) ? csel_pr[id].t_state : true;
 }
 
@@ -6155,6 +6395,8 @@ bool getMapColorThin (ColorSelection id)
  */
 const char* getMapColorName (ColorSelection id)
 {
+    if (id == BAND630_CSPR)
+        return ("630 m");
     const char *n;
     if (id >= 0 && id < N_CSPR)
         n = csel_pr[id].p_str;
@@ -6191,6 +6433,8 @@ bool setMapColor (const char *name, uint16_t rgb565)
  */
 bool getPathDashed (ColorSelection id)
 {
+    if (id == BAND630_CSPR)
+        return (false);                    // no editable dash control -- solid, like most bands' default
     return (csel_pr[id].a_state);
 }
 

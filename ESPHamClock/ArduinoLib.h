@@ -138,6 +138,7 @@ typedef enum {
  */
 #define DEBUG_SUBSYS                        \
     X(DEBUG_ADIF,       "ADIF")             \
+    X(DEBUG_APRS,       "aprs")             \
     X(DEBUG_BMP,        "BMP")              \
     X(DEBUG_BC,         "BigClock")         \
     X(DEBUG_CACHE,      "cache")            \
@@ -197,6 +198,11 @@ extern const char *hc_version;
 extern bool version_https;
 extern std::string our_dir;
 extern void doExit(void);
+#if defined(_IS_ANDROID)
+extern "C" void android_request_restart(void);
+extern "C" void android_request_exit(void);
+extern "C" void android_open_url(const char *url);
+#endif
 extern bool testPassword (const char *category, const char *candidate_pw);
 extern const char *pw_file;
 extern bool NVReadX11Geom (int &x, int &y, int &w, int &h);

@@ -148,6 +148,10 @@ bool plotChoiceIsAvailable (PlotChoice pc)
     case PLOT_CH_VHFCOND:       // fallthru
     case PLOT_CH_SATACT:        // fallthru
     case PLOT_CH_MESHTASTIC:    // fallthru
+    case PLOT_CH_APRSCLUSTER:   // fallthru
+    case PLOT_CH_BALLOONS:      // fallthru
+    case PLOT_CH_HAMALERT:      // fallthru
+    case PLOT_CH_BANDACT:       // fallthru
         return (true);
 
     case PLOT_CH_NONE:         // fallthru
@@ -229,6 +233,7 @@ static int categoryOfChoice (PlotChoice pc)
 
     case PLOT_CH_CONTESTS: case PLOT_CH_DXCLUSTER: case PLOT_CH_DXPEDS: case PLOT_CH_HFCOND:
     case PLOT_CH_PSK: case PLOT_CH_ONTA: case PLOT_CH_VHFCOND: case PLOT_CH_BC:
+    case PLOT_CH_HAMALERT: case PLOT_CH_BANDACT:
         return 1;   // DX & Contest
 
     case PLOT_CH_DEWX: case PLOT_CH_DXWX: case PLOT_CH_STORMS:
@@ -406,6 +411,7 @@ static bool accordionServiceOtherPanes (void)
 
     updateWiFi (menu_open_for_pane);
     checkDXCluster();
+    checkAPRSCluster();
     drawAllSymbols();
 
     // publish whatever that work just drew (map overlays etc), then reclaim our own box in
@@ -730,23 +736,28 @@ static bool askPaneCategoryAccordion (PlotPane pp, SBox box, MenuItem *mitems, i
             row++;
 
             // Ok/Cancel row, also directly beneath whatever's currently visible
-            ok_b.w = ok_w;
+            uint16_t btn_w = (vis_box.w - 3*ACC_BB)/2;
+            ok_b.w = btn_w;
             ok_b.h = ACC_RH;
             ok_b.x = vis_box.x + ACC_BB;
             ok_b.y = vis_box.y + ACC_TBM + row*ACC_RH;
-            cancel_b.w = cancel_w;
+            cancel_b.w = btn_w;
             cancel_b.h = ACC_RH;
-            cancel_b.x = vis_box.x + vis_box.w - cancel_w - ACC_BB;
+            cancel_b.x = ok_b.x + btn_w + ACC_BB;
             cancel_b.y = ok_b.y;
 
             enable_ok = total_selected > 0;
             drawSBox (ok_b, enable_ok ? ACC_FGC : GRAY);
             tft.setTextColor (enable_ok ? ACC_FGC : GRAY);
-            tft.setCursor (ok_b.x + ACC_BDX, ok_b.y + ACC_BDROP);
+            uint16_t ok_txt_w = getTextWidth (acc_ok_label);
+            uint16_t ok_tx = ok_b.x + (ok_b.w > ok_txt_w ? (ok_b.w - ok_txt_w)/2 : ACC_BDX);
+            tft.setCursor (ok_tx, ok_b.y + ACC_BDROP);
             tft.print (acc_ok_label);
             drawSBox (cancel_b, ACC_FGC);
             tft.setTextColor (ACC_FGC);
-            tft.setCursor (cancel_b.x + ACC_BDX, cancel_b.y + ACC_BDROP);
+            uint16_t cancel_txt_w = getTextWidth (acc_cancel_label);
+            uint16_t cancel_tx = cancel_b.x + (cancel_b.w > cancel_txt_w ? (cancel_b.w - cancel_txt_w)/2 : ACC_BDX);
+            tft.setCursor (cancel_tx, cancel_b.y + ACC_BDROP);
             tft.print (acc_cancel_label);
 
             // publish immediately if anything we touched this frame -- newly drawn or newly
@@ -1125,6 +1136,11 @@ bool checkPlotTouch (TouchType tt, const SCoord &s, PlotPane pp)
             return (true);
         in_top = true;
         break;
+    case PLOT_CH_APRSCLUSTER:
+        if (checkAPRSClusterTouch (s, box))
+            return (true);
+        in_top = true;
+        break;
     case PLOT_CH_BC:
         if (checkBCTouch (s, box))
             return (true);
@@ -1195,6 +1211,11 @@ bool checkPlotTouch (TouchType tt, const SCoord &s, PlotPane pp)
             return (true);
         in_top = true;
         break;
+    case PLOT_CH_HAMALERT:
+        if (checkHamAlertTouch (tt, s, box))
+            return (true);
+        in_top = true;
+        break;
     case PLOT_CH_SATACT:
         if (checkHamsatTouch (s, box))
             return (true);
@@ -1224,6 +1245,12 @@ bool checkPlotTouch (TouchType tt, const SCoord &s, PlotPane pp)
 
     case PLOT_CH_LAUNCHES:
         if (checkLaunchesTouch (s, box))
+            return (true);
+        in_top = true;
+        break;
+
+    case PLOT_CH_BALLOONS:
+        if (checkBalloonsTouch (s, box))
             return (true);
         in_top = true;
         break;
@@ -1542,7 +1569,7 @@ bool overHoverPane (const SCoord &s)
             if (ch == PLOT_CH_ACTIVENETS || ch == PLOT_CH_LAUNCHES || ch == PLOT_CH_STORMS ||
                 ch == PLOT_CH_DXCLUSTER || ch == PLOT_CH_PSK || ch == PLOT_CH_ONTA ||
                 ch == PLOT_CH_ADIF || ch == PLOT_CH_DXPEDS || ch == PLOT_CH_SDO ||
-                ch == PLOT_CH_MOON || ch == PLOT_CH_SATACT || ch == PLOT_CH_SATACT) {
+                ch == PLOT_CH_MOON || ch == PLOT_CH_SATACT || ch == PLOT_CH_HAMALERT) {
                 return (true);
             }
         }

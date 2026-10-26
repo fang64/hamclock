@@ -497,7 +497,14 @@ static void drawMapPopup(void)
                     launch_l1, sizeof(launch_l1), launch_l2, sizeof(launch_l2),
                     launch_l3, sizeof(launch_l3), &launch_wiki);
 
-    MenuItem mitems[20];
+    // balloon POI info, if the tap landed near a HAB/PicoBalloon
+    char baln_l1[52], baln_l2[52], baln_l3[36];
+    const char *baln_url = NULL;
+    bool have_baln = getBalloonMapMenuInfo (map_popup.ll,
+                    baln_l1, sizeof(baln_l1), baln_l2, sizeof(baln_l2),
+                    baln_l3, sizeof(baln_l3), &baln_url);
+
+    MenuItem mitems[25];
     int n_menu = 0;
     int mi_wiki = -1;                                           // set below iff a Wikipedia item is added
     int mi_stormurl = -1;                                       // set below iff a storm web link is added
@@ -520,6 +527,19 @@ static void drawMapPopup(void)
         if (launch_wiki) {
             mi_wiki = n_menu;
             mitems[n_menu++] = {MENU_TOGGLE, false, 3, ZINDENT, "Open Launch Complex Wikipedia", 0};
+        }
+        mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, "-------------", 0};
+    }
+
+    int mi_balnurl = -1;                                        // set below iff a balloon web link is added
+
+    if (have_baln) {
+        mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, baln_l1, 0};
+        mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, baln_l2, 0};
+        mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, baln_l3, 0};
+        if (baln_url) {
+            mi_balnurl = n_menu;
+            mitems[n_menu++] = {MENU_TOGGLE, false, 3, ZINDENT, "Open Balloon Tracker", 0};
         }
         mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, "-------------", 0};
     }
@@ -568,6 +588,10 @@ static void drawMapPopup(void)
         // open the storm's Tropical Tidbits satellite loop page if requested
         if (mi_stormurl >= 0 && mitems[mi_stormurl].set)
             openURL (storm_url);
+
+        // open the balloon's tracker page if requested
+        if (mi_balnurl >= 0 && mitems[mi_balnurl].set && baln_url)
+            openURL (baln_url);
 
         // reset else other stuff
         if (mitems[mi_rst].set) {
@@ -1339,6 +1363,13 @@ void drawMoreEarth()
 
         // draw goodies unless showing CM_USER
         if (core_map != CM_USER) {
+            // country/state borders (Clouds/Terrain only) must be the lowest-Z overlay --
+            // draw them here, before the grid/sat-path/DX-path/PSK-path lines below, since
+            // those are painted directly on the just-swept map and NOT through drawAllSymbols()
+            // until a few lines later. Without this, drawAllSymbols()'s own (correctly early)
+            // drawCountryBorders() call would run *after* these and paint the border lines
+            // right over the satellite ground track/footprint, DX path and PSK paths.
+            drawCountryBorders();
             drawMapGrid();
             drawSatPathAndFoot();
             if (waiting4DXPath())

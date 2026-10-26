@@ -90,11 +90,13 @@ OBJS = \
 	adif.o \
 	adif_parser.o \
 	activenets.o \
+	balloons.o \
     antenna_lookup.o \
 	antennas.o \
 	antennas-html.o \
 	asknewpos.o \
 	astro.o \
+	bandactivity.o \
 	bands.o \
 	blinker.o \
 	bmp.o \
@@ -113,8 +115,10 @@ OBJS = \
 	debug.o \
 	drawextra.o \
 	dxcluster.o \
+	aprscluster.o \
 	dxpeds.o \
 	dxpeds_hide.o \
+	hamalert.o \
 	hamqsl.o \
 	hamsat.o \
 	hurricane.o \
@@ -183,6 +187,7 @@ OBJS = \
 	wifi.o \
 	wifimeter.o \
 	wx.o \
+	xota.o \
 	zones.o
 
 help:

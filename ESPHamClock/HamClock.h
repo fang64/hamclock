@@ -381,7 +381,20 @@ typedef enum {
     // N.B. appended so existing bit-mask/table indices for prior entries remain unchanged
     BORDERS_CSPR,
     STATES_CSPR,
-    N_CSPR
+    N_CSPR,                  // csel_pr[] in setup.cpp is sized to exactly this many editable colors
+
+    // 630m is deliberately declared AFTER N_CSPR, not folded into the editable csel_pr[] table
+    // above it: the Color Editor's page 6 is already exactly full (12 tightly-packed rows, no
+    // spare vertical room on real hardware -- confirmed, not just a layout guess), so there's no
+    // row to give it. Rather than reflow that whole page, 630m gets a single hardcoded color that
+    // isn't user-editable. Because its value is >= N_CSPR, it must NEVER be used to index
+    // csel_pr[N_CSPR] directly (that's one past the end of the array) -- every function that reads
+    // a ColorSelection by indexing csel_pr[] (getMapColor, getMapColorThin, getMapColorName,
+    // getRawPathWidth, getRawSpotRadius, getPathDashed) has an explicit early check for this value
+    // before it ever touches csel_pr[]. findColSel(HAMBAND_630M) returns this value, and spot/path
+    // drawing code calls those functions with it via findColSel() just like every other band, so
+    // this guard has to be airtight, not best-effort.
+    BAND630_CSPR
 } ColorSelection;
 
 
@@ -429,7 +442,11 @@ typedef enum {
 #define PLOTNAMES_HIGH \
     X(PLOT_CH_SATACT,       "Sat_Alerts")        \
     X(PLOT_CH_MESHTASTIC,   "Mesh_Mon")          \
-    X(PLOT_CH_ECLIPSE,      "Eclipse")
+    X(PLOT_CH_ECLIPSE,      "Eclipse")           \
+    X(PLOT_CH_APRSCLUSTER,  "Nearby_APRS")       \
+    X(PLOT_CH_BALLOONS,     "Balloons")          \
+    X(PLOT_CH_HAMALERT,     "HamAlert")          \
+    X(PLOT_CH_BANDACT,      "Band_Act")
 
 #define PLOTNAMES PLOTNAMES_LOW PLOTNAMES_HIGH
 
@@ -554,12 +571,17 @@ typedef struct {
 #define NV_ONAIR_LEN            30      // max ONAIR text, including EOS
 #define NV_TITLE_LEN            70      // max alternate callsign, including EOS
 
+// title field may contain up to this many ';'-separated entries that rotate in turn.
+// N.B. kept within the existing NV_TITLE_LEN budget so NVRAM/EEPROM layout, and thus
+// compatibility with previously-saved settings, is unaffected.
+#define MAX_TITLE_ENTRIES        6
+
 
 // manage callsign display area and alternate uses
 typedef enum {
     CT_CALL,                            // display real call
     CT_TITLE,                           // display title text
-    CT_BOTH,                            // alternate between call and title
+    CT_BOTH,                            // alternate among call and each title entry
     CT_ONAIR,                           // display ON AIR message
 } Call_t;
 typedef struct {
@@ -569,7 +591,11 @@ typedef struct {
 typedef struct {
     char call[NV_CALLSIGN_LEN];         // real callsign for CT_CALL, used by setup.cpp
     char onair[NV_ONAIR_LEN];           // real on-air message for CT_ONAIR, used by setup.cpp
-    char title[NV_TITLE_LEN];           // CT_TITLE text if used
+    char title[NV_TITLE_LEN];           // CT_TITLE text as stored/edited, ';'-separated entries
+    char title_parsed[NV_TITLE_LEN];    // working copy of title with ';' -> '\0' for tokenizing
+    char *title_list[MAX_TITLE_ENTRIES];// pointers into title_parsed, one per entry
+    int n_titles;                       // number of valid entries in title_list, may be 0
+    int title_idx;                      // index into title_list currently shown for CT_TITLE
     Call_t ct_prefer;                   // CT_CALL CT_TITLE or CT_BOTH set via menu
     Call_t now_showing;                 // displaying CT_CALL CT_TITLE or CT_ONAIR
     time_t next_update;                 // when to rotate if ct_prefer is CT_BOTH
@@ -814,6 +840,11 @@ typedef struct {
     float snr;                          // only used by pskreporter.cpp
     time_t spotted;                     // UTC when spotted
     char iota[8];                       // IOTA group ref found in comment, eg "EU-005"; else empty
+    char xota_org[8];                   // "extra" xOTA program found in comment -- one of
+                                         // WCA/ARLHS/ILLW/SIOTA/WAB/WWBOTA; else empty. See xota.h --
+                                         // unlike iota[], these have no reference->name database at
+                                         // all, so this is the whole story: no matching xota_name().
+    char xota_ref[12];                  // its reference, eg "F-07849"; else empty
 } DXSpot;
 
 
@@ -1062,7 +1093,12 @@ extern void getLunarRS (const time_t t0, const LatLong &ll, time_t *riset, time_
  */
 
 
-/* consolidated list of supported bands
+/* consolidated list of supported bands.
+ * N.B. HamBandSetting values double as bit positions in persisted band-filter bitmasks
+ * (NV_DXC_BANDS, NV_PSK_BANDS), so new bands must always be appended at the end here, never
+ * inserted in frequency order, or every existing user's saved bitmask silently reinterprets
+ * to the wrong bands. This is why 630m (longer wavelength than 160m) is listed last instead
+ * of first. Same reasoning applies to each entry's *_CSPR value -- see ColorSelection below.
  */
 #define SUPPORTED_BANDS                                 \
     X(HAMBAND_160M, 160, "160",  90, BAND160_CSPR)      \
@@ -1076,7 +1112,8 @@ extern void getLunarRS (const time_t t0, const LatLong &ll, time_t *riset, time_
     X(HAMBAND_12M,   12,  "12",  25, BAND12_CSPR)       \
     X(HAMBAND_10M,   10,  "10",  12, BAND10_CSPR)       \
     X(HAMBAND_6M,     6,   "6",   4, BAND6_CSPR)        \
-    X(HAMBAND_2M,     2,   "2",   0, BAND2_CSPR)
+    X(HAMBAND_2M,     2,   "2",   0, BAND2_CSPR)        \
+    X(HAMBAND_630M, 630, "630",  96, BAND630_CSPR)
 
 #define X(a,b,c,d,e) a,                         // expands SUPPORTED_BANDS to each enum and comma
 typedef enum {
@@ -1347,7 +1384,42 @@ extern void drawMeshtasticOnMap (void);
 extern bool getClosestMeshtasticNode (LatLong &from_ll, LatLong *mark_ll, MeshInfo *info);
 extern bool getMeshtasticPaneInfo (const SCoord &ms, LatLong *mark_ll, MeshInfo *info);
 
+// nearby APRS station, keyed by callsign, one entry per station currently within radius
+#define MAX_APRSCALL_LEN        10                  // callsign+SSID, including EOS
+#define MAX_APRSCOMMENT_LEN     44                  // free-text comment/status, APRS's usual cap
+typedef struct {
+    char call[MAX_APRSCALL_LEN];        // source callsign, eg "N0CALL-9"
+    bool has_pos;                       // whether ll/dist_mi/symbol are valid yet
+    LatLong ll;                         // last known position
+    float dist_mi;                      // great-circle distance from DE, statute miles
+    float bear_deg;                     // TRUE bearing from DE, degrees 0..360 (convert for display
+                                         // with desiredBearing() same as everywhere else in HamClock)
+    char symbol[12];                    // short human name for APRS symbol, eg "CAR", "HOUSE"
+    char sym_table;                     // raw symbol table id and code, for icon rendering
+    char sym_code;
+    uint8_t category;                   // APRSCategory (see aprscluster.cpp) this symbol belongs
+                                         // to, for the pane's category filter
+    time_t heard;                       // myNow() this station was last heard
+    char comment[MAX_APRSCOMMENT_LEN];  // free-text comment/status following the position, if any
+    bool has_course_speed;              // whether course_deg/speed_mph are valid (moving stations)
+    float course_deg;                   // TRUE course over ground, degrees 0..360
+    float speed_mph;                    // speed over ground, statute mph
+    bool has_alt;                       // whether alt_ft is valid
+    float alt_ft;                       // altitude, feet
+    bool has_wx;                        // whether the wx_* fields are valid (symbol is a WX station)
+    float wx_temp_f;                    // temperature, F
+    int wx_humidity;                    // relative humidity, percent, -1 if unknown
+    float wx_wind_mph;                  // sustained wind speed, mph
+    float wx_gust_mph;                  // wind gust, mph, -1 if unknown
+    float wx_baro_mb;                   // barometric pressure, millibars, -1 if unknown
+} APRSSpot;
+extern bool updateAPRSCluster (const SBox &box, bool fresh);
+extern void checkAPRSCluster (void);
+extern bool checkAPRSClusterTouch (const SCoord &s, const SBox &box);
+extern bool isAPRSClusterConnected (void);
+
 #define LAUNCHES_INTERVAL (2)
+#define BALLOONS_INTERVAL (15)
 
 
 
@@ -1419,6 +1491,7 @@ extern void drawDXClusterSpotsOnMap (void);
 extern bool isDXClusterConnected(void);
 extern bool dxcHideIOTA(void);
 extern void sendDXClusterDELLGrid(void);
+extern void sendAPRSClusterNewDE (void);
 extern bool getClosestDXCluster (LatLong &ll, DXSpot *sp, LatLong *llp);
 extern bool getDXCPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll);
 extern bool connectDXCluster (void);
@@ -1542,6 +1615,7 @@ extern uint8_t show_lp;                 // show prop long path, else short path
 #define ERAD_M          3959.0F         // earth radius, miles
 #define MI_PER_KM       0.621371F
 #define KM_PER_MI       1.609344F
+#define FT_PER_M        3.28084F
 
 #define DE_R 6                          // radius of DE marker   (erases better if even)
 #define DEAP_R 6                        // radius of DE antipodal marker (erases better if even)
@@ -2265,6 +2339,38 @@ extern bool checkOnTheAirTouch (TouchType tt, const SCoord &s, const SBox &box);
 
 /*********************************************************************************************
  *
+ * bandactivity.cpp -- Band Activity heatmap pane
+ *
+ */
+
+// gen_bandactivity.pl's own window is 30 minutes and it's meant to represent "current"
+// conditions (see that script's header for why that's shorter than ONTA_INTERVAL-family
+// scripts' 65-minute window) -- polling much faster than that buys nothing, so this can
+// afford a longer client interval than ONTA_INTERVAL despite following the exact same
+// openCachedFile()-throttled pattern.
+#define BANDACT_INTERVAL   60                           // polling interval -- also how often the
+                                                          // pane's "X m ago" freshness caption redraws
+
+extern bool updateBandActivity (const SBox &box, bool fresh);
+
+/*********************************************************************************************
+ *
+ * hamalert.cpp
+ *
+ */
+
+extern bool connectHamAlert (void);
+extern void closeHamAlert (void);
+extern bool updateHamAlert (const SBox &box, bool fresh);
+extern void checkHamAlert (void);
+extern bool checkHamAlertTouch (TouchType tt, const SCoord &s, const SBox &box);
+extern bool isHamAlertConnected (void);
+extern void drawHamAlertSpotsOnMap (void);
+extern bool getClosestHamAlert (LatLong &ll, DXSpot *sp, LatLong *llp);
+extern bool getHamAlertPaneSpot (const SCoord &ms, DXSpot *dxs, LatLong *ll);
+
+/*********************************************************************************************
+ *
  * hamsat.cpp
  *
  */
@@ -2400,7 +2506,9 @@ extern PlotMask plot_rotset[PANE_N];       // each pane's PlotChoice rotation ch
 #define PANE_0_CH_MASK          (PLOTBIT(PLOT_CH_DXCLUSTER) | PLOTBIT(PLOT_CH_CONTESTS) | \
                                  PLOTBIT(PLOT_CH_ADIF) | PLOTBIT(PLOT_CH_ONTA) | \
                                  PLOTBIT(PLOT_CH_DXPEDS) | PLOTBIT(PLOT_CH_ACTIVENETS) | \
-                                 PLOTBIT(PLOT_CH_LAUNCHES) | PLOTBIT(PLOT_CH_SATACT))
+                                 PLOTBIT(PLOT_CH_LAUNCHES) | PLOTBIT(PLOT_CH_SATACT) | \
+                                 PLOTBIT(PLOT_CH_APRSCLUSTER) | \
+                                 PLOTBIT(PLOT_CH_BALLOONS) | PLOTBIT(PLOT_CH_BANDACT))
 
 // compute number of bits set in PANE_0_CH_MASK at compile time :-)
 // https://stackoverflow.com/questions/109023/count-the-number-of-set-bits-in-a-32-bit-integer
@@ -2662,6 +2770,34 @@ extern bool getLaunchPaneHover (const SCoord &ms, LatLong *ll, char *label, size
 extern bool getLaunchMapMenuInfo (const LatLong &ll, char *l1, size_t l1n, char *l2, size_t l2n,
         char *l3, size_t l3n, const char **wiki_url);
 
+/*
+ * balloons.cpp
+ */
+
+// balloon map plotting + hover info -- same pattern as ActiveNetInfo/MeshInfo above
+typedef struct {
+    char name[32];                      // flight/payload display name
+    bool is_hab;                        // true=HAB, false=PicoBalloon
+    bool has_alt;
+    float alt_m;
+    bool has_freq;
+    float freq_hz;
+    bool has_batt;
+    float batt_v;
+    bool has_temp;
+    float temp_c;
+    char age[24];                       // precomputed "3h12m"-style elapsed-since-heard text
+    LatLong ll;
+} BalloonHoverInfo;
+
+extern bool updateBalloons     (const SBox &box, bool fresh);
+extern bool checkBalloonsTouch (const SCoord &s, const SBox &box);
+extern void drawBalloonsOnMap  (void);
+extern bool getClosestBalloon    (const LatLong &ll, LatLong *mark_ll, BalloonHoverInfo *info);
+extern bool getBalloonPaneInfo   (const SCoord &ms, LatLong *mark_ll, BalloonHoverInfo *info);
+extern bool getBalloonMapMenuInfo (const LatLong &ll, char *l1, size_t l1n, char *l2, size_t l2n,
+        char *l3, size_t l3n, const char **url);
+
 
 
 /*********************************************************************************************
@@ -2879,6 +3015,10 @@ extern void renameCfgInfo (const char *from, const char *to);
 extern const char *getDXClusterHost(void);
 extern int getDXClusterPort(void);
 extern bool setDXCluster (char *host, char *port_str, Message &ynot);
+extern const char *getAPRSClusterHost(void);
+extern int getAPRSClusterPort(void);
+extern int getAPRSClusterRadiusMiles(void);
+extern bool useAPRSCluster(void);
 extern bool showTempC(void);
 extern bool showATMhPa(void);
 extern bool showDistKm(void);
@@ -2887,6 +3027,9 @@ extern bool useGPSDTime(void);
 extern bool useGPSDLoc(void);
 extern const char *getGPSDHost(void);
 extern const char *getPiAwareHost(void);
+extern const char *getHamAlertLogin(void);
+extern const char *getHamAlertPasswd(void);
+extern bool useHamAlert(void);
 extern bool useNMEATime(void);
 extern bool useNMEALoc(void);
 extern const char *getNMEAFile(void);
@@ -3409,7 +3552,7 @@ extern void strncpySubChar (char to_str[], const char from_str[], char to_char, 
  *
  */
 
-void tooltip (const SCoord &s, const char *tip);
+void tooltip (const SCoord &s, const char *tip, const SBox *bound = NULL);
 
 
 
