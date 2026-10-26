@@ -70,7 +70,7 @@ ifeq ($(shell uname -s), NetBSD)
 endif
 
 # Linux needs libgpiod
-ifeq ($(shell find /usr/lib -name libgpiod.a | wc -l), 1)
+ifeq ($(shell find /usr/lib -name libgpiod.a 2>/dev/null | wc -l), 1)
     LIBS += -lgpiod
 endif
 
@@ -115,6 +115,7 @@ OBJS = \
 	dxpeds.o \
 	dxpeds_hide.o \
 	hamqsl.o \
+	hamsat.o \
 	hurricane.o \
 	earthmap.o \
 	earthsat.o \
@@ -134,6 +135,7 @@ OBJS = \
 	maidenhead.o \
 	mapmanage.o \
 	menu.o \
+	meshtastic.o \
 	moon_imgs.o \
 	moonpane.o \
 	motd.o \
@@ -143,6 +145,7 @@ OBJS = \
 	ontheair.o \
 	parsespot.o \
 	passwd.o \
+	planets.o \
 	plot.o \
 	plotmap.o \
 	plotmgmnt.o \
@@ -155,6 +158,7 @@ OBJS = \
 	runner.o \
 	santa.o \
 	sattool.o \
+	satsked.o \
 	scrollbar.o \
 	scrollstate.o \
 	sdo.o \

@@ -686,9 +686,7 @@ void loop()
         drawMoreEarth();
 
         // other goodies
-        drawUptime(false);
-        drawRotatingMessage();
-        drawVersion(false);
+        updateCallsignStatus(false);
         followBrightness();
         checkOnAirPin();
         readBME280();
@@ -878,6 +876,8 @@ static void checkTouch()
         // set showing sat in DX box
         dx_info_for_sat = true;
         drawSatPass();
+    } else if (checkPlanetMapTouch (s)) {
+        // handled entirely within checkPlanetMapTouch
     } else if (!overViewBtn(s, DX_R) && s2ll (s, ll)) {
         // tapped map: set flag to run popup after map finishes or set newDX here if special-tap
         if (names_on)
@@ -1042,6 +1042,7 @@ void newDX (LatLong &ll, const char grid[MAID_CHARLEN], const char *ovprefix)
 
     // enable great path unless very close to DE
     dxpath_time = ERAD_M * dx_ll.GSD(de_ll) > DEDX_MINPATH ? millis() : 0;
+    scheduleMapRedraw();
 
     // just call initEarthMap??
     drawDXInfo ();
@@ -1603,6 +1604,21 @@ static void drawUptime(bool force)
     }
 }
 
+/* update gray status items under callsign (uptime, rotating message, version)
+ */
+void updateCallsignStatus (bool force)
+{
+    FontWeight fw;
+    FontSize fs;
+    getFontStyle (&fw, &fs);
+
+    drawUptime (force);
+    drawRotatingMessage ();
+    drawVersion (force);
+
+    selectFontStyle (fw, fs);
+}
+
 /* given an SCoord in raw coords, return one in app coords
  */
 const SCoord raw2appSCoord (const SCoord &s_raw)
@@ -1713,6 +1729,9 @@ void drawAllSymbols()
     drawDXClusterSpotsOnMap();
     drawADIFSpotsOnMap();
     drawDXPedsOnMap();
+    drawHamsatOnMap();
+    drawMeshtasticOnMap();
+    drawPlanetsOnMap();
     drawStormsOnMap();
     drawLaunchesOnMap();
     drawActiveNetsOnMap();
@@ -1899,29 +1918,28 @@ void drawDEFormatMenu()
 
         {MENU_1OFN, SHOWING_PANE_0(), 1, mi, "Data Panes:", NULL},
 
-            // bottom submenu is list of possible pane choices, see next.
-            // N.B. don't include ones already in play in the top set
-
+            // bottom submenu is filled below from PANE_0_CH_MASK, including high-word choices.
     };
 
-    // set and record PANE_0 choices from successive bits in PANE_0_CH_MASK
-    uint32_t pane_0_bits = PANE_0_CH_MASK;
+    // prepare each suitable Pane 0 choice in PlotChoice order
     PlotChoice menu_ch[N_PANE_0_CH];
-    for (int i = 0; i < N_PANE_0_CH; i++) {
-        // find and zero out the next bit in mask of possible PANE_0 panes
-        int plot_n = 0;
-        for (uint32_t bits = pane_0_bits; bits >>= 1; plot_n++)
+    int n_menu_ch = 0;
+    for (int i = 0; i < PLOT_CH_N; i++) {
+        PlotChoice pc = (PlotChoice)i;
+        if (!PLOT_CH_IS_REAL(pc) || !(PANE_0_CH_MASK & PLOTBIT(pc)))
             continue;
-        pane_0_bits &= ~(1<<plot_n);
-        menu_ch[i] = (PlotChoice)plot_n;
-        // prepare menu item
-        PlotPane pp = findPaneForChoice ((PlotChoice)plot_n);
-        bool available =  plotChoiceIsAvailable((PlotChoice)plot_n) && (pp == PANE_NONE || pp == PANE_0);
+
+        menu_ch[n_menu_ch] = pc;
+        PlotPane pp = findPaneForChoice (pc);
+        bool available = plotChoiceIsAvailable(pc) && (pp == PANE_NONE || pp == PANE_0);
         MenuFieldType type = available ? MENU_AL1OFN : MENU_IGNORE;
-        mitems[N_DEFMT_CORE+i] = {type, !!(plot_rotset[PANE_0] & (1<<plot_n)), 3, Mi, plot_names[plot_n], 0};
+        mitems[N_DEFMT_CORE+n_menu_ch] = {
+            type, !!(plot_rotset[PANE_0] & PLOTBIT(pc)), 3, Mi, plot_names[pc], 0
+        };
+        n_menu_ch++;
     }
-    if (pane_0_bits != 0)
-        fatalError ("drawDEFormatMenu() %d %d 0x%x\n", pane_0_bits, N_PANE_0_CH, PANE_0_CH_MASK);
+    if (n_menu_ch != N_PANE_0_CH)
+        fatalError ("drawDEFormatMenu() found %d of %d Pane 0 choices", n_menu_ch, N_PANE_0_CH);
 
     // create a box for the menu
     SBox menu_b;
@@ -1932,65 +1950,56 @@ void drawDEFormatMenu()
     // run menu
     SBox ok_b;
     MenuInfo menu = {menu_b, ok_b, UF_NOCLOCKS, M_CANCELOK, 1, NARRAY(mitems), mitems};
-    if (runMenu (menu)) {
+    if (!runMenu (menu))
+        return;
 
-        // capture and save new state
+    if (mitems[0].set) {
 
-        if (mitems[0].set) {
-
-            // set desired detime format
-
-            int new_fmt = -1;
-            for (int i = 0; i < DETIME_N; i++) {
-                if (mitems[i+1].set) {
-                    new_fmt = i;
-                    break;
-                }
+        // set desired DE time format and restore the normal DE/DX layout
+        int new_fmt = -1;
+        for (int i = 0; i < DETIME_N; i++) {
+            if (mitems[i+1].set) {
+                new_fmt = i;
+                break;
             }
+        }
+        if (new_fmt < 0)
+            fatalError ("drawDEFormatMenu: No de fmt");
 
-            // paranoid
-            if (new_fmt < 0)
-                fatalError ("drawDEFormatMenu: No de fmt");
+        de_time_fmt = (uint8_t)new_fmt;
+        NVWriteUInt8 (NV_DE_TIMEFMT, de_time_fmt);
+        restoreNormPANE0();
 
-            // set fmt and turn off PANE_0
-            de_time_fmt = (uint8_t)new_fmt;
-            NVWriteUInt8(NV_DE_TIMEFMT, de_time_fmt);
-            plot_ch[PANE_0] = PLOT_CH_NONE;
-            plot_rotset[PANE_0] = 0;
+    } else {
 
+        // collect low- and high-word choices into one in-memory rotation mask
+        PlotMask new_rotset = 0;
+        for (int i = 0; i < N_PANE_0_CH; i++) {
+            if (mitems[N_DEFMT_CORE+i].set)
+                new_rotset |= PLOTBIT(menu_ch[i]);
+        }
+
+        if (new_rotset == 0) {
+            restoreNormPANE0();
         } else {
+            plot_rotset[PANE_0] = new_rotset;
 
-            // get new collection of plot choices
-            uint32_t new_rotset = 0;
-            for (int i = 0; i < N_PANE_0_CH; i++) { 
-                if (mitems[N_DEFMT_CORE+i].set)
-                    new_rotset |= (1<<menu_ch[i]);
-            }
-
-            // might not be any if user clicked this section but made no choice
-            if (new_rotset != 0) {
-
-                // ok!
-                plot_rotset[PANE_0] = new_rotset;
-
-                // pick any one as current
+            // retain the current choice when still selected, otherwise choose the first set bit
+            if (!(plot_rotset[PANE_0] & PLOTBIT(plot_ch[PANE_0]))) {
                 for (int i = 0; i < PLOT_CH_N; i++) {
-                    if (plot_rotset[PANE_0] & (1 << i)) {
-                        plot_ch[PANE_0] = (PlotChoice) i;
+                    if (plot_rotset[PANE_0] & PLOTBIT(i)) {
+                        plot_ch[PANE_0] = (PlotChoice)i;
                         break;
                     }
                 }
             }
+
+            if (!setPlotChoice (PANE_0, plot_ch[PANE_0]))
+                fatalError ("drawDEFormatMenu: can not set Pane 0 choice %d", (int)plot_ch[PANE_0]);
         }
     }
 
-    // set PANE_0 choice, even if none
-    setPlotChoice (PANE_0, plot_ch[PANE_0]);
     logPaneRotSet (PANE_0, plot_ch[PANE_0]);
-
-    // redraw if normal
-    if (!SHOWING_PANE_0())
-        restoreNormPANE0();
 }
 
 /* resume using nearestPrefix

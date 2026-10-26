@@ -1042,6 +1042,9 @@ static void checkBRB (time_t t)
  */
 void setPlotVisible (PlotChoice pc)
 {
+    if (!PLOT_CH_IS_REAL(pc))
+        return;
+
     // done if the choice is already on display
     if (findPaneChoiceNow (pc) != PANE_NONE)
         return;
@@ -1051,10 +1054,9 @@ void setPlotVisible (PlotChoice pc)
     if (pp == PANE_NONE)
         pp = PANE_3;
 
-    // install as the only choice
+    // install as the only choice; set the mask first so setPlotChoice() persists both words
+    plot_rotset[pp] = PLOTBIT(pc);
     (void) setPlotChoice (pp, pc);
-    plot_rotset[pp] = 1 << pc;
-    savePlotOps();
 }
 
 /* set the given pane to the given plot choice now.
@@ -1064,6 +1066,10 @@ void setPlotVisible (PlotChoice pc)
  */
 bool setPlotChoice (PlotPane pp, PlotChoice pc)
 {
+    // NONE is a saved Pane 0 sentinel, never a drawable plot choice or array index.
+    if (pp < PANE_0 || pp >= PANE_N || !PLOT_CH_IS_REAL(pc))
+        return (false);
+
     // ignore if new choice is already in some other pane
     PlotPane pp_now = findPaneForChoice (pc);
     if (pp_now != PANE_NONE && pp_now != pp)
@@ -2402,6 +2408,26 @@ void updateWiFi(void)
             }
             break;
 
+        case PLOT_CH_SATACT:
+            if (t0 >= next_update[pp]) {
+                if (updateHamsat(box, fresh_redraw[pc])) {
+                    next_update[pp] = nextPaneUpdate (pc, 90);     // secs, matches hamsat.cpp cache age
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_MESHTASTIC:
+            if (t0 >= next_update[pp]) {
+                if (updateMeshtastic(box, fresh_redraw[pc])) {
+                    next_update[pp] = nextPaneUpdate (pc, 120);    // secs, matches meshtastic.cpp
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
         case PLOT_CH_ADIF:
             if (t0 >= next_update[pp]) {
                 updateADIF (box, fresh_redraw[pc]);
@@ -2476,6 +2502,7 @@ void updateWiFi(void)
             }
             break;
 
+        case PLOT_CH_NONE:     // fallthru -- only possible for inactive Pane 0
         case PLOT_CH_N:
             break;              // lint
         }
@@ -2493,6 +2520,8 @@ void updateWiFi(void)
 
     // update lightning overlay if due
     updateLightning();
+
+    checkStormsData();
 
     // maps are checked after each full earth draw -- see drawMoreEarth()
 
@@ -2663,6 +2692,7 @@ void scheduleFreshMap (void)
         return;
     }
     next_map = 0;
+    scheduleMapRedraw();
 }
 
 /* return current NTP response time list.
@@ -2687,6 +2717,32 @@ time_t nextPaneRotation(PlotPane pp)
 void forcePaneRotation (PlotPane pp)
 {
     next_rotation[pp] = 0;
+}
+
+/* immediately step the given pane backward to its previous rotation choice, overriding the
+ * normal timer. unlike forcePaneRotation() (which just zeroes next_rotation[] and lets the next
+ * updateWiFi() pass do the forward step), this must apply the choice change itself since the
+ * automatic path only ever steps forward.
+ * it's ok if pp is not actually rotating -- getPrevRotationChoice() just returns the same choice.
+ */
+void forcePaneRotationPrev (PlotPane pp)
+{
+    PlotChoice pc = plot_ch[pp] = getPrevRotationChoice (pp, plot_ch[pp]);
+    next_rotation[pp] = nextRotation (pp);
+    showRotatingBorder ();
+
+    // same fresh_redraw bookkeeping as the forward path in updateWiFi()
+    if (pc == PLOT_CH_DXCLUSTER)  fresh_redraw[PLOT_CH_DXCLUSTER] = true;
+    if (pc == PLOT_CH_ADIF)       fresh_redraw[PLOT_CH_ADIF] = true;
+    if (pc == PLOT_CH_ONTA)       fresh_redraw[PLOT_CH_ONTA] = true;
+    if (pc == PLOT_CH_CONTESTS)   fresh_redraw[PLOT_CH_CONTESTS] = true;
+    if (pc == PLOT_CH_ACTIVENETS) fresh_redraw[PLOT_CH_ACTIVENETS] = true;
+    if (pc == PLOT_CH_DXPEDS)     fresh_redraw[PLOT_CH_DXPEDS] = true;
+    if (pc == PLOT_CH_STORMS)     fresh_redraw[PLOT_CH_STORMS] = true;
+    if (pc == PLOT_CH_LAUNCHES)   fresh_redraw[PLOT_CH_LAUNCHES] = true;
+
+    // go now
+    next_update[pp] = 0;
 }
 
 /* return pane for which taps are to be ignored because a revert is in progress, if any

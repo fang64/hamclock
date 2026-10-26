@@ -1045,6 +1045,10 @@ bool Adafruit_RA8875::getMouse (uint16_t *x, uint16_t *y)
 {
 	pthread_mutex_lock(&mouse_lock);
 
+            struct timeval tv;
+            gettimeofday (&tv, NULL);
+            mouse_idle = (tv.tv_sec - mouse_tv.tv_sec)*1000 + (tv.tv_usec - mouse_tv.tv_usec)/1000;
+
             bool ok = mouse_idle <= MOUSE_FADE && mouse_x >= 0;
             if (ok) {
                 *x = (mouse_x-FB_X0)/SCALESZ;
@@ -2111,12 +2115,15 @@ void Adafruit_RA8875::saveWinGeom(void)
 // _USE_X11
 int Adafruit_RA8875::decodeMouseButton (XEvent event)
 {
-        // button1+mods or button2 coded as Button2, all else as Button1.
-        // N.B. Mac's report plane Button2 with Button1+Option
+        // plain Button1 is a normal (primary) click; everything else -- a genuine right-click
+        // (Button3), a middle-click (Button2), or Button1 with a modifier (for one-button
+        // trackpads, eg Mac's Option+click reports Button2) -- is treated as the secondary/
+        // "alternate" click used eg to right-click-spot a row.
         bool mods = (event.xbutton.state & (Mod1Mask|ControlMask)) != 0;
-        return ((event.xbutton.button == Button1 && mods) || (event.xbutton.button == Button2)
-                        ? Button2 : Button1
-        );
+        bool alt_click = (event.xbutton.button == Button1 && mods)
+                          || event.xbutton.button == Button2
+                          || event.xbutton.button == Button3;
+        return (alt_click ? Button2 : Button1);
 }
 
 /* thread that runs forever reacting to X11 events and painting fb_canvas whenever it changes

@@ -367,6 +367,34 @@ static const uint8_t nv_sizes[NV_N] = {
     // 249
     1,                          // NV_STORMS_ON
 
+    // 250
+    NV_HAMSATKEY_LEN,           // NV_HAMSATKEY
+
+    // 251
+    NV_SATGROUP_LEN,            // NV_SATGROUP
+
+    // 252
+    1,                          // NV_SHOWPLANETS
+
+    // 253 -- retained compatibility marker
+    1,                          // NV_PLOTSCHEMA
+
+    // 254 -- high words are appended; no existing item moves
+    4,                          // NV_PANE0ROTSET_HI
+    4,                          // NV_PANE1ROTSET_HI
+    4,                          // NV_PANE2ROTSET_HI
+    4,                          // NV_PANE3ROTSET_HI
+
+    // 255 -- appended so all prior EEPROM addresses remain unchanged
+    NV_MESHWATCHLIST_LEN,       // NV_MESHWATCHLIST
+
+    // 256 -- appended so all prior EEPROM addresses remain unchanged
+    NV_PIAWAREHOST_LEN,         // NV_PIAWAREHOST
+
+    // 257 -- appended so all prior EEPROM addresses remain unchanged
+    1,                          // NV_ONTA_MODES
+    4,                          // NV_ONTA_BANDS
+
 };
 
 #endif // _NVRAMSIZE_H

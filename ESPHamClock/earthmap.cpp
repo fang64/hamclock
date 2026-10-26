@@ -38,13 +38,98 @@ uint8_t show_lp;                                // display long path, else short
 
 #define GRAYLINE_COS    (-0.208F)               // cos(90 + grayline angle), we use 12 degs
 #define GRAYLINE_POW    (0.75F)                 // cos power exponent, sqrt is too severe, 1 is too gradual
-static SCoord moremap_s;                        // drawMoreEarth() scanning location 
+static SCoord moremap_s;                        // drawMoreEarth() scanning location
+static bool moremap_active;                     // whether a map sweep is currently in progress
+static uint32_t moremap_generation;             // incremented whenever a new sweep is explicitly scheduled
+static uint32_t next_redraw_ms;                 // next periodic redraw deadline once a sweep completes
+static bool mm_p;                              // mouse moved during a map sweep; redraw again when done
+static uint32_t mm_ms;                         // throttle mouse-driven city hover redraws
+static bool mp_a;                              // map popup menu currently running
+static bool mv_a;                              // map view menu currently running
+#define EARTH_REDRAW_INTERVAL_MS 30000U         // redraw slow-changing map overlays at a conservative cadence
 
 // cached grid colors
 uint16_t EARTH_GRIDC, EARTH_GRIDC00;            // main and highlighted
 
 // flag to defer drawing over map until opportune time:
 bool mapmenu_pending;
+
+static void updateCircumstances();
+static void drawMapGrid();
+
+void finishMapSweepNow (void)
+{
+	while (moremap_active)
+		drawMoreEarth();
+}
+
+/* request a fresh visual sweep of the current map without reloading its source data.
+ * used to clear old overlays and redraw moving symbols on demand.
+ */
+void scheduleMapRedraw (void)
+{
+    moremap_s.x = 0;
+    moremap_s.y = map_b.y;
+    moremap_active = true;
+    next_redraw_ms = 0;
+    moremap_generation++;
+}
+
+/* redraw just the given screen box: restore the underlying map pixels then redraw everything
+ * that might legitimately overlay them (grid, paths, planet/DX/sat markers, info box, etc).
+ *
+ * Use this -- instead of scheduleMapRedraw()/scheduleFreshMap() -- to erase a small transient
+ * popup. Those functions only (re)draw overlay symbols once, at the end of a full, multi-frame,
+ * row-by-row sweep of the entire map (see drawMoreEarth() below); if something calls them again
+ * before that sweep finishes (e.g. a user tapping open/closed a planet popup faster than a sweep
+ * completes) the sweep restarts from the top and the end-of-sweep symbol redraw keeps getting
+ * starved, which is what let old overlay data (planet dots, DX/sat markers, paths, etc) disappear,
+ * partially or completely, until a sweep was finally left undisturbed long enough to finish.
+ * This function instead does its work synchronously and immediately, with no dependency on the
+ * sweep's progress, so it can't be interrupted or starved no matter how quickly it's re-invoked.
+ */
+void redrawMapBox (const SBox &box)
+{
+    for (uint16_t y = box.y; y < box.y + box.h; y++)
+        for (uint16_t x = box.x; x < box.x + box.w; x++)
+            drawMapCoord (x, y);
+
+    if (core_map != CM_USER) {
+        drawMapGrid();
+        drawSatPathAndFoot();
+        if (waiting4DXPath())
+            drawDXPath();
+        drawPSKPaths();
+        drawAllSymbols();
+        drawSatName();
+        drawInfoBox();
+    }
+
+    tft.drawPR();
+}
+
+
+
+void mm_redraw (void)
+{
+    uint32_t now_ms = millis();
+
+    // City hover is cursor-driven. Do not restart an active progressive map sweep;
+    // remember that another sweep is needed and start it as soon as the current one finishes.
+    if (now_ms - mm_ms < 33U || moremap_active) {
+        mm_p = true;
+        return;
+    }
+
+    mm_p = false;
+    scheduleMapRedraw();
+    mm_ms = now_ms;
+}
+
+bool mm_up (void)
+{
+    return (mp_a || mv_a);
+}
 
 // grid spacing, degrees
 #define LL_LAT_GRID     15
@@ -393,6 +478,8 @@ static void drawMapPopup(void)
     char storm_l1[36], storm_l2[36], storm_l3[36];
     bool have_storm = getStormMapMenuInfo (map_popup.ll,
                     storm_l1, sizeof(storm_l1), storm_l2, sizeof(storm_l2), storm_l3, sizeof(storm_l3));
+    char storm_url[100];
+    bool have_storm_url = have_storm && getStormTropicalTidbitsURL (map_popup.ll, storm_url, sizeof(storm_url));
 
     // launch-site POI info, if the tap landed near a launch pad
     char launch_l1[52], launch_l2[52], launch_l3[36];
@@ -404,11 +491,16 @@ static void drawMapPopup(void)
     MenuItem mitems[20];
     int n_menu = 0;
     int mi_wiki = -1;                                           // set below iff a Wikipedia item is added
+    int mi_stormurl = -1;                                       // set below iff a storm web link is added
 
     if (have_storm) {
         mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, storm_l1, 0};
         mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, storm_l2, 0};
         mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, storm_l3, 0};
+        if (have_storm_url) {
+            mi_stormurl = n_menu;
+            mitems[n_menu++] = {MENU_TOGGLE, false, 3, ZINDENT, "Open Tropical Tidbits", 0};
+        }
         mitems[n_menu++] = {MENU_LABEL, false, 0, ZINDENT, "-------------", 0};
     }
 
@@ -447,7 +539,10 @@ static void drawMapPopup(void)
 
     // go
     MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 1, n_menu, mitems};
-    if (runMenu (menu)) {
+    mp_a = true;
+    bool ok = runMenu (menu);
+    mp_a = false;
+    if (ok) {
         // init copy for changes
         PanZoom new_pz = pan_zoom;
 
@@ -460,6 +555,10 @@ static void drawMapPopup(void)
         // open the launch site's Wikipedia page if requested
         if (mi_wiki >= 0 && mitems[mi_wiki].set && launch_wiki)
             openURL (launch_wiki);
+
+        // open the storm's Tropical Tidbits satellite loop page if requested
+        if (mi_stormurl >= 0 && mitems[mi_stormurl].set)
+            openURL (storm_url);
 
         // reset else other stuff
         if (mitems[mi_rst].set) {
@@ -929,9 +1028,11 @@ static void drawMapMenu()
     // run menu
     SBox ok_b;
     MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 1, MI_N, mitems};
-    bool menu_ok = runMenu (menu);
+    mv_a = true;
+    bool ok = runMenu (menu);
+    mv_a = false;
 
-    if (menu_ok) {
+    if (ok) {
 
 
         // build new map_rotset
@@ -1118,18 +1219,68 @@ void initEarthMap()
     updateZoneSCoords(ZONE_CQ);
     updateZoneSCoords(ZONE_ITU);
 
-    // init scan line in map_b
-    moremap_s.x = 0;                    // avoid updateCircumstances() first call to drawMoreEarth()
-    moremap_s.y = map_b.y;
-
     // now main loop can resume with drawMoreEarth()
+    scheduleMapRedraw();
 }
 
 /* display another earth map row at mmoremap_s.
  */
 void drawMoreEarth()
 {
+    // check for mouse movement (both local and web)
+    static uint16_t lx = -1;
+    static uint16_t ly = -1;
+    static bool lom = false;
+    uint16_t mx, my;
+    bool has_mouse = tft.getMouse (&mx, &my);
+    if (has_mouse) {
+        bool om = overMap(SCoord{mx, my}) || overHoverPane(SCoord{mx, my});
+        bool mv = mx != lx || my != ly;
+        if (mv) {
+            lx = mx;
+            ly = my;
+            if (mainpage_up && !mm_up() && (om || lom))
+                mm_redraw();
+            lom = om;
+        }
+    } else {
+        if (lom) {
+            mm_redraw();
+            lom = false;
+            lx = -1;
+            ly = -1;
+        }
+    }
 
+    if (!moremap_active) {
+        uint32_t now_ms = millis();
+        bool mm_due = mm_p && now_ms - mm_ms >= 33U;
+        bool map_due = (int32_t)(now_ms - next_redraw_ms) >= 0;
+
+        // Only consume deferred overlays while the map is stable. If a redraw is
+        // due now, leave them pending so the fresh map does not immediately paint
+        // over them before the end-of-sweep handlers run.
+        if (!mm_due && !map_due) {
+            if (mapmenu_pending) {
+                drawMapMenu();
+                mapmenu_pending = false;
+            }
+            if (map_popup.pending) {
+                drawMapPopup();
+                map_popup.pending = false;
+            }
+            return;
+        }
+
+        if (mm_due) {
+            mm_p = false;
+            mm_ms = now_ms;
+        }
+        updateCircumstances();
+        scheduleMapRedraw();
+    }
+
+    uint32_t sweep_generation = moremap_generation;
     uint16_t last_x = map_b.x + EARTH_W - 1;
 
     // draw next row
@@ -1167,9 +1318,19 @@ void drawMoreEarth()
         // rotate?
         checkBGMap();
 
-        // prep for next
-        updateCircumstances();
-        moremap_s.y = map_b.y;
+        // a menu action or map refresh may have already restarted the sweep.
+        if (moremap_generation != sweep_generation)
+            return;
+
+        // otherwise stop here and wait until the next periodic or explicit redraw request.
+        moremap_active = false;
+
+        if (mm_p) {
+            mm_p = false;
+            mm_ms = millis();
+            scheduleMapRedraw();
+        }
+        next_redraw_ms = millis() + EARTH_REDRAW_INTERVAL_MS;
 
     // #define TIME_MAP_DRAW                             // RBF
     #if defined(TIME_MAP_DRAW)

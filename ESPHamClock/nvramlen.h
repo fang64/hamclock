@@ -43,5 +43,8 @@
 #define NV_ADIFWLIST_LEN        50
 #define NV_ONTAWLIST_LEN        50
 #define NV_ONTAORG_LEN          30
+#define NV_HAMSATKEY_LEN        64
+#define NV_SATGROUP_LEN         240
+#define NV_MESHWATCHLIST_LEN    120
 
 #endif // _NVRAMLEN_H

@@ -364,6 +364,34 @@ typedef enum {
     // 249
     NV_STORMS_ON,               // whether to show storm overlay and pane
 
+    // 250
+    NV_HAMSATKEY,                // hams.at API key
+
+    // 251
+    NV_SATGROUP,                 // newline-separated satellite names for group schedule
+
+    // 252
+    NV_SHOWPLANETS,               // whether to show planets on the map
+
+    // 253 -- retain the experimental marker so already-patched EEPROM files remain compatible
+    NV_PLOTSCHEMA,                 // reserved plot settings schema marker
+
+    // 254 -- appended so all prior EEPROM addresses remain unchanged
+    NV_PANE0ROTSET_HI,            // high 32 bits of pane 0 PlotChoice rotation mask
+    NV_PANE1ROTSET_HI,            // high 32 bits of pane 1 PlotChoice rotation mask
+    NV_PANE2ROTSET_HI,            // high 32 bits of pane 2 PlotChoice rotation mask
+    NV_PANE3ROTSET_HI,            // high 32 bits of pane 3 PlotChoice rotation mask
+
+    // 255 -- appended so all prior EEPROM addresses remain unchanged
+    NV_MESHWATCHLIST,             // comma-separated Meshtastic node IDs to draw neighbour links for
+
+    // 256 -- appended so all prior EEPROM addresses remain unchanged
+    NV_PIAWAREHOST,                // user's PiAware ADS-B receiver host name or IP, else unused
+
+    // 257 -- appended so all prior EEPROM addresses remain unchanged
+    NV_ONTA_MODES,                 // ONTA mode filter bitmask (see ONTAMB_* in ontheair.cpp)
+    NV_ONTA_BANDS,                 // ONTA band filter bitmask, 1 bit per HamBandSetting
+
 	NV_N
 
 } NV_Name;

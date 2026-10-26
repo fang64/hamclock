@@ -162,6 +162,7 @@ typedef struct {
 #define NV_RIGHOST_LEN          18
 #define NV_FLRIGHOST_LEN        18
 #define NV_COREMAPSTYLE_LEN     10
+#define NV_PIAWAREHOST_LEN      36
 
 
 /* allows reading from array, WiFiClient or FILE
@@ -386,7 +387,9 @@ typedef enum {
 
 // N.B. take care that names will fit in menu built by askPaneChoice()
 // N.B. names should not include blanks, but _ are changed to blanks for prettier printing
-#define PLOTNAMES \
+// Keep the original 32 choices at their historic ordinals. EEPROM value 32 remains NONE forever;
+// choices added after that sentinel are mapped into the new high rotation word by PLOTBIT().
+#define PLOTNAMES_LOW \
     X(PLOT_CH_BC,           "VOACAP_DEDX")      \
     X(PLOT_CH_DEWX,         "DE_Wx")            \
     X(PLOT_CH_DXCLUSTER,    "DX_Cluster")       \
@@ -420,15 +423,22 @@ typedef enum {
     X(PLOT_CH_HFCOND,       "HF_Bands")         \
     X(PLOT_CH_VHFCOND,      "VHF_Cond")
 
-#define X(a,b)  a,              // expands PLOTNAMES to each enum and comma
+#define PLOTNAMES_HIGH \
+    X(PLOT_CH_SATACT,       "Sat_Alerts")        \
+    X(PLOT_CH_MESHTASTIC,   "Mesh_Mon")
+
+#define PLOTNAMES PLOTNAMES_LOW PLOTNAMES_HIGH
+
+#define X(a,b)  a,              // expand the original low-word choices
 typedef enum {
-    PLOTNAMES
+    PLOTNAMES_LOW
+    PLOT_CH_NONE,               // fixed EEPROM sentinel: value 32
+    PLOTNAMES_HIGH              // first high-word choice starts at value 33
     PLOT_CH_N
 } PlotChoice;
 #undef X
 
-// reuse count also handy flag for not found
-#define PLOT_CH_NONE    PLOT_CH_N
+static_assert (PLOT_CH_N - 1 <= 64, "PlotMask high word is full");
 
 typedef enum {
     PANE_0,                             // DE/DX overlay
@@ -682,12 +692,20 @@ extern SBox de_info_b;                  // de info pane
 extern SBox map_b;                      // main map 
 extern SBox view_btn_b;                 // map view menu button
 extern SBox motd_btn_b;                 // MOTD mailbox icon (next to UTC button)
+extern SBox adsb_btn_b;                 // ADS-B airplane icon (next to MOTD icon)
+extern SBox windy_btn_b;                // Windy.com wind icon (next to ADS-B icon)
 
 // MOTD (Message of the Day) functions
 extern void checkMOTD (void);
 extern bool motdIsPresent (void);
 extern void drawMOTDIcon (void);
 extern void motdClicked (void);
+
+// ADS-B airplane icon -- opens https://adsb.lol
+extern void drawADSBIcon (void);
+
+// Windy.com wind icon -- opens https://www.windy.com
+extern void drawWindyIcon (void);
 extern SBox dx_maid_b;                  // dx maidenhead pick
 extern SBox de_maid_b;                  // de maidenhead pick
 extern SBox lkscrn_b;                   // screen lock icon button
@@ -802,6 +820,7 @@ extern void newDX (LatLong &ll, const char grid[MAID_CHARLEN], const char *overr
 extern void drawDXPath(void);
 extern bool screenIsLocked(void);
 extern time_t getUptime (uint16_t *days, uint8_t *hrs, uint8_t *mins, uint8_t *secs);
+extern void updateCallsignStatus (bool force);
 extern void eraseScreen(void);
 extern void setMapTagBox (const char *tag, const SCoord &c, uint16_t r, SBox &box);
 extern void drawMapTag (const char *tag, const SBox &box, uint16_t txt_color = RA8875_WHITE,
@@ -1266,6 +1285,19 @@ extern void drawActiveNetsOnMap (void);
 extern bool getClosestActiveNet (LatLong &from_ll, LatLong *mark_ll, ActiveNetInfo *info);
 extern bool getActiveNetsPaneInfo (const SCoord &ms, LatLong *mark_ll, ActiveNetInfo *info);
 
+// meshtastic node map plotting + hover info -- same pattern as ActiveNetInfo above
+typedef struct {
+    char name[40];                      // long_name
+    char short_name[8];
+    int battery_level;                  // 0-100, 101 = powered, -1 = unknown
+    float voltage;
+    int n_links;
+    LatLong ll;
+} MeshInfo;
+extern void drawMeshtasticOnMap (void);
+extern bool getClosestMeshtasticNode (LatLong &from_ll, LatLong *mark_ll, MeshInfo *info);
+extern bool getMeshtasticPaneInfo (const SCoord &ms, LatLong *mark_ll, MeshInfo *info);
+
 #define LAUNCHES_INTERVAL (2)
 
 
@@ -1485,6 +1517,7 @@ extern SCircle moon_c;
 extern uint8_t flash_crc_ok;
 
 extern void drawMoreEarth (void);
+extern void finishMapSweepNow (void);
 extern void eraseDEMarker (void);
 extern void eraseDEAPMarker (void);
 extern void drawDEMarker (bool force);
@@ -1501,6 +1534,10 @@ extern void drawMapCoord (uint16_t x, uint16_t y);
 extern void drawSun (void);
 extern void drawMoon (void);
 extern void drawDXInfo (void);
+extern void scheduleMapRedraw (void);
+extern void redrawMapBox (const SBox &box);
+extern void mm_redraw(void);
+extern bool mm_up (void);
 extern void ll2s (const LatLong &ll, SCoord &s, uint8_t edge);
 extern void ll2s (float lat, float lng, SCoord &s, uint8_t edge);
 extern void ll2sRaw (const LatLong &ll, SCoord &s, uint8_t edge);
@@ -1579,6 +1616,25 @@ extern void drawSatName(void);
 extern void drawOneTimeDX(void);
 extern void drawOneTimeDE(void);
 extern bool setSatFromName (const char *new_name);
+extern Satellite *lookupSatByName (const char *name, int *norad = NULL);
+
+/*********************************************************************************************
+ *
+ * satsked.cpp
+ *
+ */
+
+extern void drawSatGroupSchedule (void);
+extern void drawSatCoVis (void);
+
+/*********************************************************************************************
+ *
+ * planets.cpp
+ *
+ */
+
+extern void drawPlanetsOnMap (void);
+extern bool checkPlanetMapTouch (const SCoord &s);
 extern bool setSatFromTLE (const char *name, const char *t1, const char *t2);
 extern bool initSat(void);
 extern bool getSatNow (SatNow &satnow);
@@ -2106,7 +2162,20 @@ extern void reportEESize (uint16_t &ee_used, uint16_t &ee_size);
 #define ONTA_INTERVAL   70                              // polling interval
 
 extern bool updateOnTheAir (const SBox &box, bool fresh);
-extern bool checkOnTheAirTouch (const SCoord &s, const SBox &box);
+extern bool checkOnTheAirTouch (TouchType tt, const SCoord &s, const SBox &box);
+
+/*********************************************************************************************
+ *
+ * hamsat.cpp
+ *
+ */
+
+extern bool updateHamsat (const SBox &box, bool fresh);
+extern bool checkHamsatTouch (const SCoord &s, const SBox &box);
+extern void drawHamsatOnMap (void);
+extern bool getHamsatPaneHover (const SCoord &ms, LatLong *ll, char *label, size_t label_len);
+extern bool updateMeshtastic (const SBox &box, bool fresh);
+extern bool checkMeshtasticTouch (const SCoord &s, const SBox &box);
 extern bool getOnTheAirSpots (DXSpot **spp, uint8_t *nspotsp);
 extern void drawOnTheAirSpotsOnMap (void);
 extern bool getClosestOnTheAirSpot (LatLong &ll, DXSpot *sp, LatLong *llp);
@@ -2188,6 +2257,7 @@ extern void prepPlotBox (const SBox &box);
 
 extern void plotMapData (const char title[], const char x_label[], float x_data[], float y_data[],int n_data);
 extern void plotServerFile (const char *filename, const char title[], const char x_label[]);
+extern void plotRSGHistory (void);              // NOAA-style stacked R/S/G history graph on map_b
 
 
 
@@ -2203,27 +2273,42 @@ extern void plotServerFile (const char *filename, const char title[], const char
 
 extern const SBox plot_b[PANE_N];          // box for each pane
 extern PlotChoice plot_ch[PANE_N];         // current choice in each pane, or PLOT_CH_NONE for PANE_0
-extern const char *plot_names[PLOT_CH_N];  // must be in same order as PlotChoice
-extern uint32_t plot_rothold;              // bitmask of PlotChoice in rotset but temporarily holding
-extern uint32_t plot_rotset[PANE_N];       // bitmask of each pane's PlotChoice rotation choices
-                                           // N.B. plot_rotset[i] must always include plot_ch[i] unless NONE
+extern const char *plot_names[PLOT_CH_N];  // indexed by PlotChoice; PLOT_CH_NONE entry is "NONE"
 
-#define ROTHOLD_SET(pc)         (plot_rothold |= (1<<(pc)))
-#define ROTHOLD_CLR(pc)         (plot_rothold &= ~(1<<(pc)))
-#define ROTHOLD_TST(pc)         ((plot_rothold & (1<<(pc))) != 0)
+typedef uint64_t PlotMask;
+extern PlotMask plot_rothold;              // PlotChoice bits temporarily holding rotation
+extern PlotMask plot_rotset[PANE_N];       // each pane's PlotChoice rotation choices
+                                           // N.B. plot_rotset[i] must include plot_ch[i] unless NONE
+
+// EEPROM value 32 is permanently reserved for PLOT_CH_NONE. Choices below it keep their original
+// low-word bit numbers; real choices above it are packed down by one so PLOT_CH_SATACT uses bit 32
+// (high-word bit 0), the next new choice uses bit 33, and so on.
+#define PLOT_CH_IS_REAL(pc)     ((uint32_t)(pc) < (uint32_t)PLOT_CH_NONE || \
+                                 ((uint32_t)(pc) > (uint32_t)PLOT_CH_NONE && \
+                                  (uint32_t)(pc) < (uint32_t)PLOT_CH_N))
+#define PLOTBIT_INDEX(pc)       ((uint32_t)(pc) < (uint32_t)PLOT_CH_NONE \
+                                    ? (uint32_t)(pc) : (uint32_t)(pc)-1U)
+#define PLOTBIT(pc)             (PLOT_CH_IS_REAL(pc) ? (UINT64_C(1) << PLOTBIT_INDEX(pc)) : UINT64_C(0))
+
+#define ROTHOLD_SET(pc)         (plot_rothold |= PLOTBIT(pc))
+#define ROTHOLD_CLR(pc)         (plot_rothold &= ~PLOTBIT(pc))
+#define ROTHOLD_TST(pc)         ((plot_rothold & PLOTBIT(pc)) != 0)
 
 #define SHOWING_PANE_0()        (plot_ch[PANE_0] != PLOT_CH_NONE)
 #define BOX_IS_PANE_0(b)        ((b).w == PLOTBOX0_W && (b).h == PLOTBOX0_H)
 
-// bit mask of plot choices suitable for PANE_0
-#define PANE_0_CH_MASK          ((1<<PLOT_CH_DXCLUSTER) | (1<<PLOT_CH_CONTESTS) | (1<<PLOT_CH_ADIF) \
-                                 | (1<<PLOT_CH_ONTA) | (1<<PLOT_CH_DXPEDS) | (1<<PLOT_CH_ACTIVENETS) | (1<<PLOT_CH_LAUNCHES))
+// bit mask of plot choices suitable for PANE_0, including high-word choices
+#define PANE_0_CH_MASK          (PLOTBIT(PLOT_CH_DXCLUSTER) | PLOTBIT(PLOT_CH_CONTESTS) | \
+                                 PLOTBIT(PLOT_CH_ADIF) | PLOTBIT(PLOT_CH_ONTA) | \
+                                 PLOTBIT(PLOT_CH_DXPEDS) | PLOTBIT(PLOT_CH_ACTIVENETS) | \
+                                 PLOTBIT(PLOT_CH_LAUNCHES) | PLOTBIT(PLOT_CH_SATACT))
 
 // compute number of bits set in PANE_0_CH_MASK at compile time :-)
 // https://stackoverflow.com/questions/109023/count-the-number-of-set-bits-in-a-32-bit-integer
 // https://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetParallel
 #define NBITS_SET(v) ((((((((v) - (((v) >> 1) & 0x55555555)) & 0x33333333) + ((((v) - (((v) >> 1) & 0x55555555)) >> 2) & 0x33333333)) + (((((v) - (((v) >> 1) & 0x55555555)) & 0x33333333) + ((((v) - (((v) >> 1) & 0x55555555)) >> 2) & 0x33333333)) >> 4)) & 0xF0F0F0F) * 0x1010101) >> 24)
-#define N_PANE_0_CH             ((int)(NBITS_SET((uint32_t)PANE_0_CH_MASK)))
+#define N_PANE_0_CH             ((int)(NBITS_SET((uint32_t)PANE_0_CH_MASK) + \
+                                                 NBITS_SET((uint32_t)(PANE_0_CH_MASK >> 32))))
 
 #define PLOT_ROTWARN_DT        4           // show rotation about to occur, secs
 
@@ -2232,9 +2317,11 @@ extern bool checkPlotTouch (TouchType tt, const SCoord &s, PlotPane pp);
 extern PlotPane findPaneForChoice (PlotChoice pc);
 extern PlotPane findPaneChoiceNow (PlotChoice pc);
 extern PlotChoice getNextRotationChoice (PlotPane pp, PlotChoice pc);
+extern PlotChoice getPrevRotationChoice (PlotPane pp, PlotChoice pc);
 extern PlotChoice getAnyAvailableChoice (void);
 extern PlotChoice getAnyAvailablePane0Choice (void);
 extern void forcePaneRotation (PlotPane pp);
+extern void forcePaneRotationPrev (PlotPane pp);
 extern bool plotChoiceIsAvailable (PlotChoice ch);
 extern void logPaneRotSet (PlotPane pp, PlotChoice ch);
 extern void logBRBRotSet(void);
@@ -2244,7 +2331,8 @@ extern void savePlotOps(void);
 extern int tickmarks (float min, float max, int numdiv, float ticks[]);
 extern bool isPaneRotating (PlotPane pp);
 extern bool isSpecialPaneRotating (PlotPane pp);
-extern bool enforceCDownAlone (const SBox &box, uint32_t rotset);
+extern bool enforceCDownAlone (const SBox &box, PlotMask rotset);
+extern bool overHoverPane (const SCoord &s);
 extern void restoreNormPANE0(void);
 
 
@@ -2443,12 +2531,14 @@ extern uint16_t ltg_radius_km;          // search radius when not worldwide
 #define STORM_INTERVAL      (2) 
 
 extern void initStorms (void);
+extern bool checkStormsData (void);
 extern bool updateStorms (const SBox &box, bool fresh);
 extern void drawStormsOnMap (void);
 extern bool checkStormsTouch (const SCoord &s, const SBox &box);
 extern const char *getStormHoverLabel (const LatLong &ll);
 extern bool getStormPaneHover (const SCoord &ms, LatLong *ll, char *label, size_t label_len);
 extern bool stormsActive (void);
+extern bool getStormTropicalTidbitsURL (const LatLong &ll, char *url, size_t url_len);
 extern bool getStormMapMenuInfo (const LatLong &ll, char *line1, size_t line1_len,
         char *line2, size_t line2_len, char *line3, size_t line3_len);
 extern uint16_t stormCategoryColor (uint8_t cat, uint16_t wind_kt);
@@ -2689,6 +2779,7 @@ extern bool useGeoIP(void);
 extern bool useGPSDTime(void);
 extern bool useGPSDLoc(void);
 extern const char *getGPSDHost(void);
+extern const char *getPiAwareHost(void);
 extern bool useNMEATime(void);
 extern bool useNMEALoc(void);
 extern const char *getNMEAFile(void);
@@ -2736,6 +2827,7 @@ extern bool useOSTime (void);
 extern bool showNewDXDEWx(void);
 extern int getPaneRotationPeriod (void);
 extern bool showPIP(void);
+extern bool showPlanets(void);
 extern bool autoMap(void);
 extern int getMapRotationPeriod(void);
 extern GrayDpy_t getGrayDisplay(void);
@@ -2981,6 +3073,16 @@ typedef struct {
     float s[XRAY_NV];                           // short xray value
 } XRayData;
 
+// solar proton flux (>= 10 MeV, GOES integral), same cadence/count as XRayData for time alignment
+#define PROTON_NV               XRAY_NV                 // n points to collect, same window as xray
+#define PROTON_INTERVAL         XRAY_INTERVAL           // polling interval, secs
+typedef struct {
+    time_t next_update;                         // when to try to get new data
+    bool data_ok;                               // set when data are known good
+    float x[PROTON_NV];                         // age, hours ago -- matches XRayData::x
+    float p[PROTON_NV];                         // log10(pfu), >= 10 MeV integral proton flux
+} ProtonData;
+
 typedef struct {
     time_t next_update;                         // when to try to get new data
     bool data_ok;                               // set when data are known good
@@ -3019,6 +3121,7 @@ extern bool retrieveSunSpots (SunSpotData &ssn);
 extern bool retrieveSolarFlux (SolarFluxData &sf);
 extern bool retrieveDRAP (DRAPData &drap);
 extern bool retrieveXRay (XRayData &xray);
+extern bool retrieveProtonFlux (ProtonData &proton);
 extern bool retrieveKp (KpData &kp);
 extern bool retrieveNOAASWx (NOAASpaceWxData &noaa);
 extern bool retrieveAurora (AuroraData &a);
