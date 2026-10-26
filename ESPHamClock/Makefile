@@ -42,6 +42,7 @@ endif
 LDXXFLAGS = -LArduinoLib -LwsServer -Lzlib-hc -g -pthread
 LIBS = -lpthread -larduino -lzlib-hc -lws
 CXX = g++
+PYTHON = python3
 
 # macOS does not have X11 by default; this assumes XQuartz or macports xorg has been installed
 ifeq ($(shell uname -s), Darwin)
@@ -103,6 +104,7 @@ OBJS = \
 	cities.o \
 	color.o \
 	configs.o \
+	cfg_info.o \
 	contests.o \
 	cputemp.o \
 	debug.o \
@@ -110,6 +112,7 @@ OBJS = \
 	dxcluster.o \
 	dxpeds.o \
 	dxpeds_hide.o \
+	hurricane.o \
 	earthmap.o \
 	earthsat.o \
 	emetool.o \
@@ -293,14 +296,21 @@ hamclock-fb0-3200x1920: $(OBJS) hclibs
 
 
 
-# /usr/local/bin seems right although Alpine linux does not have it even though it is in the default PATH
 install:
 	@SOURCE=hamclock-*0x*0 ; \
-	DIR=/usr/local/bin ; \
+	DIR=$${DIR:-/usr/local/bin} ; \
 	TARGET=$$DIR/hamclock ; \
 	if ! [ -x $$SOURCE ] ; then \
 		echo 'make something first' ; \
 		make help ; \
+	elif [ `id -un` != 'root' ] && \
+	     ( D="$$DIR"; \
+	       while [ ! -d "$$D" ]; do \
+	           D=`dirname "$$D"`; \
+	       done ; \
+	       [ -w "$$D" ] ) ; then \
+		mkdir -p $$DIR \
+		&& mv -f $$SOURCE $$TARGET ; \
 	elif [ `id -un` != 'root' ] ; then \
 		echo please run with sudo ; \
 	else \
@@ -316,3 +326,11 @@ clean clobber:
 	$(MAKE) -C zlib-hc clean
 	touch x.o x.dSYM hamclock hamclock-
 	rm -rf *.o *.dSYM hamclock hamclock-*
+
+
+.PHONY: test test-eeprom
+
+test: test-eeprom
+
+test-eeprom:
+	$(PYTHON) ../tests/test_eeprom.py

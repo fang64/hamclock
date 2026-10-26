@@ -1123,7 +1123,8 @@ static void runNCDXFMenu (void)
         // this list of each BRB is to avoid knowing their values, nice BUT must be in same order as mitems[]
         static uint8_t mi_brb_order[BRB_N] = {
             BRB_SHOW_BEACONS, BRB_SHOW_SWSTATS, BRB_SHOW_ONOFF, BRB_SHOW_PHOT, BRB_SHOW_BR,
-            BRB_SHOW_BME76, BRB_SHOW_BME77, BRB_SHOW_DXWX, BRB_SHOW_DEWX, BRB_SHOW_LIGHTNING
+            BRB_SHOW_BME76, BRB_SHOW_BME77, BRB_SHOW_DXWX, BRB_SHOW_DEWX,
+            BRB_SHOW_LIGHTNING
         };
 
         // don't show WX if already is already in a pane
@@ -1169,10 +1170,11 @@ static void runNCDXFMenu (void)
         // engage new option unless canceled
         if (ok) {
 
-            // build new rotset
+            // build new rotset. Do not preserve hidden/ignored choices,
+            // such as Lightning when the main map Lightning overlay is disabled.
             brb_rotset = 0;
             for (int i = 0; i < BRB_N; i++)
-                if (mitems[i].set)
+                if (mitems[i].type != MENU_IGNORE && mitems[i].set)
                     brb_rotset |= (1 << mi_brb_order[i]);
 
             // if brb_mode is not already in new set, just pick one

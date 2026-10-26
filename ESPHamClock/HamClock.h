@@ -413,7 +413,8 @@ typedef enum {
     X(PLOT_CH_ADIF,         "ADIF")             \
     X(PLOT_CH_AURORA,       "Aurora")           \
     X(PLOT_CH_DXPEDS,       "DXPeditions")      \
-    X(PLOT_CH_DST,          "Disturbance")
+    X(PLOT_CH_DST,          "Disturbance")       \
+    X(PLOT_CH_STORMS,       "Storms")
 
 #define X(a,b)  a,              // expands PLOTNAMES to each enum and comma
 typedef enum {
@@ -1889,6 +1890,7 @@ typedef enum {
     MENU_OK_OK,                 // normal ok button appearance
     MENU_OK_BUSY,               // busy ok button appearance
     MENU_OK_ERR,                // error ok button appearance
+    MENU_OK_DISABLE,            // disabled ok button appearance
 } MenuOkState;
 
 typedef struct {
@@ -2371,6 +2373,21 @@ extern void doLightningTouch (void);
 extern uint8_t  ltg_worldwide;          // 1=worldwide, 0=radius mode
 extern uint16_t ltg_radius_km;          // search radius when not worldwide
 
+/*
+ * hurricane.cpp
+ */
+
+#define STORM_INTERVAL      (3600*6)    // update interval, secs (6 hours = NHC cadence)
+
+extern void initStorms (void);
+extern bool updateStorms (const SBox &box, bool fresh);
+extern void drawStormsOnMap (void);
+extern bool checkStormsTouch (const SCoord &s, const SBox &box);
+extern const char *getStormHoverLabel (const LatLong &ll);
+extern bool getStormMapMenuInfo (const LatLong &ll, char *line1, size_t line1_len,
+        char *line2, size_t line2_len, char *line3, size_t line3_len);
+extern uint16_t stormCategoryColor (uint8_t cat, uint16_t wind_kt);
+
 
 
 
@@ -2582,6 +2599,11 @@ extern const char *getWiFiSSID(void);
 extern const char *getWiFiPW(void);
 extern const char *getCallsign(void);
 extern bool setCallsign (const char *cs);
+
+/* cfg_info.cpp -- backup sidecar maintenance */
+extern void writeCfgInfo (const char *cfg_name);
+extern void deleteCfgInfo (const char *cfg_name);
+extern void renameCfgInfo (const char *from, const char *to);
 extern const char *getDXClusterHost(void);
 extern int getDXClusterPort(void);
 extern bool setDXCluster (char *host, char *port_str, Message &ynot);
