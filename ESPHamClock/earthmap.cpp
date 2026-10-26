@@ -472,7 +472,7 @@ static void drawMapPopup(void)
     Serial.printf ("POPUP before: pan_x %d pan_y %d zoom %d\n", pan_zoom.pan_x, pan_zoom.pan_y,
                                 pan_zoom.zoom);
 
-    const int ZINDENT = 2;
+    const int ZINDENT = 5;
 
     bool zoom_ok = map_proj == MAPP_MERCATOR;
     bool pan_ok = map_proj == MAPP_MERCATOR || map_proj == MAPP_ROB;
@@ -1264,6 +1264,9 @@ void initEarthMap()
     drawMapMenuButton();
     drawBordersButton();
     drawWefaxButton();
+    drawFiresButton();
+    drawWindButton();
+    drawADSBBadge();
 
     // update astro info
     updateCircumstances();
@@ -1385,6 +1388,9 @@ void drawMoreEarth()
         drawMapMenuButton();
         drawBordersButton();
         drawWefaxButton();
+        drawFiresButton();
+        drawWindButton();
+        drawADSBBadge();
 
         // draw now
         tft.drawPR();
@@ -1932,7 +1938,10 @@ void antipode (LatLong &to, const LatLong &from)
 }
 
 /* return whether s is over the view_btn_b, including an extra border for fat lines or DX etc.
- * also extends over the Borders badge, when it's currently shown, since the two sit side by side.
+ * also extends over the Borders, Fires, WEFAX, Wind and/or ADS-B badges, when currently shown,
+ * since they all sit side by side -- each floats to the right of whichever of View/Borders/Fires/
+ * WEFAX/Wind is rightmost, so ADS-B, being last in every chain it can appear in (Countries/
+ * Terrain/Clouds' Borders+Fires row, or Weather's WEFAX+Wind row), must be checked last here too.
  */
 bool overViewBtn (const SCoord &s, uint16_t border)
 {
@@ -1940,6 +1949,14 @@ bool overViewBtn (const SCoord &s, uint16_t border)
     uint16_t right_edge = view_btn_b.x + view_btn_b.w;
     if (bordersBadgeVisible())
         right_edge = borders_btn_b.x + borders_btn_b.w;
+    if (firesBadgeVisible())
+        right_edge = fires_btn_b.x + fires_btn_b.w;
+    if (wefaxBadgeVisible())
+        right_edge = wefax_btn_b.x + wefax_btn_b.w;
+    if (windBadgeVisible())
+        right_edge = windmap_btn_b.x + windmap_btn_b.w;
+    if (adsbBadgeVisible())
+        right_edge = adsbmap_btn_b.x + adsbmap_btn_b.w;
     return (s.x < right_edge + border && s.y < view_btn_b.y + view_btn_b.h + border);
 }
 

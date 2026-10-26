@@ -1601,7 +1601,7 @@ bool httpSkipHeader (WiFiClient &client)
  * If 404 (or connecting fails), open orig_url.
  * Otherwise open backend URL.
  */
-void openMovieURL (const char *hc_page, const char *orig_url)
+void openMovieURL (const char *hc_page, const char *orig_url, const char *title)
 {
     WiFiClient client;
     bool is_404 = false;
@@ -1619,14 +1619,15 @@ void openMovieURL (const char *hc_page, const char *orig_url)
         is_404 = true;
     }
 
-    if (is_404) {
-        openURL (orig_url);
-    } else {
-        char backend_url[256];
+    const char *url_to_open = orig_url;
+    char backend_url[256];
+    if (!is_404) {
         snprintf (backend_url, sizeof(backend_url), "http://%s:%d/ham/HamClock%s",
                   backend_host, backend_port, hc_page);
-        openURL (backend_url);
+        url_to_open = backend_url;
     }
+
+    showQRCodeModal (url_to_open, title ? title : "Movie", "Scan with phone or open below", "Open Movie");
 }
 
 /* retrieve and plot latest and predicted DRAP indices, return whether io ok
@@ -2283,6 +2284,9 @@ void updateWiFi(PlotPane skip_pp)
             if (pc == PLOT_CH_ACTIVENETS) fresh_redraw[PLOT_CH_ACTIVENETS] = true;
             if (pc == PLOT_CH_DXPEDS)    fresh_redraw[PLOT_CH_DXPEDS] = true;
             if (pc == PLOT_CH_STORMS)    fresh_redraw[PLOT_CH_STORMS] = true;
+            if (pc == PLOT_CH_MARINE)    fresh_redraw[PLOT_CH_MARINE] = true;
+            if (pc == PLOT_CH_FIREWX)    fresh_redraw[PLOT_CH_FIREWX] = true;
+            if (pc == PLOT_CH_QUAKES)    fresh_redraw[PLOT_CH_QUAKES] = true;
             if (pc == PLOT_CH_LAUNCHES)  fresh_redraw[PLOT_CH_LAUNCHES] = true;
             if (pc == PLOT_CH_BALLOONS)  fresh_redraw[PLOT_CH_BALLOONS] = true;
             if (pc == PLOT_CH_APRSCLUSTER) fresh_redraw[PLOT_CH_APRSCLUSTER] = true;
@@ -2595,6 +2599,36 @@ void updateWiFi(PlotPane skip_pp)
             }
             break;
 
+        case PLOT_CH_MARINE:
+            if (t0 >= next_update[pp]) {
+                if (updateMarineWarnings(box, fresh_redraw[pc])) {
+                    next_update[pp] = nextPaneUpdate (pc, MARINEWARN_INTERVAL);
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_FIREWX:
+            if (t0 >= next_update[pp]) {
+                if (updateFireWx(box, fresh_redraw[pc])) {
+                    next_update[pp] = nextPaneUpdate (pc, FIREWX_INTERVAL);
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
+        case PLOT_CH_QUAKES:
+            if (t0 >= next_update[pp]) {
+                if (updateQuakes(box, fresh_redraw[pc])) {
+                    next_update[pp] = nextPaneUpdate (pc, QUAKES_INTERVAL);
+                    fresh_redraw[pc] = false;
+                } else
+                    next_update[pp] = nextWiFiRetry(pc);
+            }
+            break;
+
 	case PLOT_CH_LAUNCHES:
             if (t0 >= next_update[pp]) {
                 if (updateLaunches(box, fresh_redraw[pc])) {
@@ -2643,7 +2677,16 @@ void updateWiFi(PlotPane skip_pp)
     // update lightning overlay if due
     updateLightning();
 
+    // update fire hotspot overlay if due
+    updateFires();
+
     checkStormsData();
+
+    // unlike checkStormsData(), this must run even when the Marine pane isn't on screen
+    // anywhere -- the geofence/auto-popup check depends on it
+    checkMarineWarningsData();
+    checkFireWxData();
+    checkQuakesData();
 
     // maps are checked after each full earth draw -- see drawMoreEarth()
 
@@ -2862,6 +2905,9 @@ void forcePaneRotationPrev (PlotPane pp)
     if (pc == PLOT_CH_ACTIVENETS) fresh_redraw[PLOT_CH_ACTIVENETS] = true;
     if (pc == PLOT_CH_DXPEDS)     fresh_redraw[PLOT_CH_DXPEDS] = true;
     if (pc == PLOT_CH_STORMS)     fresh_redraw[PLOT_CH_STORMS] = true;
+    if (pc == PLOT_CH_MARINE)     fresh_redraw[PLOT_CH_MARINE] = true;
+    if (pc == PLOT_CH_FIREWX)     fresh_redraw[PLOT_CH_FIREWX] = true;
+    if (pc == PLOT_CH_QUAKES)     fresh_redraw[PLOT_CH_QUAKES] = true;
     if (pc == PLOT_CH_LAUNCHES)   fresh_redraw[PLOT_CH_LAUNCHES] = true;
     if (pc == PLOT_CH_BALLOONS)   fresh_redraw[PLOT_CH_BALLOONS] = true;
 

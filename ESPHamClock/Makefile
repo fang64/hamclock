@@ -89,11 +89,13 @@ OBJS = \
 	P13.o \
 	adif.o \
 	adif_parser.o \
+	adsbbadge.o  \
 	activenets.o \
 	balloons.o \
     antenna_lookup.o \
 	antennas.o \
 	antennas-html.o \
+	askmodal.o \
 	asknewpos.o \
 	astro.o \
 	bandactivity.o \
@@ -122,6 +124,10 @@ OBJS = \
 	hamqsl.o \
 	hamsat.o \
 	hurricane.o \
+	marinewarnings.o \
+	firewx.o \
+	fires.o \
+	quakes.o \
 	earthmap.o \
 	earthsat.o \
 	eclipsepane.o \
@@ -158,6 +164,8 @@ OBJS = \
 	plotmgmnt.o \
 	prefixes.o \
 	pskreporter.o \
+	qrcodegen.o \
+	qrmodal.o \
 	qrz.o \
 	radio.o \
 	robinson.o \
@@ -180,12 +188,14 @@ OBJS = \
 	tooltip.o \
 	touch.o \
 	tz.o \
+	userguide.o \
 	version.o \
 	webserver.o \
 	wefax.o \
 	watchlist.o \
 	wifi.o \
 	wifimeter.o \
+	windbadge.o \
 	wx.o \
 	xota.o \
 	zones.o

@@ -592,6 +592,70 @@ static void editCfgName (const SCoord &s, const char kbc, CfgName &cn)
 }
 
 
+
+
+static void drawEntireConfigMenu (CfgTable &ctbl, const SBox &ok_b, const SBox &cancel_b)
+{
+    eraseScreen();
+
+    // draw border
+    SBox screen_b = {0, 0, (uint16_t)tft.width(), (uint16_t)tft.height()};
+    drawSBox (screen_b, GRAY);
+
+    // draw title
+    static const char title[] = "Manage Configurations";
+    selectFontStyle (BOLD_FONT, SMALL_FONT);
+    tft.setTextColor (TL_CLR);
+    tft.setCursor ((800-getTextWidth((char*)title))/2, TITLE_Y);
+    tft.print (title);
+
+    // draw Save new
+    drawTBControl (ctbl.save_tb);
+    selectFontStyle (LIGHT_FONT, SMALL_FONT);
+    tft.setTextColor (TL_CLR);
+    tft.setCursor (SAVE_LX, SAVE_Y);
+    tft.print ("Save new:");
+    drawCfgName (ctbl.save_name);
+    if (ctbl.save_tb.on)
+        drawCfgNameCursor (ctbl.save_name);
+
+    // draw reset
+    drawTBControl (ctbl.reset_tb);
+    selectFontStyle (LIGHT_FONT, SMALL_FONT);
+    tft.setTextColor (TL_CLR);
+    tft.setCursor (RESET_LX, RESET_Y);
+    tft.print ("Reset to default configuration (restarts)");
+
+    // draw column headings
+    selectFontStyle (LIGHT_FONT, SMALL_FONT);
+    tft.setTextColor (TL_CLR);
+    tft.setCursor (TBL_LX + 0*TBL_DX, TBL_HY);
+    tft.print ("Restore");
+    tft.setCursor (TBL_LX + 1*TBL_DX, TBL_HY);
+    tft.print ("Update");
+    tft.setCursor (TBL_LX + 2*TBL_DX, TBL_HY);
+    tft.print ("Delete");
+    tft.setCursor (TBL_LX + 3*TBL_DX - 10, TBL_HY);
+    tft.print ("Rename");
+    tft.setCursor (TBL_LX + 4*TBL_DX, TBL_HY);
+    tft.print ("Name:");
+
+    // add small restart reminder below Restore
+    selectFontStyle (LIGHT_FONT, FAST_FONT);
+    tft.setCursor (TBL_LX+10, TBL_HY+4);
+    tft.print ("(restarts)");
+
+    // draw cancel and ok
+    selectFontStyle (BOLD_FONT, SMALL_FONT);
+    drawStringInBox ("Ok", ok_b, false, RA8875_WHITE);
+    drawStringInBox ("Cancel", cancel_b, false, RA8875_WHITE);
+
+    // draw scrollbar & full table
+    ctbl.sb.draw();
+    drawCfgTable (ctbl);
+}
+
+
 /* offer user the means to reset, save, delete, rename or restore from a set of existing configuration names.
  * return whether a reboot is required and, if so, whether to restore all defaults
  */
@@ -654,53 +718,16 @@ static bool runConfigMenu (char **names, int n_cfgs, bool &restore_def)
 
     // postion reset button and its label
     ctbl.reset_tb = {{RESET_TX, RESET_Y-TB_SZ, TB_SZ, TB_SZ}, OTHER_CIDX, false};
-    drawTBControl (ctbl.reset_tb);
-    selectFontStyle (LIGHT_FONT, SMALL_FONT);
-    tft.setTextColor (TL_CLR);
-    tft.setCursor (RESET_LX, RESET_Y);
-    tft.print ("Reset to default configuration (restarts)");
 
     // prep scroller
     SBox scroll_b = {SCR_X, SCR_Y, SCR_W, SCR_H};
     ctbl.sb.init (MAX_VIS, ctbl.n_cfg, scroll_b);
 
-    // draw title
-    static const char title[] = "Manage Configurations";
-    selectFontStyle (BOLD_FONT, SMALL_FONT);
-    tft.setTextColor (TL_CLR);
-    tft.setCursor ((800-getTextWidth(title))/2, TITLE_Y);
-    tft.print (title);
-
-    // draw column headings
-    selectFontStyle (LIGHT_FONT, SMALL_FONT);
-    tft.setTextColor (TL_CLR);
-    tft.setCursor (TBL_LX + 0*TBL_DX, TBL_HY);
-    tft.print ("Restore");
-    tft.setCursor (TBL_LX + 1*TBL_DX, TBL_HY);
-    tft.print ("Update");
-    tft.setCursor (TBL_LX + 2*TBL_DX, TBL_HY);
-    tft.print ("Delete");
-    tft.setCursor (TBL_LX + 3*TBL_DX - 10, TBL_HY);
-    tft.print ("Rename");
-    tft.setCursor (TBL_LX + 4*TBL_DX, TBL_HY);
-    tft.print ("Name:");
-
-    // add small restart reminder below Restore
-    selectFontStyle (LIGHT_FONT, FAST_FONT);
-    tft.setCursor (TBL_LX+10, TBL_HY+4);
-    tft.print ("(restarts)");
-
-    // draw cancel and ok
-    selectFontStyle (BOLD_FONT, SMALL_FONT);
-    drawStringInBox ("Ok", ok_b, false, RA8875_WHITE);
-    drawStringInBox ("Cancel", cancel_b, false, RA8875_WHITE);
-
-    // draw full table
-    drawCfgTable (ctbl);
+    // initial draw
+    drawEntireConfigMenu (ctbl, ok_b, cancel_b);
 
     // prep run
-    SBox screen_b = {0, 0, tft.width(), tft.height()};
-    drawSBox (screen_b, GRAY);
+    SBox screen_b = {0, 0, (uint16_t)tft.width(), (uint16_t)tft.height()};
     UserInput ui = {
         screen_b,
         UI_UFuncNone, 
@@ -742,20 +769,29 @@ static bool runConfigMenu (char **names, int n_cfgs, bool &restore_def)
             ctbl.top_cfg = ctbl.sb.getTop();
             drawCfgTable (ctbl);
 
-        } else if (inBox (ui.tap, ctbl.save_name.box)) {
-            drawCfgNameCursor (ctbl.save_name);
-            setAllCfgTableOff (ctbl);
-            editing = EDITING_SAVE;
-
-        } else if (inBox (ui.tap, ctbl.save_tb.box)) {
-            ctbl.save_tb.on = !ctbl.save_tb.on;
-            drawTBControl (ctbl.save_tb);
-            editing = ctbl.save_tb.on ? EDITING_SAVE : EDITING_NONE;
-            if (ctbl.save_tb.on) {
-                drawCfgNameCursor (ctbl.save_name);
-                setAllCfgTableOff (ctbl);
-            } else
+        } else if (inBox (ui.tap, ctbl.save_name.box) || inBox (ui.tap, ctbl.save_tb.box)) {
+            if (inBox (ui.tap, ctbl.save_tb.box) && ctbl.save_tb.on) {
+                // toggle off
+                ctbl.save_tb.on = false;
+                drawTBControl (ctbl.save_tb);
                 eraseCfgNameCursor (ctbl.save_name);
+                editing = EDITING_NONE;
+            } else {
+                // open modal virtual keyboard
+                setAllCfgTableOff (ctbl);
+                char new_name[MAX_NAMLEN];
+                quietStrncpy (new_name, ctbl.save_name.name, sizeof(new_name));
+                if (askModalText ("Save New Configuration", "Enter configuration name:", new_name, sizeof(new_name), false, "/\\:")) {
+                    quietStrncpy (ctbl.save_name.name, new_name, sizeof(ctbl.save_name.name));
+                    ctbl.save_name.cursor = strlen (ctbl.save_name.name);
+                    ctbl.save_tb.on = true;
+                    editing = EDITING_SAVE;
+                } else {
+                    if (strlen (ctbl.save_name.name) == 0)
+                        ctbl.save_tb.on = false;
+                }
+                drawEntireConfigMenu (ctbl, ok_b, cancel_b);
+            }
 
         } else if (inBox (ui.tap, ctbl.reset_tb.box)) {
             restore_def = ctbl.reset_tb.on = !ctbl.reset_tb.on;
@@ -773,26 +809,51 @@ static bool runConfigMenu (char **names, int n_cfgs, bool &restore_def)
                     TBControl &tb = ctbl.tbl_tb[tbl_row][cidx];
                     if (inBox (ui.tap, tb.box)) {
 
-                        // toggle
-                        tb.on = !tb.on;
-                        updateCfgChoices (ctbl, tbl_row, cidx);
+                        if (cidx == REN_CIDX && !tb.on) {
+                            // user tapped Rename toggle to turn it ON -> prompt with virtual keyboard
+                            int cfg_idx = T2C(ctbl, tbl_row);
+                            char new_name[MAX_NAMLEN];
+                            quietStrncpy (new_name, ctbl.cfg[cfg_idx].edit_name, sizeof(new_name));
+                            char prompt[100];
+                            snprintf (prompt, sizeof(prompt), "Enter new name for '%s':", ctbl.cfg[cfg_idx].orig_name);
+                            if (askModalText ("Rename Configuration", prompt, new_name, sizeof(new_name), false, "/\\:")) {
+                                quietStrncpy (ctbl.cfg[cfg_idx].edit_name, new_name, sizeof(ctbl.cfg[cfg_idx].edit_name));
+                                quietStrncpy (ctbl.tbl_name[tbl_row].name, new_name, sizeof(ctbl.tbl_name[tbl_row].name));
+                                tb.on = true;
+                                updateCfgChoices (ctbl, tbl_row, REN_CIDX);
+                                editing = tbl_row;
+                            }
+                            drawEntireConfigMenu (ctbl, ok_b, cancel_b);
+                        } else {
+                            // toggle
+                            tb.on = !tb.on;
+                            updateCfgChoices (ctbl, tbl_row, cidx);
 
-                        // note whether editing
-                        if (cidx == REN_CIDX)
-                            editing = tb.on ? tbl_row : EDITING_NONE;
+                            // note whether editing
+                            if (cidx == REN_CIDX)
+                                editing = tb.on ? tbl_row : EDITING_NONE;
+                        }
 
                         // multilevel goto here not allowed in std=c++17
                         found = true;
                     }
                 }
 
-                // check clicking in name text field
+                // check clicking in name text field -> prompt with virtual keyboard
                 if (!found && inBox (ui.tap, ctbl.tbl_name[tbl_row].box)) {
-                    // friendly turn on matching TB
-                    ctbl.tbl_tb[tbl_row][REN_CIDX].on = true;
-                    updateCfgChoices (ctbl, tbl_row, REN_CIDX);
-                    // note we are now editing this row
-                    editing = tbl_row;
+                    int cfg_idx = T2C(ctbl, tbl_row);
+                    char new_name[MAX_NAMLEN];
+                    quietStrncpy (new_name, ctbl.cfg[cfg_idx].edit_name, sizeof(new_name));
+                    char prompt[100];
+                    snprintf (prompt, sizeof(prompt), "Enter new name for '%s':", ctbl.cfg[cfg_idx].orig_name);
+                    if (askModalText ("Rename Configuration", prompt, new_name, sizeof(new_name), false, "/\\:")) {
+                        quietStrncpy (ctbl.cfg[cfg_idx].edit_name, new_name, sizeof(ctbl.cfg[cfg_idx].edit_name));
+                        quietStrncpy (ctbl.tbl_name[tbl_row].name, new_name, sizeof(ctbl.tbl_name[tbl_row].name));
+                        ctbl.tbl_tb[tbl_row][REN_CIDX].on = true;
+                        updateCfgChoices (ctbl, tbl_row, REN_CIDX);
+                        editing = tbl_row;
+                    }
+                    drawEntireConfigMenu (ctbl, ok_b, cancel_b);
                     found = true;
                 }
             }

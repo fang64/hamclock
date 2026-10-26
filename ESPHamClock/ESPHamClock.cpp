@@ -106,6 +106,17 @@ static RotMsg_t rot_msg = ROTM_RSSI;
 // WiFi touch control
 TouchType wifi_tt;
 SCoord wifi_tt_s;
+bool wifi_tt_live;                     // whether the pending wifi_tt came from a Live Web client,
+                                        // set alongside wifi_tt/wifi_tt_s by setLiveTouch() and
+                                        // consumed atomically with them below in checkTouch() --
+                                        // see isLiveWebTouch() in liveweb.cpp for why this can't
+                                        // just be re-derived from lastest_ws_touch_client at the
+                                        // time a badge handler happens to ask
+bool wifi_kb_live;                     // whether the pending keyboard char came from a Live Web client
+bool cur_touch_live;                   // whether the touch currently being dispatched by
+                                        // checkTouch() came from a Live Web client -- this is
+                                        // what isLiveWebTouch() reports; valid only while a touch
+                                        // is being handled (set at the top of checkTouch())
 
 // set up TFT display controller RA8875 instance on hardware SPI plus reset and chip select
 #define RA8875_RESET    16
@@ -181,8 +192,16 @@ static void showDefines(void)
         _PR_MAC(_IS_UNIX);
     #endif
 
+    #if defined(_IS_ANDROID)
+        _PR_MAC(_IS_ANDROID);
+    #endif
+
     #if defined(_IS_LINUX)
         _PR_MAC(_IS_LINUX);
+    #endif
+
+    #if defined(_IS_APPLE)
+        _PR_MAC(_IS_APPLE);
     #endif
 
     #if defined(_IS_FREEBSD)
@@ -490,6 +509,48 @@ void setup()
         wefax_btn_b.h = view_btn_b.h;
     }
 
+    // seed the Fires on-map badge just to the right of View. Unlike Borders/WEFAX it can be
+    // showing at the same time as Borders (both apply to Terrain/Clouds), so it can't share
+    // their fixed slot -- drawFiresButton() recomputes fires_btn_b.x every draw to float right
+    // of whichever of View/Borders is currently rightmost. This is just a harmless initial value.
+    {
+        const int gap = 4;
+        const int pad = 8;
+        selectFontStyle (LIGHT_FONT, FAST_FONT);
+        fires_btn_b.x = view_btn_b.x + view_btn_b.w + gap;
+        fires_btn_b.y = view_btn_b.y;
+        fires_btn_b.w = getTextWidth ("Fires Off") + pad;
+        fires_btn_b.h = view_btn_b.h;
+    }
+
+    // seed the ADS-B on-map badge just to the right of View, same convention as Fires: it can be
+    // showing alongside Borders/Fires (all apply to Clouds), so it can't share a fixed slot either --
+    // drawADSBBadge() recomputes adsbmap_btn_b.x every draw to float right of whichever of
+    // View/Borders/Fires is currently rightmost. This is just a harmless initial value.
+    {
+        const int gap = 4;
+        const int pad = 8;
+        selectFontStyle (LIGHT_FONT, FAST_FONT);
+        adsbmap_btn_b.x = view_btn_b.x + view_btn_b.w + gap;
+        adsbmap_btn_b.y = view_btn_b.y;
+        adsbmap_btn_b.w = getTextWidth ("ADS-B") + pad;
+        adsbmap_btn_b.h = view_btn_b.h;
+    }
+
+    // seed the Wind on-map badge just to the right of View, same convention: it can share the
+    // CM_WX row with WEFAX, so it can't take a fixed slot either -- drawWindButton() recomputes
+    // windmap_btn_b.x every draw to float right of WEFAX, or View when WEFAX isn't enabled. This
+    // is just a harmless initial value.
+    {
+        const int gap = 4;
+        const int pad = 8;
+        selectFontStyle (LIGHT_FONT, FAST_FONT);
+        windmap_btn_b.x = view_btn_b.x + view_btn_b.w + gap;
+        windmap_btn_b.y = view_btn_b.y;
+        windmap_btn_b.w = getTextWidth ("Wind") + pad;
+        windmap_btn_b.h = view_btn_b.h;
+    }
+
     // redefine callsign for main screen
     cs_info.box.x = 0;
     cs_info.box.y = 0;
@@ -643,7 +704,11 @@ void setup()
     rss_bnr_b.h = 68;
     NVReadUInt8 (NV_RSS_ON, &rss_on);
     initLightning();
+    initFires();
     initStorms();
+    initMarineWarnings();
+    initFireWx();
+    initQuakes();
     initWefax();
     if (!NVReadUInt8 (NV_RSS_INTERVAL, &rss_interval) || rss_interval < RSS_MIN_INT) {
         rss_interval = RSS_DEF_INT;
@@ -865,6 +930,7 @@ void initScreen()
     drawUptime(true);
     drawScreenLock();
     drawMOTDIcon();
+    drawUserGuideIcon();
     drawDemoRunner();
 
     // always close so it will restart if open in any pane
@@ -883,11 +949,17 @@ static void checkTouch()
 
     // check for remote and local touch
     if (wifi_tt != TT_NONE) {
-        // save and reset remote touch.
+        // save and reset remote touch, along with whether it came from a Live Web client --
+        // captured here in lockstep with wifi_tt/wifi_tt_s themselves rather than queried later
+        // from lastest_ws_touch_client, which a concurrent Live Web client poll can otherwise
+        // clear out from under a badge handler (eg adsbBadgeClicked()) before it gets a chance
+        // to ask -- see isLiveWebTouch() in liveweb.cpp.
         // N.B. remote touches never turn on brightness
         s = wifi_tt_s;
         tt = wifi_tt;
         wifi_tt = TT_NONE;
+        cur_touch_live = wifi_tt_live;
+        wifi_tt_live = false;
     } else {
         // check tap
         tt = readCalTouch (s);
@@ -900,6 +972,7 @@ static void checkTouch()
             drainTouch();
             return;
         }
+        cur_touch_live = false;
     }
 
     // check lock
@@ -930,12 +1003,26 @@ static void checkTouch()
     } else if (wefaxBadgeVisible() && inBox (s, wefax_btn_b)) {
         // runWefaxViewer() blocks until the user closes it, and restores the map on the way out
         runWefaxViewer();
+    } else if (firesBadgeVisible() && inBox (s, fires_btn_b)) {
+        fires_on = !fires_on;
+        NVWriteUInt8 (NV_FIRES_ON, fires_on);
+        if (fires_on)
+            updateFires();          // fetch right away instead of waiting for the next poll
+        drawFiresButton();
+        drawFiresOnMap();
+        tft.drawPR();
+    } else if (adsbBadgeVisible() && inBox (s, adsbmap_btn_b)) {
+        adsbBadgeClicked();
+    } else if (windBadgeVisible() && inBox (s, windmap_btn_b)) {
+        windBadgeClicked();
     } else if (checkSatMapTouch (s)) {
         // set showing sat in DX box
         dx_info_for_sat = true;
         drawSatPass();
     } else if (checkPlanetMapTouch (s)) {
         // handled entirely within checkPlanetMapTouch
+    } else if (checkQuakeMapTouch (s)) {
+        // handled entirely within checkQuakeMapTouch
     } else if (!overViewBtn(s, DX_R) && s2ll (s, ll)) {
         // tapped map: set flag to run popup after map finishes or set newDX here if special-tap
         if (names_on)
@@ -1806,7 +1893,11 @@ void drawAllSymbols()
     drawDXMarker(false);
     drawFarthestPSKSpots();
     drawLightningOnMap();
+    drawFiresOnMap();
     drawStormsOnMap();
+    drawMarineWarningsOnMap();
+    drawFireWxOnMap();
+    drawQuakesOnMap();
     drawSatPathAndFoot();
     drawSanta ();
     drawEnterprise ();
@@ -2022,8 +2113,13 @@ void drawDEFormatMenu()
     // run menu
     SBox ok_b;
     MenuInfo menu = {menu_b, ok_b, UF_CLOCKSOK, M_CANCELOK, 1, NARRAY(mitems), mitems};
-    if (!runMenu (menu))
+    if (!runMenu (menu)) {
+        if (!SHOWING_PANE_0()) {
+            drawDEInfo();
+            drawDXInfo();
+        }
         return;
+    }
 
     if (mitems[0].set) {
 
@@ -2618,7 +2714,7 @@ void doReboot(bool minus_K, bool minus_0)
 {
     defaultState();
 #if defined(_IS_ANDROID)
-    android_request_restart();
+    android_request_restart(minus_K);
     for(;;);
 #else
     ESP.restart (minus_K, minus_0);

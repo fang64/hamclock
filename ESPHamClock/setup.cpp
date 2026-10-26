@@ -320,7 +320,7 @@ static const char *lbl_styles[LBL_N] = {
 #undef X
 
 // tooltip usage
-static const char tt_reminder[] = "Tap a label, right-click, control-click or middle button to show a tooltip for most fields";
+static const char tt_reminder[] = "Tap a label, press-and-hold or right-click to show a tooltip for most fields";
 
 // define a string prompt
 typedef struct {
@@ -335,6 +335,7 @@ typedef struct {
     const char *tt;                             // tooltip text, if any
     uint16_t p_color;                           // 0 == use default PR_C, else this exact RGB565 color
     bool masked;                                // true to display v_str as asterisks (eg passwords)
+    bool is_pw;                                 // true if password field with eye toggle
 } StringPrompt;
 
 
@@ -462,7 +463,7 @@ static StringPrompt string_pr[N_SPR] = {
                 "Enter IP address or DNS host name of NTP server"},
 
     {0, { 90, R2Y(6), 60, PR_H}, {160, R2Y(6), 500, PR_H}, "SSID:", wifi_ssid, NV_WIFI_SSID_LEN, 0,0,NULL},
-    {0, {670, R2Y(6),110, PR_H}, { 10, R2Y(7), 789, PR_H}, "Password:", wifi_pw, NV_WIFI_PW_LEN, 0,0,NULL},
+    {0, {670, R2Y(6),110, PR_H}, { 10, R2Y(7), 740, PR_H}, "Password:", wifi_pw, NV_WIFI_PW_LEN, 0, 0, NULL, 0, true, true},
 
     // "page 2" -- index 1
 
@@ -510,7 +511,7 @@ static StringPrompt string_pr[N_SPR] = {
 
     {2, {310, R2Y3(3), 130, PR_H}, {452, R2Y3(3), 208, PR_H}, "PiAware host:", piaware_host, NV_PIAWAREHOST_LEN, 0, 0,
                 "Enter the IP address or DNS host name of a local PiAware ADS-B receiver to use for the "
-                "ADS-B airplane icon instead of adsb.lol; leave blank to use adsb.lol"},
+                "ADS-B airplane icon instead of ADS-B Exchange; leave blank to use ADS-B Exchange"},
 
     {2, {100, R2Y3(4), 60, PR_H}, {160, R2Y3(4), 580, PR_H}, "file:", adif_fn, NV_ADIFFN_LEN, 0, 0,
                 "Enter the path name to the ADIF file; "
@@ -531,9 +532,9 @@ static StringPrompt string_pr[N_SPR] = {
 
     // "page 4" -- index 3
 
-    {3, { 10, R2Y(0), 140, PR_H}, {160, R2Y(0), 490, PR_H}, "hams.at key:  ", hamsat_key, NV_HAMSATKEY_LEN, 0, 0,
-                "Enter your hams.at API key for personalized satellite activation match%/visibility, "
-                "or leave blank"},
+    {3, { 10, R2Y(0), 175, PR_H}, {190, R2Y(0), 460, PR_H}, "hams.at api key: ", hamsat_key, NV_HAMSATKEY_LEN, 0, 0,
+                "Enter your hams.at API key (from your hams.at account settings) for personalized satellite "
+                "activation match%/visibility, or leave blank"},
 
     {3, {10,  R2Y(1), 240, PR_H}, {250, R2Y(1), 100, PR_H}, "Map center longitude:", NULL, 0, 0, 0,
                 "Enter the desired center longitude for the Mercator map projection in decimal degrees; "
@@ -591,7 +592,7 @@ static StringPrompt string_pr[N_SPR] = {
                 NV_HAMALERT_PASSWD_LEN, 0, 0,
                 "Enter your hamalert.org telnet password (Settings on the HamAlert web site -- "
                 "this is NOT your HamAlert web login password); leave blank to disable the HamAlert pane",
-                RA8875_CYAN, true},
+                RA8875_CYAN, true, true},
 
     // "page 8" -- index 7 -- on/off table (ONOFF_PAGE); no string_pr entries, custom-drawn
 
@@ -684,6 +685,7 @@ typedef enum {
     UDPSPOTS_BPR,
     QRZBIOA_BPR,
     QRZBIOB_BPR,
+    QRZBIOC_BPR,                                // 3rd bit, bespoke 5-way cycle -- see getQRZId()
 
     AUTOMAP_BPR,
     UDPSETSDX_BPR,
@@ -968,11 +970,21 @@ static BoolPrompt bool_pr[N_BPR] = {
 
 
     {4, {400, R2Y(8), 190, PR_H},  {590, R2Y(8), 170, PR_H}, false, "Look up bio?",
-                    qrz_urltable[QRZ_NONE].label, qrz_urltable[QRZ_QRZ].label, QRZBIOB_BPR,
+                    qrz_urltable[QRZ_NONE].label, qrz_urltable[QRZ_QRZ].label, NOMATE,
                     "Whether and from which resource to offer looking up cluster spot biography"},
     {4, {400, R2Y(8), 190, PR_H},  {590, R2Y(8), 170, PR_H}, false, NULL,
-                                qrz_urltable[QRZ_HAMCALL].label, qrz_urltable[QRZ_CQQRZ].label,QRZBIOA_BPR,0},
-                                                // 4x entangled: FF -> TF -> FT -> TT -> ...
+                                qrz_urltable[QRZ_HAMCALL].label, qrz_urltable[QRZ_CQQRZ].label,NOMATE,0},
+    {4, {400, R2Y(8), 190, PR_H},  {590, R2Y(8), 170, PR_H}, false, NULL,
+                                "", qrz_urltable[QRZ_HAMQTH].label, NOMATE, 0},
+                                                // N.B. this trio is NOT run through the generic
+                                                // 3x/4x "entangled" machinery above/below (that
+                                                // tops out at 4 states from 2 booleans, no room
+                                                // for a 5th) -- getQRZId()/setQRZId()/drawQRZBioBox()
+                                                // read/write these 3 raw booleans directly as a
+                                                // little-endian bit triple instead, gated on
+                                                // identity (bp == &bool_pr[QRZBIOA_BPR]) rather
+                                                // than ent_mate, hence NOMATE on all three here.
+                                                // f/t_str are inert documentation only.
 
 
 
@@ -1334,6 +1346,7 @@ static const uint8_t qroff[NQR] = {
 };
 
 // special virtual keyboard chars
+static const SBox paste_b  = {KB_INDENT, KB_SPC_Y, (uint16_t)(SBAR_X - KB_INDENT - 12), KB_SPC_H};
 static const SBox space_b  = {SBAR_X, KB_SPC_Y, SBAR_W, KB_SPC_H};
 static const SBox page_b   = {800-PAGE_W-KB_INDENT-1, 1, PAGE_W, PAGE_H};
 static const SBox delete_b = {KB_INDENT+12*KB_CHAR_W, KB_Y0+2*KB_CHAR_H, KB_CHAR_W, KB_CHAR_H};
@@ -2278,12 +2291,30 @@ static void drawSPValue (StringPrompt *sp)
 #endif // _MARK_BOUNDS
 }
 
+/* return whether sp is a password prompt, and if so compute its eye icon box
+ */
+static bool getSPEyeBox (const StringPrompt *sp, SBox &eye_b)
+{
+    if (!sp->is_pw)
+        return (false);
+    eye_b.x = sp->v_box.x + sp->v_box.w + 6;
+    eye_b.y = sp->v_box.y;
+    eye_b.w = 38;
+    eye_b.h = sp->v_box.h;
+    return (true);
+}
+
 /* draw both prompt and value of the given StringPrompt
  */
 static void drawSPPromptValue (StringPrompt *sp)
 {
     drawSPPrompt (sp);
     drawSPValue (sp);
+    if (sp->is_pw) {
+        SBox eye_b;
+        if (getSPEyeBox (sp, eye_b))
+            drawEyeIcon (eye_b, sp->masked);
+    }
 }
 
 /* erase both prompt and value of the given StringPrompt
@@ -2292,6 +2323,11 @@ static void eraseSPPromptValue (StringPrompt *sp)
 {
     eraseSPPrompt (sp);
     eraseSPValue (sp);
+    if (sp->is_pw) {
+        SBox eye_b;
+        if (getSPEyeBox (sp, eye_b))
+            fillSBox (eye_b, BG_C);
+    }
 }
 
 /* draw the prompt of the given BoolPrompt, if any.
@@ -2501,6 +2537,7 @@ static void drawKeyboard()
         }
     }
 
+    drawStringInBox ("Paste", paste_b, false, RA8875_CYAN);
     drawStringInBox ("", space_b, false, KF_C);
     drawStringInBox ("Del", delete_b, false, DEL_C);
     drawStringInBox ("<==", left_b, false, DEL_C);
@@ -2614,6 +2651,41 @@ static void drawEntangledBools (BoolPrompt *A, BoolPrompt *B)
     }
 }
 
+/* return the user's chosen qrz_urltable index, decoded from the 3 raw booleans
+ * QRZBIOA/B/C_BPR (A lsb .. C msb) as a little-endian bit triple.
+ * N.B. deliberately bespoke rather than routed through getEntangledIndex()/getEntangledValue()
+ * above: those top out at 4 states from 2 booleans, with no room for QRZ_HAMQTH as a 5th.
+ */
+QRZURLId getQRZId(void)
+{
+    int idx = (bool_pr[QRZBIOA_BPR].state ? 1 : 0)
+            | (bool_pr[QRZBIOB_BPR].state ? 2 : 0)
+            | (bool_pr[QRZBIOC_BPR].state ? 4 : 0);
+    return (idx < QRZ_N ? (QRZURLId)idx : QRZ_NONE);           // clamp any of the 3 unused states
+}
+
+/* set the 3 raw booleans behind getQRZId() to represent the given choice
+ */
+static void setQRZId (QRZURLId id)
+{
+    bool_pr[QRZBIOA_BPR].state = (id & 1) != 0;
+    bool_pr[QRZBIOB_BPR].state = (id & 2) != 0;
+    bool_pr[QRZBIOC_BPR].state = (id & 4) != 0;
+}
+
+/* draw the single combined "Look up bio?" value box showing the currently selected service.
+ * mirrors drawBPState()'s own rendering (same box, same colors) but pulls display text from
+ * qrz_urltable via getQRZId() instead of a lone bool's own f_str/t_str.
+ */
+static void drawQRZBioBox (void)
+{
+    BoolPrompt &A = bool_pr[QRZBIOA_BPR];
+    tft.setTextColor (TX_C);
+    fillSBox (A.s_box, BG_C);
+    tft.setCursor (A.s_box.x, A.s_box.y + A.s_box.h - PR_D);
+    tft.print (qrz_urltable[getQRZId()].label);
+}
+
 /* perform action resulting from tapping the given BoolPrompt.
  * handle both singles and entangled pairs.
  */
@@ -2621,6 +2693,18 @@ static void engageBoolTap (BoolPrompt *bp)
 {
     // erase current cursor position
     eraseCursor ();
+
+    if (bp == &bool_pr[QRZBIOA_BPR]) {
+
+        // bespoke 5-way cycle across 3 raw booleans -- see getQRZId()/setQRZId() just above.
+        // identity-gated so the shared entangled-pair machinery below, used by 6 other
+        // settings, is completely untouched by this special case.
+        setQRZId ((QRZURLId) ((getQRZId() + 1) % QRZ_N));
+        drawQRZBioBox ();
+        setFocus (NULL, bp);
+        drawCursor ();
+        return;
+    }
 
     // update state
     if (bp->ent_mate == NOMATE) {
@@ -2688,6 +2772,24 @@ static bool tappedStringPrompt (SCoord &s, StringPrompt **spp)
         if (!stringIsRelevant(sp))
             continue;
         if ((sp->p_str && inBox (s, sp->p_box)) || (sp->v_str && inBox (s, sp->v_box))) {
+            *spp = sp;
+            return (true);
+        }
+    }
+    return (false);
+}
+
+/* find whether s is in any relevant password eye icon box.
+ * if so return true and set *spp, else return false.
+ */
+static bool tappedSPEye (SCoord &s, StringPrompt **spp)
+{
+    for (int i = 0; i < N_SPR; i++) {
+        StringPrompt *sp = &string_pr[i];
+        if (!stringIsRelevant(sp) || !sp->is_pw)
+            continue;
+        SBox eye_b;
+        if (getSPEyeBox (sp, eye_b) && inBox (s, eye_b)) {
             *spp = sp;
             return (true);
         }
@@ -2766,7 +2868,7 @@ static void drawCurrentPageFields()
         sw.p_box.w = sw_lbl_w;
         uint16_t sw_vx = 10 + sw_lbl_w + 10;
         sw.v_box.x = sw_vx;
-        sw.v_box.w = sw_vx + 30 < tft.width() ? tft.width() - sw_vx - 5 : 30;
+        sw.v_box.w = sw_vx + 80 < tft.width() ? tft.width() - sw_vx - 50 : 30;
     }
 
     // draw relevant string prompts on this page
@@ -2781,7 +2883,11 @@ static void drawCurrentPageFields()
         BoolPrompt *bp = &bool_pr[i];
         if (boolIsRelevant(bp)) {
             drawBPPrompt (bp);
-            if (bp->ent_mate == i+1)
+            if (bp == &bool_pr[QRZBIOA_BPR])
+                drawQRZBioBox ();                       // bespoke 5-way, see engageBoolTap()
+            else if (bp == &bool_pr[QRZBIOB_BPR] || bp == &bool_pr[QRZBIOC_BPR])
+                ;                                        // no-op: A's box above covers all 3
+            else if (bp->ent_mate == i+1)
                 drawEntangledBools(bp, &bool_pr[i+1]);
             else if (bp->ent_mate == NOMATE)
                 drawBPState (bp);
@@ -3913,10 +4019,14 @@ static bool validateStringPrompts (bool show_errors)
     // HamAlert password is optional -- blank just means the pane is unused. if a password has been
     // entered, we need a callsign to log in with: either the explicit HamAlert User field or, failing
     // that, the main station call sign.
-    if (strlen (string_pr[HAMALERTPASSWD_SPR].v_str) > 0
-                        && strlen (string_pr[HAMALERTUSER_SPR].v_str) == 0 && !callsignOk (cs_info.call)) {
-        err_msg = "HamAlert requires a call sign, either HamAlert User or the station call sign";
-        badsids[n_badsids++] = err_sid = HAMALERTUSER_SPR;
+    if (strlen (string_pr[HAMALERTPASSWD_SPR].v_str) > 0) {
+        if (strlen (string_pr[HAMALERTUSER_SPR].v_str) == 0 && !callsignOk (cs_info.call)) {
+            err_msg = "HamAlert requires a call sign, either HamAlert User or the station call sign";
+            badsids[n_badsids++] = err_sid = HAMALERTUSER_SPR;
+        } else if (strHasSpace (string_pr[HAMALERTPASSWD_SPR].v_str)) {
+            err_msg = "HamAlert password cannot contain whitespace";
+            badsids[n_badsids++] = err_sid = HAMALERTPASSWD_SPR;
+        }
     }
 
     // check for plausible temperature and pressure corrections and file name if used
@@ -4895,7 +5005,7 @@ static void initSetup()
         qrz_id = QRZ_NONE;
         NVWriteUInt8 (NV_QRZID, qrz_id);
     }
-    setEntangledValue (QRZBIOA_BPR, QRZBIOB_BPR, qrz_urltable[qrz_id].label);
+    setQRZId ((QRZURLId)qrz_id);
 
     // insure default DX
     char dx_grid[MAID_CHARLEN];
@@ -5215,6 +5325,51 @@ static void runSetup()
 
             if (checkOnOffTouch(ui.tt, ui.tap))
                 continue;
+        }
+
+        // check tapping on Paste button on keyboard pages
+        if (((cur_page >= KBPAGE_FIRST && cur_page <= KBPAGE_LAST) || cur_page == HAMALERT_PAGE)
+                        && inBox (ui.tap, paste_b)) {
+            StringPrompt *sp = cur_focus[cur_page].sp;
+            if (sp) {
+                drawStringInBox ("Paste", paste_b, true, RA8875_CYAN);
+                char paste_buf[128];
+                bool got_clip = false;
+#if defined(_IS_ANDROID)
+                got_clip = android_get_clipboard (paste_buf, sizeof(paste_buf));
+#endif
+                if (got_clip) {
+                    strTrimAll (paste_buf);
+                    bool truncated = false;
+                    for (int i = 0; paste_buf[i] != '\0'; i++) {
+                        char c = paste_buf[i];
+                        if (isprint (c)) {
+                            if (sp == &string_pr[CALL_SPR])
+                                c = toupper (c);
+                            size_t vl = strlen (sp->v_str);
+                            if (vl < sp->v_len - 1U) {
+                                eraseSPValue (sp);
+                                memmove (&sp->v_str[sp->v_ci+1], &sp->v_str[sp->v_ci], vl - sp->v_ci + 1);
+                                sp->v_str[sp->v_ci++] = c;
+                                drawSPValue (sp);
+                                drawCursor ();
+                            } else {
+                                truncated = true;
+                            }
+                        }
+                    }
+                    if (truncated)
+                        flagErrField (sp, true, "full");
+                    if (cur_page == LATLNG_PAGE)
+                        checkLLGEdit (sp);
+                } else {
+                    tft.pasteClipboard();
+                    requestLiveWebPaste();
+                }
+                wdDelay (150);
+                drawStringInBox ("Paste", paste_b, false, RA8875_CYAN);
+            }
+            continue;
         }
 
         // proceed with normal fields processing
@@ -5542,6 +5697,23 @@ static void runSetup()
             }
           #endif // _SUPPORT_KX3
 
+        } else if (tappedSPEye (ui.tap, &sp)) {
+
+            // toggle masked state
+            sp->masked = !sp->masked;
+            eraseSPValue (sp);
+            drawSPValue (sp);
+            SBox eye_b;
+            if (getSPEyeBox (sp, eye_b))
+                drawEyeIcon (eye_b, sp->masked);
+
+            // ensure focus is on this field
+            if (cur_focus[cur_page].sp != sp) {
+                eraseCursor ();
+                setFocus (sp, NULL);
+            }
+            drawCursor ();
+
         } else if (tappedStringPrompt (ui.tap, &sp) && stringIsRelevant (sp)) {
 
             // check for tooltip: secondary tap OR tapping directly on the prompt label
@@ -5747,7 +5919,7 @@ void drawStringInBox (const char str[], const SBox &b, bool inverted, uint16_t c
     FontWeight fw;
     FontSize fs;
     getFontStyle (&fw, &fs);
-    uint16_t fy = b.y + (fs == FAST_FONT ? b.h/5 : 3*b.h/4);
+    uint16_t fy = b.y + (fs == FAST_FONT ? b.h/5 : 3*b.h/4 + (b.h <= 36 ? 3 : 0));
     tft.setCursor (b.x+(b.w-sw)/2, fy);
 
     // draw
@@ -5755,6 +5927,52 @@ void drawStringInBox (const char str[], const SBox &b, bool inverted, uint16_t c
     drawSBox (b, KB_C);
     tft.setTextColor (fg);
     tft.print(str);
+}
+
+/* draw an eye icon in box b indicating whether password characters are hidden (hide==true) or shown.
+ */
+void drawEyeIcon (const SBox &b, bool hide)
+{
+    // clear background and draw border
+    fillSBox (b, BG_C);
+    drawSBox (b, KB_C);
+
+    // center and radii
+    int16_t cx = b.x + b.w/2;
+    int16_t cy = b.y + b.h/2;
+    int16_t rx = b.w >= 40 ? 14 : 11;
+    int16_t ry = b.h >= 28 ? 7 : 5;
+
+    // eye outline color: cyan when revealed, white when hidden
+    uint16_t col = hide ? RA8875_WHITE : RA8875_CYAN;
+
+    // upper lid
+    tft.drawLine (cx - rx, cy, cx - rx/2, cy - ry*7/10, col);
+    tft.drawLine (cx - rx/2, cy - ry*7/10, cx, cy - ry, col);
+    tft.drawLine (cx, cy - ry, cx + rx/2, cy - ry*7/10, col);
+    tft.drawLine (cx + rx/2, cy - ry*7/10, cx + rx, cy, col);
+
+    // lower lid
+    tft.drawLine (cx - rx, cy, cx - rx/2, cy + ry*7/10, col);
+    tft.drawLine (cx - rx/2, cy + ry*7/10, cx, cy + ry, col);
+    tft.drawLine (cx, cy + ry, cx + rx/2, cy + ry*7/10, col);
+    tft.drawLine (cx + rx/2, cy + ry*7/10, cx + rx, cy, col);
+
+    // iris
+    int16_t r_iris = ry * 6 / 10;
+    if (r_iris < 3) r_iris = 3;
+    tft.drawCircle (cx, cy, r_iris, col);
+
+    // pupil
+    int16_t r_pupil = r_iris / 2;
+    if (r_pupil < 1) r_pupil = 1;
+    tft.fillCircle (cx, cy, r_pupil, col);
+
+    // diagonal strike-through slash when masked/hidden
+    if (hide) {
+        tft.drawLine (cx - rx - 2, cy - ry - 2, cx + rx + 2, cy + ry + 2, RA8875_RED);
+        tft.drawLine (cx - rx - 1, cy - ry - 2, cx + rx + 3, cy + ry + 2, RA8875_RED);
+    }
 }
 
 
@@ -6035,7 +6253,7 @@ bool useMagBearing()
  */
 int getRawPathWidth (ColorSelection id)
 {
-    if (id == BAND630_CSPR)
+    if (id == BAND630_CSPR || id == BAND4_CSPR || id == BAND2200_CSPR || id == BAND23CM_CSPR)
         return (RAWTHINPATHSZ);            // always on, always thin -- no editable on/off state
     ColSelPrompt &csp = csel_pr[id];
     return (csp.o_state ? (csp.t_state ? RAWTHINPATHSZ : RAWWIDEPATHSZ) : 0);
@@ -6047,7 +6265,7 @@ int getRawPathWidth (ColorSelection id)
  */
 int getRawSpotRadius (ColorSelection id)
 {
-    if (id == BAND630_CSPR)
+    if (id == BAND630_CSPR || id == BAND4_CSPR || id == BAND2200_CSPR || id == BAND23CM_CSPR)
         return (2*RAWTHINPATHSZ);          // matches the ColSelPrompt-overload's own formula, thin
     ColSelPrompt &csp = csel_pr[id];
     return (getRawSpotRadius (csp));
@@ -6358,12 +6576,15 @@ bool setDXCluster (char *host, char *port_str, Message &ynot)
     return(true);
 }
 
-// hardcoded 630m color, since it has no editable Setup page slot -- see the BAND630_CSPR
-// comment in HamClock.h for why. Used by every getMapColor()/getRawPathWidth()/etc accessor
-// below, all of which must check for this id BEFORE indexing csel_pr[], since BAND630_CSPR's
-// enum value is N_CSPR (one past the end of that array).
-#define BAND630_HARDCODED_COLOR RGB565(120,80,220)      // dark violet -- distinct from all 12
+// hardcoded 630m/4m/2200m/23cm colors, since none of the four have an editable Setup page slot --
+// see the BAND630_CSPR comment in HamClock.h for why. Used by every getMapColor()/
+// getRawPathWidth()/etc accessor below, all of which must check for these ids BEFORE indexing
+// csel_pr[], since their enum values are >= N_CSPR (at or past the end of that array).
+#define BAND630_HARDCODED_COLOR  RGB565(120,80,220)     // dark violet -- distinct from all 12
                                                           // other band colors and from borders/states
+#define BAND4_HARDCODED_COLOR    RGB565(220,80,150)      // magenta-pink -- distinct from the above
+#define BAND2200_HARDCODED_COLOR RGB565(80,180,220)      // sky blue -- distinct from both above
+#define BAND23CM_HARDCODED_COLOR RGB565(200,200,60)      // olive-yellow -- distinct from all three
 
 /* return current rgb565 color for the given ColorSelection
  */
@@ -6371,6 +6592,12 @@ uint16_t getMapColor (ColorSelection id)
 {
     if (id == BAND630_CSPR)
         return (BAND630_HARDCODED_COLOR);
+    if (id == BAND4_CSPR)
+        return (BAND4_HARDCODED_COLOR);
+    if (id == BAND2200_CSPR)
+        return (BAND2200_HARDCODED_COLOR);
+    if (id == BAND23CM_CSPR)
+        return (BAND23CM_HARDCODED_COLOR);
     uint16_t c;
     if (id >= 0 && id < N_CSPR) {
         ColSelPrompt &p = csel_pr[id];
@@ -6386,7 +6613,7 @@ uint16_t getMapColor (ColorSelection id)
  */
 bool getMapColorThin (ColorSelection id)
 {
-    if (id == BAND630_CSPR)
+    if (id == BAND630_CSPR || id == BAND4_CSPR || id == BAND2200_CSPR || id == BAND23CM_CSPR)
         return (true);                                   // always drawn thin, matches most bands' default
     return (id >= 0 && id < N_CSPR) ? csel_pr[id].t_state : true;
 }
@@ -6397,6 +6624,12 @@ const char* getMapColorName (ColorSelection id)
 {
     if (id == BAND630_CSPR)
         return ("630 m");
+    if (id == BAND4_CSPR)
+        return ("4 m");
+    if (id == BAND2200_CSPR)
+        return ("2200 m");
+    if (id == BAND23CM_CSPR)
+        return ("23 cm");
     const char *n;
     if (id >= 0 && id < N_CSPR)
         n = csel_pr[id].p_str;
@@ -6433,7 +6666,7 @@ bool setMapColor (const char *name, uint16_t rgb565)
  */
 bool getPathDashed (ColorSelection id)
 {
-    if (id == BAND630_CSPR)
+    if (id == BAND630_CSPR || id == BAND4_CSPR || id == BAND2200_CSPR || id == BAND23CM_CSPR)
         return (false);                    // no editable dash control -- solid, like most bands' default
     return (csel_pr[id].a_state);
 }
@@ -6633,18 +6866,6 @@ GrayDpy_t getGrayDisplay(void)
     if (strcmp (v, "Map") == 0) return (GRAY_MAP);
     if (strcmp (v, "All") == 0) return (GRAY_ALL);
     return (GRAY_OFF);  // default?
-}
-
-/* return the user's chosen qrz_urltable index.
- */
-QRZURLId getQRZId(void)
-{
-    const char *label = getEntangledValue (QRZBIOA_BPR, QRZBIOB_BPR);
-    for (int i = 0; i < QRZ_N; i++)
-        if (strcmp (label, qrz_urltable[i].label) == 0)
-            return ((QRZURLId)i);
-    fatalError ("unknown call bio label: %s", label);
-    return (QRZ_NONE);  // lint
 }
 
 /* return whether to use metric units

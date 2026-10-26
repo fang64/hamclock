@@ -324,9 +324,9 @@ static void drawIB_DXPed (const SBox &minfo_b, const DXPedEntry *dxp, const SCoo
         StackMalloc bm_mem(n_worked * sizeof(BandModeStr_t));
         BandModeStr_t *bm = (BandModeStr_t *) bm_mem.getMem();
         for (int i = 0; i < n_worked; i++) {
-            const char *band_name = findBandName (worked[i].hb);
-            int gap = IB_MAXCHARS - 1 - strlen(band_name) - strlen(worked[i].mode);         // -1 for 'm'
-            snprintf (bm[i], IB_MAXCHARS+1, "%sm%*s%s", band_name, gap, "", worked[i].mode);
+            const char *band_name = findBandUnitName (worked[i].hb);      // includes its own unit now
+            int gap = IB_MAXCHARS - (int)strlen(band_name) - (int)strlen(worked[i].mode);
+            snprintf (bm[i], IB_MAXCHARS+1, "%s%*s%s", band_name, gap, "", worked[i].mode);
         }
 
         // show each band+mode, but set last line to "..." if they don't all fit
@@ -411,7 +411,13 @@ static void drawIB_DX (const SBox &minfo_b, const DXSpot &dx_s, const LatLong &d
     tw = getTextWidth(buf);
     tft.setCursor (tx + (view_btn_b.w-tw)/2, ty += IB_LINEDY);
     tft.printf (buf);
-    snprintf (buf, sizeof(buf), "%.*s", 4, dx_s.rx_grid);
+    // N.B. rx_grid is a genuine grid square for DX Cluster/PSK spots (4 chars
+    // is the intended display width there) but is repurposed to hold the org
+    // name for ONTA spots (POTA/SOTA/WWFF/GMA/LLOTA/TOWERS/WWBOTA/WWTOTA/...),
+    // where 4 chars clips names like "TOWERS" to "TOWE". Widen to
+    // MAX_SPOTGRID_LEN-1 (6), the field's actual storage capacity, so the
+    // full org name always fits regardless of which case applies.
+    snprintf (buf, sizeof(buf), "%.*s", MAX_SPOTGRID_LEN-1, dx_s.rx_grid);
     tw = getTextWidth(buf);
     tft.setCursor (tx + (view_btn_b.w-tw)/2, ty += IB_LINEDY);
     tft.printf (buf);

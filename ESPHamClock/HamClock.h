@@ -383,18 +383,22 @@ typedef enum {
     STATES_CSPR,
     N_CSPR,                  // csel_pr[] in setup.cpp is sized to exactly this many editable colors
 
-    // 630m is deliberately declared AFTER N_CSPR, not folded into the editable csel_pr[] table
-    // above it: the Color Editor's page 6 is already exactly full (12 tightly-packed rows, no
-    // spare vertical room on real hardware -- confirmed, not just a layout guess), so there's no
-    // row to give it. Rather than reflow that whole page, 630m gets a single hardcoded color that
-    // isn't user-editable. Because its value is >= N_CSPR, it must NEVER be used to index
-    // csel_pr[N_CSPR] directly (that's one past the end of the array) -- every function that reads
-    // a ColorSelection by indexing csel_pr[] (getMapColor, getMapColorThin, getMapColorName,
-    // getRawPathWidth, getRawSpotRadius, getPathDashed) has an explicit early check for this value
-    // before it ever touches csel_pr[]. findColSel(HAMBAND_630M) returns this value, and spot/path
-    // drawing code calls those functions with it via findColSel() just like every other band, so
-    // this guard has to be airtight, not best-effort.
-    BAND630_CSPR
+    // 630m, 4m, 2200m and 23cm are deliberately declared AFTER N_CSPR, not folded into the editable
+    // csel_pr[] table above it: the Color Editor's page 6 is already exactly full (12 tightly-packed
+    // rows, no spare vertical room on real hardware -- confirmed, not just a layout guess), so
+    // there's no row to give any of them. Rather than reflow that whole page, each gets a single
+    // hardcoded color that isn't user-editable. Because their values are >= N_CSPR, they must NEVER
+    // be used to index csel_pr[N_CSPR] directly (that's one past the end of the array) -- every
+    // function that reads a ColorSelection by indexing csel_pr[] (getMapColor, getMapColorThin,
+    // getMapColorName, getRawPathWidth, getRawSpotRadius, getPathDashed) has an explicit early check
+    // for each of these values before it ever touches csel_pr[]. findColSel(HAMBAND_630M/_4M/
+    // _2200M/_23CM) returns the corresponding value, and spot/path drawing code calls those
+    // functions with it via findColSel() just like every other band, so this guard has to be
+    // airtight, not best-effort.
+    BAND630_CSPR,
+    BAND4_CSPR,
+    BAND2200_CSPR,
+    BAND23CM_CSPR
 } ColorSelection;
 
 
@@ -446,7 +450,10 @@ typedef enum {
     X(PLOT_CH_APRSCLUSTER,  "Nearby_APRS")       \
     X(PLOT_CH_BALLOONS,     "Balloons")          \
     X(PLOT_CH_HAMALERT,     "HamAlert")          \
-    X(PLOT_CH_BANDACT,      "Band_Act")
+    X(PLOT_CH_BANDACT,      "Band_Act")          \
+    X(PLOT_CH_MARINE,       "Marine_Wx")         \
+    X(PLOT_CH_FIREWX,       "Fire_Wx")           \
+    X(PLOT_CH_QUAKES,       "Quakes")
 
 #define PLOTNAMES PLOTNAMES_LOW PLOTNAMES_HIGH
 
@@ -662,6 +669,34 @@ extern void updateCountryBorders(void); // reproject cached data to current pan/
 extern void drawCountryBorders(void);   // draw from the cached, already-projected data
 extern uint8_t lightning_on;            // show lightning strikes overlay
 
+/*********************************************************************************************
+ *
+ * fires.cpp
+ *
+ */
+
+extern uint8_t fires_on;                // show active-fire hotspot overlay
+extern SBox fires_btn_b;                // on-map "Fires On/Off" badge; slot floats right of
+                                         // whichever of View/Borders is currently rightmost
+extern bool firesBadgeVisible(void);    // whether that badge should currently be shown --
+                                         // Countries/Terrain/Clouds + Mercator only
+extern void drawFiresButton(void);      // draw (or blank) the badge
+extern void initFires(void);            // restore NV state at startup
+extern void updateFires(void);          // fetch from OHB if due; call from updateWiFi()
+extern void drawFiresOnMap(void);       // render flame glyphs; call from drawAllSymbols()
+
+extern SBox adsbmap_btn_b;              // on-map "ADS-B" badge; slot floats right of whichever
+                                         // of View/Borders/Fires is currently rightmost
+extern bool adsbBadgeVisible(void);     // whether that badge should currently be shown -- Clouds
+                                         // + Mercator/Robinson only
+extern void drawADSBBadge(void);        // draw (or blank) the badge
+extern void adsbBadgeClicked(void);     // open ADS-B Exchange (or PiAware) centered on DE
+
+extern SBox windmap_btn_b;              // on-map "Wind" badge; slot floats right of WEFAX, or View
+extern bool windBadgeVisible(void);     // whether that badge should currently be shown -- CM_WX only
+extern void drawWindButton(void);       // draw (or blank) the badge
+extern void windBadgeClicked(void);     // open Windy.com centered on DE
+
 extern SBox desrss_b, dxsrss_b;         // sun rise/set display
 extern uint8_t desrss, dxsrss;          // sun rise/set chpice
 enum {
@@ -742,8 +777,7 @@ extern SBox map_b;                      // main map
 extern SBox view_btn_b;                 // map view menu button
 
 extern SBox motd_btn_b;                 // MOTD mailbox icon (next to UTC button)
-extern SBox adsb_btn_b;                 // ADS-B airplane icon (next to MOTD icon)
-extern SBox windy_btn_b;                // Windy.com wind icon (next to ADS-B icon)
+extern SBox userguide_btn_b;            // User Guide book icon (below MOTD icon)
 
 // MOTD (Message of the Day) functions
 extern void checkMOTD (void);
@@ -751,11 +785,10 @@ extern bool motdIsPresent (void);
 extern void drawMOTDIcon (void);
 extern void motdClicked (void);
 
-// ADS-B airplane icon -- opens https://adsb.lol
-extern void drawADSBIcon (void);
+// User Guide functions
+extern void drawUserGuideIcon (void);
+extern bool checkUserGuideTouch (SCoord &s);
 
-// Windy.com wind icon -- opens https://www.windy.com
-extern void drawWindyIcon (void);
 extern SBox dx_maid_b;                  // dx maidenhead pick
 extern SBox de_maid_b;                  // de maidenhead pick
 extern SBox lkscrn_b;                   // screen lock icon button
@@ -860,6 +893,7 @@ extern void drawTZ (TZInfo &tzi);
 extern bool inBox (const SCoord &s, const SBox &b);
 extern bool inCircle (const SCoord &s, const SCircle &c);
 extern bool boxesOverlap (const SBox &b1, const SBox &b2);
+extern bool menuOverlaps (const SBox &box);
 extern void doReboot (bool minus_K, bool minus_0);
 extern void printFreeHeap (const __FlashStringHelper *label);
 extern void getWorstMem (int *heap, int *stack);
@@ -900,6 +934,13 @@ extern void tftMsg (bool verbose, uint32_t dwell_ms, const char *fmt, ...) __att
 extern void tftMsg (bool verbose, uint32_t dwell_ms, const char *fmt, ...);
 #endif
 
+// N.B. noreturn: every implementation (ESPHamClock.cpp for desktop/ESP32, robinson.cpp's
+// standalone unit-test build) ends in exit()/_exit()/an infinite loop and never returns to its
+// caller. Without this, GCC can't prove that a caller's "if (!isValidHBS(h)) fatalError(...)"
+// guard actually stops execution before an out-of-range h reaches later code, which showed up as
+// a spurious -Warray-bounds warning on an inlined band_info[h] access that was never actually
+// reachable with a bad h. [[noreturn]] is standard C++11, so it's applied unconditionally rather
+// than behind the same __GNUC__ guard as the printf-format attribute below.
 #if defined(__GNUC__)
 extern void fatalError (const char *fmt, ...) __attribute__ ((format (__printf__, 1, 2)));
 #else
@@ -1021,11 +1062,23 @@ extern float    antennas_dx_az;
 
 /*********************************************************************************************
  *
+ * askmodal.cpp
+ *
+ */
+
+extern bool askModalText (const char *title, const char *prompt, char text[], size_t max_len,
+                          bool to_upper = false, const char *disallow = NULL);
+
+
+
+/*********************************************************************************************
+ *
  * asknewpos.cpp
  *
  */
 
 extern bool askNewPos (const SBox &b, LatLong &ll, char grid[MAID_CHARLEN]);
+
 
 
 
@@ -1098,7 +1151,15 @@ extern void getLunarRS (const time_t t0, const LatLong &ll, time_t *riset, time_
  * (NV_DXC_BANDS, NV_PSK_BANDS), so new bands must always be appended at the end here, never
  * inserted in frequency order, or every existing user's saved bitmask silently reinterprets
  * to the wrong bands. This is why 630m (longer wavelength than 160m) is listed last instead
- * of first. Same reasoning applies to each entry's *_CSPR value -- see ColorSelection below.
+ * of first -- and why 4m, 2200m and 23cm, added after it, are tacked on after 630m rather than
+ * sorted in by wavelength. Same reasoning applies to each entry's *_CSPR value -- see
+ * ColorSelection below. 2200m, 630m, 4m and 23cm are mutually exclusive in the Live Spots pane
+ * (see checkPSKTouch() in pskreporter.cpp) -- at most one of the four may be selected at a time --
+ * but that is a Live Spots UI policy, not a HamBandSetting-level restriction; nothing here stops
+ * all four bits from being set in a bitmask built some other way. 23cm's "meters" field (the 2nd
+ * X macro argument, see just below) holds 23, not a true meters value -- it's cm, not m -- purely
+ * so findHamBand(int) still has a unique integer to match on; nothing currently calls
+ * findHamBand(23) expecting meters, so this can't collide with a real band.
  */
 #define SUPPORTED_BANDS                                 \
     X(HAMBAND_160M, 160, "160",  90, BAND160_CSPR)      \
@@ -1113,7 +1174,10 @@ extern void getLunarRS (const time_t t0, const LatLong &ll, time_t *riset, time_
     X(HAMBAND_10M,   10,  "10",  12, BAND10_CSPR)       \
     X(HAMBAND_6M,     6,   "6",   4, BAND6_CSPR)        \
     X(HAMBAND_2M,     2,   "2",   0, BAND2_CSPR)        \
-    X(HAMBAND_630M, 630, "630",  96, BAND630_CSPR)
+    X(HAMBAND_630M, 630, "630",  96, BAND630_CSPR)      \
+    X(HAMBAND_4M,     4,   "4",  97, BAND4_CSPR)        \
+    X(HAMBAND_2200M,2200,"2200", 98, BAND2200_CSPR)     \
+    X(HAMBAND_23CM,  23,"23cm",  99, BAND23CM_CSPR)
 
 #define X(a,b,c,d,e) a,                         // expands SUPPORTED_BANDS to each enum and comma
 typedef enum {
@@ -1129,6 +1193,7 @@ extern HamBandSetting findHamBand (float kHz);
 extern HamBandSetting findHamBand (int meters);
 extern ColorSelection findColSel (HamBandSetting h);
 extern const char *findBandName (HamBandSetting h);
+extern const char *findBandUnitName (HamBandSetting h);
 extern bool isValidSubBand (const char *mode);
 extern const char *findHamMode (float kHz);
 
@@ -1945,6 +2010,8 @@ extern void initLiveWeb(bool verbose);
 extern bool liveweb_fs_ready;
 extern int n_roweb, n_rwweb;
 extern void openLiveWebURL (const char *url);
+extern void openLiveWebURLEmbedded (const char *url);
+extern void requestLiveWebPaste (void);
 extern bool isLiveWebTouch (void);
 
 
@@ -2508,7 +2575,11 @@ extern PlotMask plot_rotset[PANE_N];       // each pane's PlotChoice rotation ch
                                  PLOTBIT(PLOT_CH_DXPEDS) | PLOTBIT(PLOT_CH_ACTIVENETS) | \
                                  PLOTBIT(PLOT_CH_LAUNCHES) | PLOTBIT(PLOT_CH_SATACT) | \
                                  PLOTBIT(PLOT_CH_APRSCLUSTER) | \
-                                 PLOTBIT(PLOT_CH_BALLOONS) | PLOTBIT(PLOT_CH_BANDACT))
+                                 PLOTBIT(PLOT_CH_BALLOONS) | PLOTBIT(PLOT_CH_BANDACT) | \
+                                 PLOTBIT(PLOT_CH_MARINE) | PLOTBIT(PLOT_CH_FIREWX))
+                                 // N.B. Quakes deliberately excluded -- its layout (icons, wrapped
+                                 // place-name text, severity bars) is sized for the wider PANE_1/2/3
+                                 // panes and doesn't fit PANE_0's narrow 139x332 DE/DX overlay geometry.
 
 // compute number of bits set in PANE_0_CH_MASK at compile time :-)
 // https://stackoverflow.com/questions/109023/count-the-number-of-set-bits-in-a-32-bit-integer
@@ -2613,6 +2684,7 @@ extern uint32_t psk_bands;              // bitmask of 1 << PSKBandSetting
 extern uint16_t psk_maxage_mins;        // max age, minutes
 extern uint8_t psk_showdist;            // show distances, else counts
 extern uint8_t psk_showpath;            // whether to draw paths
+extern uint8_t psk_showonmap;           // whether to draw spots on the map at all
 
 extern bool updatePSKReporter (const SBox &box, bool force);
 extern bool checkPSKTouch (const SCoord &s, const SBox &box);
@@ -2642,7 +2714,8 @@ extern bool getMaxDistPSK (const SCoord &ms, DXSpot *sp, LatLong *mark_ll);
     X(QRZ_NONE,     "No",          NULL)                                        \
     X(QRZ_QRZ,      "qrz.com",     "https://www.qrz.com/db/WB0OEW")             \
     X(QRZ_HAMCALL,  "hamcall.net", "https://hamcall.net/call?callsign=WB0OEW")  \
-    X(QRZ_CQQRZ,    "cqqrz.com",   "https://www.qrzcq.com/call/WB0OEW")
+    X(QRZ_CQQRZ,    "cqqrz.com",   "https://www.qrzcq.com/call/WB0OEW")         \
+    X(QRZ_HAMQTH,   "hamqth.com",  "https://www.hamqth.com/WB0OEW")
 
 #define X(a,b,c)  a,                    // expands QRZTABLE to each enum and comma
 typedef enum {
@@ -2660,7 +2733,10 @@ extern QRZURLTable qrz_urltable[QRZ_N];
 
 extern void openQRZBio (const DXSpot &s);
 extern void openURL (const char *url);
-extern void openMovieURL (const char *hc_page, const char *orig_url);
+extern void openURLPopup (const char *url);
+extern void openURLPopupEmbed (const char *url);
+extern bool showQRCodeModal (const char *url, const char *title, const char *subtitle = NULL, const char *open_lbl = NULL);
+extern void openMovieURL (const char *hc_page, const char *orig_url, const char *title = NULL);
 
 
 /*********************************************************************************************
@@ -2758,6 +2834,58 @@ extern bool getStormMapMenuInfo (const LatLong &ll, char *line1, size_t line1_le
         char *line2, size_t line2_len, char *line3, size_t line3_len);
 extern uint16_t stormCategoryColor (uint8_t cat, uint16_t wind_kt);
 
+/*
+ * marinewarnings.cpp
+ */
+
+#define MARINEWARN_INTERVAL      (2)
+
+extern void initMarineWarnings (void);
+extern bool checkMarineWarningsData (void);
+extern bool updateMarineWarnings (const SBox &box, bool fresh);
+extern void drawMarineWarningsPane (const SBox &box);
+extern void drawMarineWarningsOnMap (void);
+extern bool checkMarineWarningsTouch (const SCoord &s, const SBox &box);
+extern bool marineWarningsActive (void);
+extern bool injectTestMarineWarning (const char *id, const char *office, float lat, float lng,
+                                      int minutes, const char *headline);
+extern void clearTestMarineWarnings (void);
+
+/*
+ * firewx.cpp
+ */
+
+#define FIREWX_INTERVAL      (2)
+
+extern void initFireWx (void);
+extern bool checkFireWxData (void);
+extern bool updateFireWx (const SBox &box, bool fresh);
+extern void drawFireWxPane (const SBox &box);
+extern void drawFireWxOnMap (void);
+extern bool checkFireWxTouch (const SCoord &s, const SBox &box);
+extern bool fireWxActive (void);
+extern bool injectTestFireWx (const char *id, const char *office, float lat, float lng,
+                               int minutes, const char *headline);
+extern void clearTestFireWx (void);
+
+/*
+ * quakes.cpp
+ */
+
+#define QUAKES_INTERVAL      (2)
+
+extern void initQuakes (void);
+extern bool checkQuakesData (void);
+extern bool updateQuakes (const SBox &box, bool fresh);
+extern void drawQuakesPane (const SBox &box);
+extern void drawQuakesOnMap (void);
+extern bool checkQuakesTouch (const SCoord &s, const SBox &box);
+extern bool quakesActive (void);
+extern bool injectTestQuake (const char *id, float mag, float depth_km, float lat, float lng,
+                              const char *place);
+extern void clearTestQuakes (void);
+extern bool checkQuakeMapTouch (const SCoord &s);
+
 /* 
  * launches.cpp
  */
@@ -2828,6 +2956,7 @@ class ScrollBar {
         void init (int mv, int nd, SBox &b);
         bool checkTouch (char kb, SCoord &s);
         int getTop(void) {return (top_vis); };
+        void draw();
 
     private:
 
@@ -2841,7 +2970,6 @@ class ScrollBar {
         bool okToScrollUp (void) {return (top_vis > 0); }
         void scrollUp();
         void scrollDown();
-        void draw();
 
         bool canScrollUp(void);
         bool canScrollDw(void);
@@ -2897,6 +3025,7 @@ class ScrollState {
         bool atNewest (void) const;
 
         void scrollToNewest (void);
+        void scrollToOldest (void);
         bool findDataIndex (int display_row, int &array_index) const;
         int getVisDataIndices (int &min_i, int &max_i) const;
         int getDisplayRow (int array_index) const;
@@ -3043,6 +3172,7 @@ extern const char *getLocalNTPHost(void);
 extern bool useDXCluster(void);
 extern uint32_t getKX3Baud(void);
 extern void drawStringInBox (const char str[], const SBox &b, bool inverted, uint16_t color);
+extern void drawEyeIcon (const SBox &b, bool hide);
 extern bool logUsageOk(void);
 extern uint16_t getMapColor (ColorSelection cid);
 extern const char* getMapColorName (ColorSelection cid);
@@ -3571,6 +3701,9 @@ extern TouchType checkKBWarp (SCoord &s);
 // for passing web touch command to checkTouch()
 extern TouchType wifi_tt;
 extern SCoord wifi_tt_s;
+extern bool wifi_tt_live;
+extern bool wifi_kb_live;
+extern bool cur_touch_live;
 
 
 
@@ -3634,7 +3767,11 @@ extern bool parseWebCommand (WebArgs &wa, char line[], size_t line_len);
 extern void initWebServer(void);
 extern void checkWebServer(bool ro);
 extern TouchType readCalTouchWS (SCoord &s);
+#if defined(_IS_ANDROID) || defined(__ANDROID__)
+extern char platform[32];
+#else
 extern const char platform[];
+#endif
 extern void runNextDemoCommand(void);
 extern bool bypass_pw;
 

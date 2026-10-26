@@ -132,6 +132,17 @@ static const BandEdge band_es[] = {
     // doesn't have -- get the real sub-edges from mkbands.pl's actual source data instead
     // of hand-adding them, the way every other row here was produced.
     { 630, "BAND",       472,    479},
+    // 4m and 2200m -- appended for the same reason as 630m just above: keeps every prior
+    // band's bandes_idx unchanged, and only the overall allocation is listed since this repo
+    // has no access to mkbands.pl's real source data for sub-band edges. 4m's allocation
+    // varies by country/region; 70.0-70.5 MHz is the widest commonly-used allocation (eg IARU
+    // Region 1). 2200m is the internationally recognized LF ham allocation, 135.7-137.8 kHz.
+    {   4, "BAND",     70000,  70500},
+    {2200, "BAND",     135.7,  137.8},
+    // 23cm -- appended for the same reason as the others above. The internationally recognized
+    // UHF ham allocation is 1240-1300 MHz. band_meters is 23 here, not a real meters value --
+    // see the SUPPORTED_BANDS comment in HamClock.h for why that's fine.
+    {  23, "BAND",   1240000,1300000},
 };
 
 #define N_BE NARRAY(band_es)
@@ -229,6 +240,39 @@ const char *findBandName (HamBandSetting h)
         fatalError ("bug! findBandName %d", (int)h);
     return (band_info[h].name);
 }
+
+/* like findBandName() but always includes an explicit unit suffix ("630m", "23cm", ...), for the
+ * handful of callers that build a "<name><unit> ..." display string and can't just hardcode a
+ * literal "m": every SUPPORTED_BANDS name string is already a bare meters numeral except 23cm's
+ * ("23cm"), which already carries its own "cm" since it's centimeters, not meters -- so this just
+ * appends "m" for everything else and passes 23cm's name through unchanged.
+ * N.B. the diagnostic push/ignore/pop below suppresses a known GCC false positive: inlining
+ * findBandName() into this function (at -O2) makes GCC's -Warray-bounds analysis lose track of
+ * the fact that isValidHBS()'s fatalError() call can't fall through, and it flags the perfectly
+ * in-range band_info[h] access as out-of-bounds. h is always a valid HamBandSetting here, never
+ * attacker- or user-controlled. Scoped tightly to just this function rather than "fixed" at the
+ * fatalError() declaration -- marking fatalError() noreturn just relocates the false positive to
+ * an equally spurious "noreturn function does return" warning in ESPHamClock.cpp (GCC can't prove
+ * doExit()/doReboot() never return either), while also touching a widely-used function's contract
+ * for no net benefit.
+ */
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
+const char *findBandUnitName (HamBandSetting h)
+{
+    static char buf[8];
+    const char *name = findBandName (h);
+    if (h == HAMBAND_23CM)
+        snprintf (buf, sizeof(buf), "%s", name);
+    else
+        snprintf (buf, sizeof(buf), "%sm", name);
+    return (buf);
+}
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 /* given a freq in kHz return pointer to static string of the best estimate of the mode.
  * or return "" if "BAND" or none.

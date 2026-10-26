@@ -28,6 +28,91 @@ char live_html[] =  R"_raw_html_(
             touch-action: pinch-zoom; /* allow both 1-finger moves and multi-touch p-z */
         }
 
+        /* overlay used to show an embedded page in-app (e.g. ADS-B Exchange), instead of a
+         * new tab. covers most of the canvas but leaves a visible margin so it's clearly a
+         * popup, not a navigation away from HamClock. */
+        #embed-overlay {
+            display: none;              /* toggled to flex by showEmbed() */
+            position: fixed;
+            left: 3%; top: 3%; right: 3%; bottom: 3%;
+            flex-direction: column;
+            background: #111;
+            border: 1px solid #888;
+            box-shadow: 0 0 20px rgba(0,0,0,0.7);
+            z-index: 1000;
+        }
+
+        #embed-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 10px;
+            background: #222;
+            color: #eee;
+            font-family: sans-serif;
+            font-size: 14px;
+            border-bottom: 1px solid #888;
+        }
+
+        #embed-title {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+        }
+
+        #embed-header button {
+            margin-left: 8px;
+            background: #333;
+            color: #eee;
+            border: 1px solid #888;
+            border-radius: 3px;
+            padding: 4px 10px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        #embed-header button:hover {
+            background: #444;
+        }
+
+        #embed-frame {
+            flex: 1;
+            width: 100%;
+            border: none;
+            background: white;
+        }
+
+        /* shown if the embedded site appears not to have loaded (likely blocked by the
+         * target's own framing policy) -- points the user at the manual fallback button
+         * instead of silently leaving a blank frame. */
+        #embed-fallback-note {
+            display: none;
+            padding: 6px 10px;
+            background: #442;
+            color: #fd8;
+            font-family: sans-serif;
+            font-size: 12px;
+            border-bottom: 1px solid #888;
+        }
+
+        #virtual-cursor {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 28px;
+            height: 28px;
+            pointer-events: none;
+            z-index: 9999;
+            transform: translate3d(-100px, -100px, 0);
+            transition: opacity 0.25s ease, transform 0.05s ease-out;
+            filter: drop-shadow(0 2px 5px rgba(0,0,0,0.85));
+        }
+        #virtual-cursor.clicking {
+            transform: scale(0.85);
+        }
+
     </style>
 
     <script>
@@ -57,6 +142,105 @@ char live_html[] =  R"_raw_html_(
         var want_fs, tried_fs;          // whether user wants full screen and has succeeded once
         var wsclose_reload = 1;         // whether to reload if lose ws connection
         var cvs, ctx;                   // handy
+
+        // virtual cursor state for remote control / D-pad
+        var vcursor_el = null;
+        var vcursor_x = APP_W / 2;      // app coords x (init 400)
+        var vcursor_y = 240;            // app coords y (init 240)
+        var vcursor_visible = false;
+        var vcursor_hide_timer = null;
+        var last_arrow_ms = 0;
+        var arrow_repeat_count = 0;
+        const VCURSOR_HIDE_MS = 12000;  // auto-hide after 12s of inactivity
+
+        function updateVirtualCursorDom() {
+            if (!vcursor_el || !cvs || !app_scale) return;
+            const rect = cvs.getBoundingClientRect();
+            const domX = rect.left + vcursor_x * app_scale;
+            const domY = rect.top + vcursor_y * app_scale;
+            vcursor_el.style.transform = 'translate3d(' + Math.round(domX) + 'px, ' + Math.round(domY) + 'px, 0px)';
+        }
+
+        function showVirtualCursor() {
+            if (!vcursor_el) return;
+            vcursor_el.style.display = 'block';
+            vcursor_visible = true;
+            updateVirtualCursorDom();
+            resetVirtualCursorTimer();
+        }
+
+        function hideVirtualCursor() {
+            if (!vcursor_el) return;
+            vcursor_el.style.display = 'none';
+            vcursor_visible = false;
+            if (vcursor_hide_timer) {
+                clearTimeout(vcursor_hide_timer);
+                vcursor_hide_timer = null;
+            }
+        }
+
+        function resetVirtualCursorTimer() {
+            if (vcursor_hide_timer)
+                clearTimeout(vcursor_hide_timer);
+            vcursor_hide_timer = setTimeout(hideVirtualCursor, VCURSOR_HIDE_MS);
+        }
+
+        function handleVirtualCursorMove(direction) {
+            const now = Date.now();
+            let step = 6;
+            if (now - last_arrow_ms < 200) {
+                arrow_repeat_count++;
+                if (arrow_repeat_count > 30) step = 24;
+                else if (arrow_repeat_count > 18) step = 16;
+                else if (arrow_repeat_count > 8) step = 10;
+            } else {
+                arrow_repeat_count = 0;
+            }
+            last_arrow_ms = now;
+
+            // If cursor was hidden, wake it up in place on first press without moving
+            if (!vcursor_visible) {
+                showVirtualCursor();
+                arrow_repeat_count = 0;
+                sendWSMsg('set_mouse?x=' + vcursor_x + '&y=' + vcursor_y);
+                return;
+            }
+
+            if (direction === 'ArrowLeft') vcursor_x -= step;
+            else if (direction === 'ArrowRight') vcursor_x += step;
+            else if (direction === 'ArrowUp') vcursor_y -= step;
+            else if (direction === 'ArrowDown') vcursor_y += step;
+
+            // clamp to app bounds (0..799, 0..479)
+            vcursor_x = Math.max(0, Math.min(APP_W - 1, vcursor_x));
+            vcursor_y = Math.max(0, Math.min(479, vcursor_y));
+
+            updateVirtualCursorDom();
+            resetVirtualCursorTimer();
+
+            // update HamClock hover position
+            sendWSMsg('set_mouse?x=' + vcursor_x + '&y=' + vcursor_y);
+        }
+
+        function handleVirtualCursorClick() {
+            // If cursor was hidden, wake it up in place to prevent accidental blind clicks
+            if (!vcursor_visible) {
+                showVirtualCursor();
+                return;
+            }
+
+            // brief click feedback animation
+            if (vcursor_el) {
+                vcursor_el.classList.add('clicking');
+                setTimeout(function() {
+                    if (vcursor_el) vcursor_el.classList.remove('clicking');
+                }, 120);
+            }
+
+            // send touch to HamClock
+            sendWSMsg('set_touch?x=' + vcursor_x + '&y=' + vcursor_y + '&button=0');
+            resetVirtualCursorTimer();
+        }
 
         // define functions, onLoad follows near the bottom
 
@@ -114,6 +298,7 @@ char live_html[] =  R"_raw_html_(
             cvs.style.left = "50%";
             cvs.style.margin = (-hc_h/2) + "px" + " 0 0 " + (-hc_w/2) + "px"; // trbl
             app_scale = hc_w/APP_W;
+            updateVirtualCursorDom();
 
             if (drawing_verbose)
                 console.log ("canvas is " + hc_w + " x " + hc_h + " app_scale " + app_scale);
@@ -247,8 +432,9 @@ char live_html[] =  R"_raw_html_(
                 return;
             }
             
-            // package up and send
-            var msg = 'set_char?char=' + k + '&mod=';
+            // package up and send: single characters sent as 0xHEX so symbols (&, =, #, +, %, etc) don't collide with URL query syntax
+            var char_val = (k.length == 1) ? ('0x' + k.charCodeAt(0).toString(16).toUpperCase()) : k;
+            var msg = 'set_char?char=' + char_val + '&mod=';
             if (c)
                 msg += 'C';
             if (s)
@@ -278,11 +464,28 @@ char live_html[] =  R"_raw_html_(
                 return;
             }
 
+            // Escape key closes embed overlay if open
+            if (key === "Escape") {
+                var overlay = document.getElementById ('embed-overlay');
+                if (overlay && overlay.style.display !== 'none') {
+                    hideEmbed();
+                    event.preventDefault();
+                    return;
+                }
+            }
+
             // don't let browser see tab
             if (key === "Tab") {
                 if (event_verbose)
                     console.log ("stopping tab");
                 event.preventDefault();
+            }
+
+            // ignore Ctrl+V / Cmd+V here so browser's native 'paste' event handles it without typing a stray 'v'
+            if ((event.ctrlKey || event.metaKey) && (key === 'v' || key === 'V')) {
+                if (event_verbose)
+                    console.log ("delegating Ctrl+V to paste event");
+                return;
             }
 
             sendKey (key, event.ctrlKey, event.shiftKey);
@@ -352,6 +555,54 @@ char live_html[] =  R"_raw_html_(
                     console.log ('sendWSMsg: ' + msg);
                 ws.send (msg);
             }
+        }
+
+        // show the given url in the in-page embed overlay instead of a new tab.
+        //
+        // N.B. cross-origin iframes give JS no reliable way to detect whether the target site
+        // actually rendered or silently refused via X-Frame-Options/CSP frame-ancestors -- we
+        // can't inspect contentDocument across origins, and a refused frame still fires 'load'
+        // in most browsers. So this doesn't try to auto-detect failure and auto-redirect: an
+        // automatic window.open() from a timer callback is a non-user-gesture popup anyway and
+        // gets blocked by the browser's popup blocker in practice. Instead: the "Open in new
+        // tab" button is always visible up front, and a one-time hint banner appears a few
+        // seconds in as a nudge in case the frame is sitting blank.
+        var embed_hint_timer = null;
+        function showEmbed (url) {
+            document.getElementById ('embed-frame').src = url;
+            document.getElementById ('embed-title').textContent = url;
+            document.getElementById ('embed-fallback-note').style.display = 'none';
+            document.getElementById ('embed-overlay').style.display = 'flex';
+
+            if (embed_hint_timer)
+                clearTimeout (embed_hint_timer);
+            embed_hint_timer = setTimeout (function() {
+                document.getElementById ('embed-fallback-note').style.display = 'block';
+            }, 4000);
+
+            var closeBtn = document.getElementById ('embed-close-btn');
+            if (closeBtn)
+                closeBtn.focus();
+            if (window.AndroidApp && window.AndroidApp.setEmbedVisible)
+                window.AndroidApp.setEmbedVisible(true);
+        }
+
+        function hideEmbed () {
+            document.getElementById ('embed-overlay').style.display = 'none';
+            document.getElementById ('embed-frame').src = 'about:blank';   // stop it running in bg
+            if (embed_hint_timer) {
+                clearTimeout (embed_hint_timer);
+                embed_hint_timer = null;
+            }
+            if (window.AndroidApp && window.AndroidApp.setEmbedVisible)
+                window.AndroidApp.setEmbedVisible(false);
+        }
+
+        // user gesture -- window.open() here is reliable, unlike from a timer callback
+        function embedOpenNewTab () {
+            var url = document.getElementById ('embed-frame').src;
+            window.open (url, "HamClockTab");
+            hideEmbed ();
         }
 
         // try once to engage full screen if desired.
@@ -439,6 +690,31 @@ char live_html[] =  R"_raw_html_(
                         }
                     }
 
+                    else if (e.data.substring(0,6) == 'embed ') {
+                        // show a url in an in-page overlay instead of a new tab
+                        var url = e.data.substring(6);
+                        console.log('embedding ' + url);
+                        showEmbed (url);
+                    }
+
+                    else if (e.data === 'paste') {
+                        if (navigator.clipboard && navigator.clipboard.readText) {
+                            navigator.clipboard.readText().then(text => {
+                                if (text)
+                                    pasteString(text);
+                            }).catch(err => {
+                                console.log("clipboard read denied: ", err);
+                                let text = prompt("Paste text here (Ctrl+V):", "");
+                                if (text)
+                                    pasteString(text);
+                            });
+                        } else {
+                            let text = prompt("Paste text here (Ctrl+V):", "");
+                            if (text)
+                                pasteString(text);
+                        }
+                    }
+
                     else if (e.data === 'Too many connections') {       // N.B. string must match liveweb.cpp
                         // close and don't reload
                         drawMsgOnce (e.data);
@@ -489,6 +765,11 @@ char live_html[] =  R"_raw_html_(
 
                 cancelLongPress();
                 longpress_fired = false;
+
+                // hide virtual cursor on real touch/pointer tap
+                if (event.pointerType !== 'mouse' || event.isPrimary) {
+                    hideVirtualCursor();
+                }
 
                 pointermove_ms = Date.now();
                 pointerdown_x = m.x;
@@ -563,6 +844,15 @@ char live_html[] =  R"_raw_html_(
                 sendWSMsg (msg);
             });
 
+            // helper to paste string into HamClock
+            function pasteString(str) {
+                if (!str) return;
+                for (let i = 0; i < str.length; i++) {
+                    sendKey(str[i]);
+                }
+            }
+            window.pasteString = pasteString;
+
             // suppress the browser's native right-click context menu on the canvas so a right-click
             // reaches pointerup above (as an 'other button' tap) instead of popping the OS/browser menu
             cvs.addEventListener ('contextmenu', function(event) {
@@ -600,11 +890,12 @@ char live_html[] =  R"_raw_html_(
 
             document.addEventListener('paste', e => {
                 let str = e.clipboardData.getData('text/plain');
-                for (let i = 0; i < str.length; i++) {
-                    sendKey(str[i]);
-                }
+                pasteString(str);
             });
 
+
+            // grab virtual cursor element
+            vcursor_el = document.getElementById('virtual-cursor');
 
             // all set. start things off with the full image, repeats from then on with updates forever.
             getFullImage();
@@ -619,6 +910,27 @@ char live_html[] =  R"_raw_html_(
 
     <!-- page is a single canvas, size will be set based on hamclock build size -->
     <canvas id='hamclock-cvs'></canvas>
+
+    <!-- on-screen virtual pointer for remote control navigation -->
+    <div id='virtual-cursor'>
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none" style="position:absolute;top:0;left:0;" xmlns="http://www.w3.org/2000/svg">
+            <polygon points="1,1 1,23 6.8,17.2 12,27 15.5,25 10.3,15.5 18,15.5" fill="#000000"/>
+            <polygon points="2,3 2,20.5 6.5,16 11.2,24.8 13.5,23.5 8.8,14.8 15.5,14.8" fill="#FFFFFF"/>
+        </svg>
+    </div>
+
+    <!-- in-page overlay for embedded links (e.g. ADS-B badge), toggled by showEmbed()/hideEmbed() -->
+    <div id='embed-overlay'>
+        <div id='embed-header'>
+            <span id='embed-title'></span>
+            <button id='embed-open-btn' onclick='embedOpenNewTab()'>Open in new tab &#8599;</button>
+            <button id='embed-close-btn' onclick='hideEmbed()'>&#10005; Close</button>
+        </div>
+        <div id='embed-fallback-note'>
+            Taking a while to load? This site may not allow embedding -- try "Open in new tab" above.
+        </div>
+        <iframe id='embed-frame'></iframe>
+    </div>
 
 </body>
 </html> 

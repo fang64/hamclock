@@ -9,6 +9,8 @@
 // platform
 #if defined (_IS_ESP8266)
 const char platform[] = "ESPHamClock";
+#elif defined(_IS_ANDROID) || defined(__ANDROID__)
+char platform[32] = "HamClock-android";
 #elif defined(_IS_LINUX_ARMBIAN)
 const char platform[] = "HamClock-armbian";
 #elif defined(_IS_LINUX_RPI)
@@ -3111,6 +3113,157 @@ static bool setWiFiNewDE (WiFiClient &client, char line[], size_t line_len)
     return (setWiFiNewDEDX_helper (client, false, line, line_len));
 }
 
+/* inject (or clear) a synthetic marine warning for testing the geofence + auto-popup logic
+ * without needing a live NWS alert. runs through the exact same code path real backend data
+ * would -- it's not just a fake pane switch.
+ */
+static bool setWiFiMarineTest (WiFiClient &client, char line[], size_t line_len)
+{
+    WebArgs wa;
+    wa.nargs = 0;
+    wa.name[wa.nargs++] = "id";
+    wa.name[wa.nargs++] = "lat";
+    wa.name[wa.nargs++] = "lng";
+    wa.name[wa.nargs++] = "minutes";
+    wa.name[wa.nargs++] = "headline";
+    wa.name[wa.nargs++] = "office";
+    wa.name[wa.nargs++] = "clear";
+
+    if (!parseWebCommand (wa, line, line_len))
+        return (false);
+
+    if (wa.found[6]) {
+        clearTestMarineWarnings();
+        startPlainText (client);
+        client.println ("marine test warnings cleared");
+        return (true);
+    }
+
+    const char *id_s     = wa.value[0];
+    const char *lat_s    = wa.value[1];
+    const char *lng_s    = wa.value[2];
+    const char *min_s    = wa.value[3];
+    const char *headline = wa.value[4];
+    const char *office   = wa.value[5];
+
+    if (!id_s || !lat_s || !lng_s) {
+        strcpy (line, "require id, lat, lng (or clear)");
+        return (false);
+    }
+
+    float lat = atof (lat_s);
+    float lng = atof (lng_s);
+    int minutes = min_s ? atoi (min_s) : 15;
+
+    if (!injectTestMarineWarning (id_s, office, lat, lng, minutes, headline)) {
+        strcpy (line, "inject failed");
+        return (false);
+    }
+
+    startPlainText (client);
+    client.println ("ok");
+    return (true);
+}
+
+/* same as setWiFiMarineTest but for Fire Wx */
+static bool setWiFiFireTest (WiFiClient &client, char line[], size_t line_len)
+{
+    WebArgs wa;
+    wa.nargs = 0;
+    wa.name[wa.nargs++] = "id";
+    wa.name[wa.nargs++] = "lat";
+    wa.name[wa.nargs++] = "lng";
+    wa.name[wa.nargs++] = "minutes";
+    wa.name[wa.nargs++] = "headline";
+    wa.name[wa.nargs++] = "office";
+    wa.name[wa.nargs++] = "clear";
+
+    if (!parseWebCommand (wa, line, line_len))
+        return (false);
+
+    if (wa.found[6]) {
+        clearTestFireWx();
+        startPlainText (client);
+        client.println ("fire wx test warnings cleared");
+        return (true);
+    }
+
+    const char *id_s     = wa.value[0];
+    const char *lat_s    = wa.value[1];
+    const char *lng_s    = wa.value[2];
+    const char *min_s    = wa.value[3];
+    const char *headline = wa.value[4];
+    const char *office   = wa.value[5];
+
+    if (!id_s || !lat_s || !lng_s) {
+        strcpy (line, "require id, lat, lng (or clear)");
+        return (false);
+    }
+
+    float lat = atof (lat_s);
+    float lng = atof (lng_s);
+    int minutes = min_s ? atoi (min_s) : 15;
+
+    if (!injectTestFireWx (id_s, office, lat, lng, minutes, headline)) {
+        strcpy (line, "inject failed");
+        return (false);
+    }
+
+    startPlainText (client);
+    client.println ("ok");
+    return (true);
+}
+
+/* inject (or clear) a synthetic earthquake for testing the Quakes pane */
+static bool setWiFiQuakeTest (WiFiClient &client, char line[], size_t line_len)
+{
+    WebArgs wa;
+    wa.nargs = 0;
+    wa.name[wa.nargs++] = "id";
+    wa.name[wa.nargs++] = "lat";
+    wa.name[wa.nargs++] = "lng";
+    wa.name[wa.nargs++] = "mag";
+    wa.name[wa.nargs++] = "depth";
+    wa.name[wa.nargs++] = "place";
+    wa.name[wa.nargs++] = "clear";
+
+    if (!parseWebCommand (wa, line, line_len))
+        return (false);
+
+    if (wa.found[6]) {
+        clearTestQuakes();
+        startPlainText (client);
+        client.println ("quake test events cleared");
+        return (true);
+    }
+
+    const char *id_s    = wa.value[0];
+    const char *lat_s   = wa.value[1];
+    const char *lng_s   = wa.value[2];
+    const char *mag_s   = wa.value[3];
+    const char *depth_s = wa.value[4];
+    const char *place   = wa.value[5];
+
+    if (!id_s || !lat_s || !lng_s) {
+        strcpy (line, "require id, lat, lng (or clear)");
+        return (false);
+    }
+
+    float lat   = atof (lat_s);
+    float lng   = atof (lng_s);
+    float mag   = mag_s ? atof (mag_s) : 4.0;
+    float depth = depth_s ? atof (depth_s) : 10.0;
+
+    if (!injectTestQuake (id_s, mag, depth, lat, lng, place)) {
+        strcpy (line, "inject failed");
+        return (false);
+    }
+
+    startPlainText (client);
+    client.println ("ok");
+    return (true);
+}
+
 /* set DX from grid or lat/lng
  */
 static bool setWiFiNewDX (WiFiClient &client, char line[], size_t line_len)
@@ -4522,7 +4675,8 @@ static bool setWiFiScreenLock (WiFiClient &client, char line[], size_t line_len)
 
 
 /* change the live spots configuration
- *   spot=of|by&what=call|grid&show=maxdist|counts&data=psk|wspr|rbn&age=mins&bands=all|160,...
+ *   spot=of|by&what=call|grid&show=maxdist|counts&data=psk|wspr|rbn&age=mins
+ *   &bands=all|160,...,2,2200,630,4,23 (2200/630/4/23 mutually exclusive)
  */
 static bool setWiFiLiveSpots (WiFiClient &client, char line[], size_t line_len)
 {
@@ -4542,7 +4696,8 @@ static bool setWiFiLiveSpots (WiFiClient &client, char line[], size_t line_len)
     wa.name[wa.nargs++] = "path";
 
     const char *usage =
-        "spot=of|by&what=call|grid&show=maxdist|counts&data=psk|wspr|rbn&age=mins&bands=all|160,...";
+        "spot=of|by&what=call|grid&show=maxdist|counts&data=psk|wspr|rbn&age=mins"
+        "&bands=all|160,...,2,2200,630,4,23 (2200/630/4/23 mutually exclusive, 23=23cm)";
 
     // parse
     if (!parseWebCommand (wa, line, line_len)) {
@@ -4606,7 +4761,16 @@ static bool setWiFiLiveSpots (WiFiClient &client, char line[], size_t line_len)
         char *bands = (char *) bands_mem.getMem();
         strcpy (bands, wa.value[_LS_BANDS]);
         if (strcmp (bands, "all") == 0) {
+            // N.B. can't just set every bit: 2200/630/4/23cm are mutually exclusive in the Live
+            // Spots pane (see checkPSKTouch() in pskreporter.cpp), so blindly setting all
+            // HAMBAND_N bits would turn all four on at once. "all" here means "every band except
+            // that at most one of the mutually exclusive group may be on" -- matches
+            // initPSKState()'s own fresh-install default of everything-but-4m/2200m/23cm, with
+            // 630m the one left on.
             new_bands = (1 << HAMBAND_N) - 1;
+            new_bands &= ~(1 << HAMBAND_4M);
+            new_bands &= ~(1 << HAMBAND_2200M);
+            new_bands &= ~(1 << HAMBAND_23CM);
         } else {
             char *token, *string = bands;
             while ((token = strsep (&string, ",")) != NULL) {
@@ -4623,10 +4787,25 @@ static bool setWiFiLiveSpots (WiFiClient &client, char line[], size_t line_len)
                 case 10:  new_bands |= (1 << HAMBAND_10M);  break;
                 case 6:   new_bands |= (1 << HAMBAND_6M);   break;
                 case 2:   new_bands |= (1 << HAMBAND_2M);   break;
+                case 2200:new_bands |= (1 << HAMBAND_2200M);break;
+                case 630: new_bands |= (1 << HAMBAND_630M); break;
+                case 4:   new_bands |= (1 << HAMBAND_4M);   break;
+                case 23:  new_bands |= (1 << HAMBAND_23CM); break;   // matches token "23" or "23cm"
                 default:
                     strcpy (line, "unknown band");
                     return (false);
                 }
+            }
+            // 2200m, 630m, 4m and 23cm share a single menu group in the Live Spots pane and are
+            // mutually exclusive there -- see checkPSKTouch() -- so reject any request that tries
+            // to turn on more than one of them together, same as the UI would.
+            int n_ex = ((new_bands & (1 << HAMBAND_2200M)) != 0)
+                     + ((new_bands & (1 << HAMBAND_630M)) != 0)
+                     + ((new_bands & (1 << HAMBAND_4M)) != 0)
+                     + ((new_bands & (1 << HAMBAND_23CM)) != 0);
+            if (n_ex > 1) {
+                strcpy (line, "2200, 630, 4 and 23 (23cm) are mutually exclusive");
+                return (false);
             }
         }
     } else {
@@ -4813,6 +4992,9 @@ static const CmdTble command_table[] = {
     { "set_mapcenter?",     setWiFiMapCenter,      "lng=X" },
     { "set_mapcolor?",      setWiFiMapColor,       "setup=name&color=R,G,B" },
     { "set_mapview?",       setWiFiMapView,        "Style=S&Grid=G&Projection=P&RSS=on|off&Night=on|off" },
+    { "set_marine_test?",   setWiFiMarineTest,     "id=X&lat=Y&lng=Z&minutes=N&headline=TEXT&office=OFF | clear" },
+    { "set_firewx_test?",   setWiFiFireTest,       "id=X&lat=Y&lng=Z&minutes=N&headline=TEXT&office=OFF | clear" },
+    { "set_quake_test?",    setWiFiQuakeTest,      "id=X&lat=Y&lng=Z&mag=M&depth=D&place=TEXT | clear" },
     { "set_newde?",         setWiFiNewDE,          "grid=AB12&lat=X&lng=Y&call=AA0XYZ" },
     { "set_newdx?",         setWiFiNewDX,          "grid=AB12&lat=X&lng=Y" },
     { "set_once_alarm?",    setWiFiOnceAlarm,      "state=off|armed&time=YYYY-MM-DDTHR:MN&tz=DE|UTC" },
@@ -5057,14 +5239,20 @@ TouchType readCalTouchWS (SCoord &s)
     // check for read-only remote commands
     checkWebServer (true);
 
-    // return info for remote else local touch
+    // return info for remote else local touch.
+    // N.B. capture cur_touch_live here too, same as checkTouch() -- this is the other place
+    // wifi_tt gets consumed (menus, setup wizard, stopwatch), and any of those can still lead to
+    // an openURL()/openQRZBio() call down the line that asks isLiveWebTouch().
     TouchType tt;
     if (wifi_tt != TT_NONE) {
         s = wifi_tt_s;
         tt = wifi_tt;
         wifi_tt = TT_NONE;
+        cur_touch_live = wifi_tt_live;
+        wifi_tt_live = false;
     } else {
         tt = readCalTouch (s);
+        cur_touch_live = false;
     }
 
     // return event type

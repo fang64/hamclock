@@ -46,6 +46,9 @@ const int liveweb_maxmax = MAX_CLIENTS-1;               // max max for -help
 // record client and possible URL for it to display.
 static ws_cli_conn_t *lastest_ws_touch_client;          // most recent client performing set_touch
 static char *liveweb_openurl;                           // malloced url to attempt to open, else NULL
+static bool liveweb_openurl_embed;                       // true if liveweb_openurl should be shown
+                                                          // in the in-page overlay instead of a new tab
+static bool liveweb_dopaste;                            // client should attempt paste
 static pthread_mutex_t lw_url_lock = PTHREAD_MUTEX_INITIALIZER; // thread-safe access for liveweb_openurl
 
 
@@ -432,14 +435,16 @@ static void sendFullScreen(ws_cli_conn_t *client)
     ws_sendframe_txt (client, "full-screen");
 }
 
-/* send message to open a url.
+/* send message to open a url, either as a new tab or, if embed is set, in the client's in-page
+ * embed overlay (see showEmbed() in liveweb-html.cpp).
  * N.B. coordinate with liveweb-html
  */
-static void sendURL (ws_cli_conn_t *client, const char *url)
+static void sendURL (ws_cli_conn_t *client, const char *url, bool embed)
 {
-    StackMalloc opencmd_mem(strlen(url)+50);
+    const char *verb = embed ? "embed " : "open ";
+    StackMalloc opencmd_mem(strlen(url)+strlen(verb)+1);
     char *opencmd = (char *)opencmd_mem.getMem();
-    snprintf (opencmd, opencmd_mem.getSize(), "open %s", url);
+    snprintf (opencmd, opencmd_mem.getSize(), "%s%s", verb, url);
     ws_sendframe_txt (client, opencmd);
 }
 
@@ -469,14 +474,21 @@ static void getLiveUpdate (ws_cli_conn_t *client, char args[], size_t args_len)
     if (liveweb_fs_ready && getWebFullScreen())
         sendFullScreen (client);
 
-    // check for pending openurl if this client did a touch
+    // check for pending openurl or paste if this client did a touch
     pthread_mutex_lock (&lw_url_lock);
-    if (lastest_ws_touch_client == client) {
+    if (lastest_ws_touch_client == client || (lastest_ws_touch_client == NULL && client->port != liveweb_ro_port)) {
+        if (liveweb_dopaste) {
+            Serial.printf ("LIVE: sending paste command\n");
+            ws_sendframe_txt (client, "paste");
+            liveweb_dopaste = false;
+            lastest_ws_touch_client = NULL;
+        }
         if (liveweb_openurl) {
-            Serial.printf ("LIVE: sending URL %s\n", liveweb_openurl);
-            sendURL (client, liveweb_openurl);
+            Serial.printf ("LIVE: sending URL %s (embed=%d)\n", liveweb_openurl, liveweb_openurl_embed);
+            sendURL (client, liveweb_openurl, liveweb_openurl_embed);
             free (liveweb_openurl);
             liveweb_openurl = NULL;
+            liveweb_openurl_embed = false;
             lastest_ws_touch_client = NULL;
         }
     }
@@ -565,7 +577,13 @@ static void setLiveChar (ws_cli_conn_t *client, char args[], size_t args_len)
                 c = CHAR_UP;
             else if (strcmp (str, "ArrowRight") == 0)
                 c = CHAR_RIGHT;
-            else
+            else if (strncasecmp (str, "0x", 2) == 0) {
+                unsigned int code = 0;
+                if (sscanf (str + 2, "%x", &code) == 1 && code > 0 && code < 256 && isprint((char)code))
+                    c = (char)code;
+                else
+                    Serial.printf ("LIVE: Invalid hex char: %s\n", str);
+            } else
                 Serial.printf ("LIVE: Unknown char name: %s\n", str);
         } else {
             // literal
@@ -580,6 +598,13 @@ static void setLiveChar (ws_cli_conn_t *client, char args[], size_t args_len)
         bool shift = strchr (wa.value[1], 'S') != NULL;
 
         if (c) {
+
+            // record this client as the latest active client for URL opening and mark live touch
+            pthread_mutex_lock (&lw_url_lock);
+            lastest_ws_touch_client = client;
+            pthread_mutex_unlock (&lw_url_lock);
+            cur_touch_live = true;
+            wifi_kb_live = true;
 
             // insert into getChar queue
             tft.putChar (c, ctrl, shift);
@@ -629,10 +654,13 @@ static void setLiveTouch (ws_cli_conn_t *client, char args[], size_t args_len)
 
         } else {
 
-            // inform checkTouch() to use wifi_tt_s; it will reset
+            // inform checkTouch() to use wifi_tt_s; it will reset.
+            // N.B. set wifi_tt_live before wifi_tt so checkTouch() can never observe wifi_tt set
+            // without also seeing wifi_tt_live already valid for it.
             int button = wa.found[2] ? atoi (wa.value[2]) : 0;
             wifi_tt_s.x = x;
             wifi_tt_s.y = y;
+            wifi_tt_live = true;
             wifi_tt = button ? TT_TAP_BX : TT_TAP;              // 0 means button 1 -- go figure
 
             // record this client as the latest to do a touch
@@ -1001,16 +1029,57 @@ void openLiveWebURL (const char *url)
         free (liveweb_openurl);
     }
     liveweb_openurl = strdup (url);
+    liveweb_openurl_embed = false;
     Serial.printf ("LIVE: live web staging URL %s\n", url);
     pthread_mutex_unlock (&lw_url_lock);
 }
 
-/* return whether there is a pending set_touch
+/* same as openLiveWebURL() but asks the client to show it in its in-page embed overlay (an
+ * iframe) instead of opening a new tab -- see showEmbed() in liveweb-html.cpp. Intended for
+ * pages worth glancing at without leaving HamClock's tab. Not every site allows this -- some set
+ * X-Frame-Options/CSP frame-ancestors specifically to block being framed by another site (eg
+ * confirmed: Windy.com, which is why windbadge.cpp does NOT use this) -- so only call this for a
+ * target confirmed to permit framing; the client shows a manual "Open in new tab" fallback for
+ * the case it doesn't, since that failure can't be reliably detected across origins from JS.
+ */
+void openLiveWebURLEmbedded (const char *url)
+{
+    pthread_mutex_lock (&lw_url_lock);
+    if (liveweb_openurl) {
+        Serial.printf ("LIVE: discarded late URL %s\n", liveweb_openurl);
+        free (liveweb_openurl);
+    }
+    liveweb_openurl = strdup (url);
+    liveweb_openurl_embed = true;
+    Serial.printf ("LIVE: live web staging embedded URL %s\n", url);
+    pthread_mutex_unlock (&lw_url_lock);
+}
+
+/* record desire for most recent touch client to paste from clipboard.
+ */
+void requestLiveWebPaste (void)
+{
+    pthread_mutex_lock (&lw_url_lock);
+    if (lastest_ws_touch_client) {
+        liveweb_dopaste = true;
+        Serial.printf ("LIVE: live web staging paste request\n");
+    }
+    pthread_mutex_unlock (&lw_url_lock);
+}
+
+/* return whether the touch currently being dispatched by checkTouch() came from a Live Web
+ * client.
+ * N.B. this used to test lastest_ws_touch_client != NULL, but that variable exists to record
+ * which client should receive a queued openurl/paste (see getLiveUpdate()) and gets cleared on
+ * that client's very next screen-update poll -- which happens continuously, many times a second,
+ * completely independently of when the main thread actually gets around to processing the touch
+ * that set it. That poll routinely lands, and clears the flag, before checkTouch() on the main
+ * thread has even called into a badge handler, so a callback like adsbBadgeClicked() could see
+ * isLiveWebTouch() go false for a touch that genuinely came from Live Web. cur_touch_live is set
+ * in lockstep with the touch itself (see setLiveTouch() and checkTouch()), so it can't race with
+ * anything: it just reflects the touch actually being handled right now.
  */
 bool isLiveWebTouch (void)
 {
-    pthread_mutex_lock (&lw_url_lock);
-    bool is_live_touch_pending = lastest_ws_touch_client != NULL;
-    pthread_mutex_unlock (&lw_url_lock);
-    return (is_live_touch_pending);
+    return (cur_touch_live);
 }
